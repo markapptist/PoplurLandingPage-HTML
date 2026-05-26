@@ -1,5 +1,5 @@
 import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AnimatedIcon } from '@/components/animated-icon';
@@ -29,6 +29,11 @@ function getDevMenuHint() {
 }
 
 export default function HomeScreen() {
+  function openURL(url: string) {
+    Linking.openURL(url).catch(() => {
+      // ignore failures silently on web/native
+    });
+  }
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -42,6 +47,28 @@ export default function HomeScreen() {
         <ThemedText type="code" style={styles.code}>
           get started
         </ThemedText>
+
+        <ThemedView style={styles.downloadContainer}>
+          <Pressable
+            accessibilityRole="button"
+            style={[styles.downloadButton, styles.androidButton]}
+            onPress={() => openURL('https://play.google.com/store')}
+          >
+            <ThemedText type="button" style={styles.downloadText}>
+              Download for Android
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            style={[styles.downloadButton, styles.iosButton]}
+            onPress={() => openURL('https://www.apple.com/app-store/')}
+          >
+            <ThemedText type="button" style={styles.downloadText}>
+              Download for iOS
+            </ThemedText>
+          </Pressable>
+        </ThemedView>
 
         <ThemedView type="backgroundElement" style={styles.stepContainer}>
           <HintRow
@@ -94,5 +121,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.four,
     borderRadius: Spacing.four,
+  },
+  downloadContainer: {
+    flexDirection: 'row',
+    gap: Spacing.three,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  downloadButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    minWidth: 180,
+    alignItems: 'center',
+  },
+  androidButton: {
+    backgroundColor: '#3DDC84',
+  },
+  iosButton: {
+    backgroundColor: '#0A84FF',
+  },
+  downloadText: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
 });

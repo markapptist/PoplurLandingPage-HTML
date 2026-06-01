@@ -1,6 +1,6 @@
-export const betaInviteSubject = 'Your Poplur beta links are here';
+export const betaInviteSubject = 'Your Poplur beta access is ready';
 export const betaInvitePreview =
-  'Download Poplur on iOS or Android and start exploring what is happening nearby.';
+  'Install Poplur once. Future beta updates arrive through TestFlight or Google Play.';
 export const betaInviteFrom = 'Poplur <hello@poplur.ca>';
 
 type BetaInviteEmailOptions = {
@@ -25,10 +25,12 @@ export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
   return [
     'Welcome to Poplur beta.',
     '',
-    'Poplur helps you see what is happening around the places you care about, from real people who are there.',
+    'Use the links below to install Poplur on iOS or Android and start exploring what is happening around real places.',
     '',
     `iOS beta: ${iosUrl}`,
     `Android beta: ${androidUrl}`,
+    '',
+    'Future updates will appear through TestFlight on iOS or Google Play on Android after you join the beta.',
     '',
     'Thanks for helping shape Poplur.',
     'The Poplur team',
@@ -72,8 +74,8 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
                         </tr>
                       </table>
                       <div style="font-size:13px;font-weight:800;letter-spacing:0;text-transform:uppercase;color:#9ee8d5;">Poplur beta access</div>
-                      <h1 style="margin:16px 0 0;font-size:38px;line-height:1.08;color:#ffffff;font-weight:900;letter-spacing:0;">Your beta links are ready.</h1>
-                      <p style="margin:16px 0 0;font-size:17px;line-height:1.55;color:#f5ddea;">Thanks for joining early. Use the links below to install Poplur and start exploring what is happening around real places.</p>
+                      <h1 style="margin:16px 0 0;font-size:38px;line-height:1.08;color:#ffffff;font-weight:900;letter-spacing:0;">Your beta access is ready.</h1>
+                      <p style="margin:16px 0 0;font-size:17px;line-height:1.55;color:#f5ddea;">Thanks for joining early. Install Poplur once and future beta updates will arrive through TestFlight or Google Play.</p>
                     </td>
                   </tr>
                 </table>
@@ -102,6 +104,9 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
                   </tr>
                 </table>
                 <div style="margin:28px 0 0;padding:18px;border:1px solid #e8ebf1;border-radius:8px;background:#fafbfc;">
+                  <p style="margin:0;font-size:15px;line-height:1.55;color:#3c414d;"><strong>Future updates:</strong> once you join the beta, new iOS builds show up in TestFlight and Android updates show up through Google Play. You can reuse these links if you ever need to reinstall.</p>
+                </div>
+                <div style="margin:12px 0 0;padding:18px;border:1px solid #e8ebf1;border-radius:8px;background:#fafbfc;">
                   <p style="margin:0;font-size:15px;line-height:1.55;color:#3c414d;"><strong>What to try first:</strong> open Poplur near a favorite place, check what people are sharing there, and post something useful for the next person who arrives.</p>
                 </div>
                 <p style="margin:26px 0 0;font-size:15px;line-height:1.55;color:#596071;">Have feedback? Reply to this email. We are building Poplur with early users and every note helps.</p>

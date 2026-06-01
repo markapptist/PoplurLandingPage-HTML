@@ -58,11 +58,11 @@ export default function EmailPreviewScreen() {
                 Poplur beta access
               </ThemedText>
               <ThemedText type="title" style={styles.heroTitle}>
-                Your beta links are ready.
+                Your beta access is ready.
               </ThemedText>
               <ThemedText style={styles.heroCopy}>
-                Thanks for joining early. Use the links below to install Poplur and start
-                exploring what is happening around real places.
+                Thanks for joining early. Install Poplur once and future beta updates will
+                arrive through TestFlight or Google Play.
               </ThemedText>
             </View>
 
@@ -70,6 +70,17 @@ export default function EmailPreviewScreen() {
               <ThemedText style={styles.bodyText}>Pick your platform:</ThemedText>
               <EmailButton href={iosUrl} label="Get Poplur for iOS" tone="dark" />
               <EmailButton href={androidUrl} label="Get Poplur for Android" tone="green" />
+
+              <View style={styles.tipBox}>
+                <ThemedText style={styles.tipText}>
+                  <ThemedText type="smallBold" style={styles.tipStrong}>
+                    Future updates:
+                  </ThemedText>{' '}
+                  once you join the beta, new iOS builds show up in TestFlight and Android
+                  updates show up through Google Play. You can reuse these links if you ever
+                  need to reinstall.
+                </ThemedText>
+              </View>
 
               <View style={styles.tipBox}>
                 <ThemedText style={styles.tipText}>

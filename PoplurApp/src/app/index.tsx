@@ -52,9 +52,11 @@ export default function HomeScreen() {
   const [hintMessageIndex, setHintMessageIndex] = useState(0);
   const hScrollRef = useRef<ScrollView>(null);    // outer horizontal pager
   const homeScrollRef = useRef<ScrollView>(null); // home page inner vertical scroll
+  const explainerSlideRef = useRef<View>(null);
   const activePageRef = useRef(0);
   const currentSectionRef = useRef(0);
   const hasInteractedRef = useRef(Platform.OS !== 'web');
+  const explainerSoundRequestedRef = useRef(false);
   const narrationAudioRef = useRef<HTMLAudioElement | null>(null);
   const hintMotion = useRef(new Animated.Value(0)).current;
   const hintTextOpacity = useRef(new Animated.Value(1)).current;
@@ -127,18 +129,96 @@ export default function HomeScreen() {
     const interval = window.setInterval(() => {
       const video = getExplainerElement();
       if (!video) return;
-      video.muted = true;
-      video.defaultMuted = true;
+      const shouldPlaySound = Number(window.getComputedStyle(video).opacity) > 0.5;
+      const shouldStartMuted = !shouldPlaySound || video.paused;
+      video.muted = shouldStartMuted;
+      video.defaultMuted = shouldStartMuted;
       video.autoplay = true;
       video.playsInline = true;
-      video.setAttribute('muted', '');
+      if (shouldPlaySound && !shouldStartMuted) {
+        video.removeAttribute('muted');
+      } else {
+        video.setAttribute('muted', '');
+      }
       video.setAttribute('autoplay', '');
       video.setAttribute('playsinline', '');
       video.loop = true;
       if (video.paused) video.play().catch(() => {});
+      if (shouldPlaySound) window.setTimeout(unmuteExplainerElement, 60);
     }, 450);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const target = (explainerSlideRef.current as any)?.getBoundingClientRect
+      ? (explainerSlideRef.current as any)
+      : (explainerSlideRef.current as any)?.getScrollableNode?.();
+    if (!target || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const isVisible = entry.isIntersecting && entry.intersectionRatio > 0.38;
+        if (isVisible && activePageRef.current === 0) {
+          currentSectionRef.current = 1;
+          setCurrentSection(1);
+          restartExplainer(hasInteractedRef.current || explainerSoundRequestedRef.current);
+          return;
+        }
+
+        if (activePageRef.current === 0) {
+          currentSectionRef.current = 0;
+          setCurrentSection(0);
+          stopExplainer();
+        }
+      },
+      { threshold: [0, 0.38, 0.62, 1] },
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [explainerPlayer]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    function syncWebSectionFromScroll() {
+      const refNode = (homeScrollRef.current as any)?.getScrollableNode?.() as HTMLElement | undefined;
+      const node =
+        refNode && refNode.scrollHeight > refNode.clientHeight + 50
+          ? refNode
+          : Array.from(document.querySelectorAll('*')).find((element) => {
+          const el = element as HTMLElement;
+          return el.scrollHeight > el.clientHeight + 50 && el.clientHeight > window.innerHeight * 0.7;
+        }) as HTMLElement | undefined;
+
+      if (!node || activePageRef.current !== 0) return;
+
+      const nextSection = node.scrollTop > node.clientHeight * 0.42 ? 1 : 0;
+      if (currentSectionRef.current === nextSection) return;
+
+      currentSectionRef.current = nextSection;
+      setCurrentSection(nextSection);
+      if (nextSection === 1) {
+        hasInteractedRef.current = true;
+        explainerSoundRequestedRef.current = true;
+        restartExplainer(true);
+      } else {
+        stopExplainer();
+      }
+    }
+
+    const interval = window.setInterval(syncWebSectionFromScroll, 160);
+    window.addEventListener('scroll', syncWebSectionFromScroll, { capture: true, passive: true });
+    window.addEventListener('wheel', syncWebSectionFromScroll, { capture: true, passive: true });
+    window.addEventListener('touchmove', syncWebSectionFromScroll, { capture: true, passive: true });
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('scroll', syncWebSectionFromScroll, { capture: true });
+      window.removeEventListener('wheel', syncWebSectionFromScroll, { capture: true });
+      window.removeEventListener('touchmove', syncWebSectionFromScroll, { capture: true });
+    };
+  }, [explainerPlayer]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -146,18 +226,21 @@ export default function HomeScreen() {
       hasInteractedRef.current = true;
       backgroundPlayer.muted = true;
       backgroundPlayer.play();
-      primeNarrationAudio();
       if (activePage === 0 && currentSection === 1) {
         restartExplainer(true);
       }
     }
-    window.addEventListener('pointerdown', enableBackgroundMusic, { once: true });
-    window.addEventListener('wheel', enableBackgroundMusic, { once: true });
-    window.addEventListener('keydown', enableBackgroundMusic, { once: true });
+    document.addEventListener('pointerdown', enableBackgroundMusic, { capture: true, once: true });
+    document.addEventListener('mousedown', enableBackgroundMusic, { capture: true, once: true });
+    document.addEventListener('touchstart', enableBackgroundMusic, { capture: true, once: true });
+    window.addEventListener('wheel', enableBackgroundMusic, { capture: true, once: true });
+    window.addEventListener('keydown', enableBackgroundMusic, { capture: true, once: true });
     return () => {
-      window.removeEventListener('pointerdown', enableBackgroundMusic);
-      window.removeEventListener('wheel', enableBackgroundMusic);
-      window.removeEventListener('keydown', enableBackgroundMusic);
+      document.removeEventListener('pointerdown', enableBackgroundMusic, { capture: true });
+      document.removeEventListener('mousedown', enableBackgroundMusic, { capture: true });
+      document.removeEventListener('touchstart', enableBackgroundMusic, { capture: true });
+      window.removeEventListener('wheel', enableBackgroundMusic, { capture: true });
+      window.removeEventListener('keydown', enableBackgroundMusic, { capture: true });
     };
   }, [activePage, backgroundPlayer, currentSection, explainerPlayer]);
 
@@ -168,6 +251,7 @@ export default function HomeScreen() {
     function unlockExplainerFromGesture() {
       if (activePageRef.current !== 0) return;
       hasInteractedRef.current = true;
+      explainerSoundRequestedRef.current = true;
       playExplainerElement(false, true);
       playNarrationAudio(true);
       explainerPlayer.muted = true;
@@ -180,6 +264,10 @@ export default function HomeScreen() {
 
     function handlePointerDown(event: PointerEvent) {
       pointerStartY = event.clientY;
+      if (activePageRef.current === 0) {
+        hasInteractedRef.current = true;
+        explainerSoundRequestedRef.current = true;
+      }
       if (activePageRef.current === 0 && currentSectionRef.current === 1) unlockExplainerFromGesture();
     }
 
@@ -193,17 +281,25 @@ export default function HomeScreen() {
       }
     }
 
-    window.addEventListener('wheel', handleWheel, { passive: true });
-    window.addEventListener('pointerdown', handlePointerDown, { passive: true });
-    window.addEventListener('pointermove', handlePointerMove, { passive: true });
-    window.addEventListener('touchmove', unlockExplainerFromGesture, { passive: true });
-    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('pointerdown', handlePointerDown, { capture: true, passive: true });
+    document.addEventListener('mousedown', () => {
+      hasInteractedRef.current = true;
+      explainerSoundRequestedRef.current = true;
+    }, { capture: true, passive: true });
+    document.addEventListener('touchstart', () => {
+      hasInteractedRef.current = true;
+      explainerSoundRequestedRef.current = true;
+    }, { capture: true, passive: true });
+    window.addEventListener('wheel', handleWheel, { capture: true, passive: true });
+    window.addEventListener('pointermove', handlePointerMove, { capture: true, passive: true });
+    window.addEventListener('touchmove', unlockExplainerFromGesture, { capture: true, passive: true });
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => {
-      window.removeEventListener('wheel', handleWheel);
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('touchmove', unlockExplainerFromGesture);
-      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('pointerdown', handlePointerDown, { capture: true });
+      window.removeEventListener('wheel', handleWheel, { capture: true });
+      window.removeEventListener('pointermove', handlePointerMove, { capture: true });
+      window.removeEventListener('touchmove', unlockExplainerFromGesture, { capture: true });
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
     };
   }, [explainerPlayer]);
 
@@ -315,16 +411,13 @@ export default function HomeScreen() {
     explainerPlayer.loop = true;
     explainerPlayer.currentTime = 0;
     if (Platform.OS === 'web') {
-      explainerPlayer.muted = true;
+      explainerPlayer.muted = !withSound;
       explainerPlayer.play();
-      playExplainerElement(false);
-      if (withSound) playNarrationAudio(true);
+      playExplainerElement(withSound);
       if (withSound) {
         window.setTimeout(() => {
-          explainerPlayer.muted = true;
-          explainerPlayer.play();
-          playExplainerElement(false, false);
-          playNarrationAudio(false);
+          explainerPlayer.muted = false;
+          unmuteExplainerElement();
         }, 80);
       }
       return;
@@ -380,10 +473,22 @@ export default function HomeScreen() {
     const playPromise = video.play();
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch(() => {
-        video.muted = true;
-        video.play().catch(() => {});
+        if (!withSound) {
+          video.muted = true;
+          video.play().catch(() => {});
+        }
       });
     }
+    if (withSound) window.setTimeout(unmuteExplainerElement, 70);
+  }
+
+  function unmuteExplainerElement() {
+    const video = getExplainerElement();
+    if (!video) return;
+    video.volume = 1;
+    video.muted = false;
+    video.defaultMuted = false;
+    video.removeAttribute('muted');
   }
 
   function getNarrationAudio() {
@@ -404,26 +509,16 @@ export default function HomeScreen() {
   function primeNarrationAudio() {
     const audio = getNarrationAudio();
     if (!audio) return;
-    audio.muted = true;
-    audio.currentTime = 0;
-    audio.play()
-      .then(() => {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.muted = false;
-      })
-      .catch(() => {
-        audio.muted = false;
-      });
+    audio.muted = false;
+    audio.load();
   }
 
   function playNarrationAudio(reset = true) {
+    playExplainerElement(true, reset);
     const audio = getNarrationAudio();
     if (!audio) return;
-    if (reset) audio.currentTime = 0;
-    audio.muted = false;
-    audio.volume = 1;
-    audio.play().catch(() => {});
+    audio.pause();
+    audio.currentTime = 0;
   }
 
   function updateActivePage(event: NativeSyntheticEvent<NativeScrollEvent>) {
@@ -477,6 +572,7 @@ export default function HomeScreen() {
     setCurrentSection(s);
     if (s === 1) {
       hasInteractedRef.current = true;
+      explainerSoundRequestedRef.current = true;
       restartExplainer(true);
     } else {
       stopExplainer();
@@ -492,7 +588,7 @@ export default function HomeScreen() {
   function startExplainerNarrationGesture() {
     if (Platform.OS !== 'web' || activePageRef.current !== 0) return;
     hasInteractedRef.current = true;
-    primeNarrationAudio();
+    explainerSoundRequestedRef.current = true;
     window.setTimeout(() => {
       if (activePageRef.current === 0 && currentSectionRef.current === 1) {
         playNarrationAudio(true);
@@ -510,6 +606,7 @@ export default function HomeScreen() {
         setCurrentSection(nextSection);
         if (nextSection === 1) {
           hasInteractedRef.current = true;
+          explainerSoundRequestedRef.current = true;
           restartExplainer(true);
         } else {
           stopExplainer();
@@ -732,7 +829,7 @@ export default function HomeScreen() {
             </View>
 
             {/* Section 1 — Explainer background */}
-            <View style={[styles.explainerSlide, sectionSize, webVertSectionSnap]}>
+            <View ref={explainerSlideRef} style={[styles.explainerSlide, sectionSize, webVertSectionSnap]}>
             </View>
           </ScrollView>
 

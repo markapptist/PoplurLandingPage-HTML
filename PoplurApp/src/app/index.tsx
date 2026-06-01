@@ -50,7 +50,6 @@ export default function HomeScreen() {
   const [currentSection, setCurrentSection] = useState(0); // vertical: 0=Logo 1=About
   const [popCount, setPopCount] = useState(0);
   const [hintMessageIndex, setHintMessageIndex] = useState(0);
-  const [explainerChromeVisible, setExplainerChromeVisible] = useState(true);
   const hScrollRef = useRef<ScrollView>(null);    // outer horizontal pager
   const homeScrollRef = useRef<ScrollView>(null); // home page inner vertical scroll
   const explainerSlideRef = useRef<View>(null);
@@ -91,26 +90,6 @@ export default function HomeScreen() {
       explainerPlayer.pause();
     }
   }, [activePage, currentSection, explainerPlayer]);
-
-  useEffect(() => {
-    const isExplainerVisible = activePage === 0 && currentSection === 1;
-    if (isExplainerVisible) {
-      setExplainerChromeVisible(false);
-    } else {
-      setExplainerChromeVisible(true);
-    }
-  }, [activePage, currentSection]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    function showExplainerChrome() {
-      if (activePageRef.current === 0 && currentSectionRef.current === 1) {
-        setExplainerChromeVisible(true);
-      }
-    }
-    document.addEventListener('click', showExplainerChrome, { capture: true });
-    return () => document.removeEventListener('click', showExplainerChrome, { capture: true });
-  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -669,12 +648,6 @@ export default function HomeScreen() {
     }
   }
 
-  function openEmailPreview() {
-    if (Platform.OS === 'web') {
-      window.location.href = '/email-preview';
-    }
-  }
-
   const sideDotCount = activePage === 0 ? 2 : 1;
   const clampedPageProgress = Math.max(0, Math.min(1, pageProgress));
   const hintOpacity = hintMotion.interpolate({
@@ -699,27 +672,24 @@ export default function HomeScreen() {
       : { arrow: '↓', text: 'Swipe down to learn about', transform: [{ translateY: downArrowShift }] };
   const isHomeLogoPage = activePage === 0 && currentSection === 0;
   const isExplainerPage = activePage === 0 && currentSection === 1;
-  const shouldHideExplainerChrome = isExplainerPage && !explainerChromeVisible;
 
   return (
     <ThemedView style={styles.container}>
       <View pointerEvents="none" style={styles.backgroundLayer}>
-        {(activePage !== 0 || currentSection === 0) && (
-          <VideoView
-            contentFit="cover"
-            nativeControls={false}
-            player={backgroundPlayer}
-            playsInline
-            style={[
-              styles.backgroundVideo,
-              isExplainerPage
-                ? styles.backgroundVideoHidden
-                : styles.backgroundVideoVisible,
-            ]}
-            surfaceType="textureView"
-            useExoShutter={false}
-          />
-        )}
+        <VideoView
+          contentFit="cover"
+          nativeControls={false}
+          player={backgroundPlayer}
+          playsInline
+          style={[
+            styles.backgroundVideo,
+            isExplainerPage
+              ? styles.backgroundVideoHidden
+              : styles.backgroundVideoVisible,
+          ]}
+          surfaceType="textureView"
+          useExoShutter={false}
+        />
         <VideoView
           contentFit="cover"
           nativeControls={false}
@@ -734,14 +704,11 @@ export default function HomeScreen() {
           surfaceType="textureView"
           useExoShutter={false}
         />
-        <View style={[styles.backgroundOverlay, shouldHideExplainerChrome && styles.backgroundOverlayHidden]} />
+        <View style={styles.backgroundOverlay} />
       </View>
       <ParticleBurst active={isHomeLogoPage} triggerCount={popCount} />
 
-      <SafeAreaView
-        pointerEvents={shouldHideExplainerChrome ? 'none' : 'auto'}
-        style={[styles.safeArea, shouldHideExplainerChrome && styles.safeAreaHidden]}
-      >
+      <SafeAreaView style={styles.safeArea}>
         <View style={styles.topPagination}>
           <View style={styles.topPaginationTrack}>
             <View
@@ -940,22 +907,8 @@ export default function HomeScreen() {
                 {submitted ? (
                   <View style={styles.successStack}>
                     <ThemedText type="smallBold" style={styles.successText}>
-                      You&apos;re on the list. We&apos;ll send both beta links to {normalizedEmail}.
+                      Check your email for the invite.
                     </ThemedText>
-                    {Platform.OS === 'web' ? (
-                      <Pressable
-                        accessibilityRole="link"
-                        onPress={openEmailPreview}
-                        style={({ pressed }) => [
-                          styles.previewEmailButton,
-                          pressed && styles.previewEmailButtonPressed,
-                        ]}
-                      >
-                        <ThemedText type="smallBold" style={styles.previewEmailButtonText}>
-                          Preview the email
-                        </ThemedText>
-                      </Pressable>
-                    ) : null}
                   </View>
                 ) : null}
               </View>
@@ -1007,18 +960,12 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(8, 8, 16, 0.48)',
   },
-  backgroundOverlayHidden: {
-    opacity: 0,
-  },
   safeArea: {
     flex: 1,
     width: '100%',
     alignSelf: 'stretch',
     alignItems: 'center',
     zIndex: 1,
-  },
-  safeAreaHidden: {
-    opacity: 0,
   },
   dot: {
     width: 8,
@@ -1336,18 +1283,6 @@ const styles = StyleSheet.create({
     maxWidth: 520,
   },
   successText: { color: '#ffe2f3', textAlign: 'center', maxWidth: 520 },
-  previewEmailButton: {
-    minHeight: 42,
-    borderRadius: 8,
-    paddingHorizontal: Spacing.three,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 10, 138, 0.24)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 187, 226, 0.5)',
-  },
-  previewEmailButtonPressed: { opacity: 0.78 },
-  previewEmailButtonText: { color: '#ffffff', textAlign: 'center' },
 
   // Floating cube (web only)
   floatingCube: {

@@ -69,7 +69,6 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
                           </td>
                           <td style="padding-left:16px;">
                             <div style="font-size:30px;line-height:1;color:#ffffff;font-weight:900;letter-spacing:0;font-family:Avenir Next,Avenir,Inter,Arial,sans-serif;">Poplur</div>
-                            <div style="margin-top:7px;font-size:12px;line-height:1.4;color:#ffbfe1;font-weight:800;text-transform:uppercase;letter-spacing:0;font-family:Avenir Next,Avenir,Inter,Arial,sans-serif;">Places are better live</div>
                           </td>
                         </tr>
                       </table>

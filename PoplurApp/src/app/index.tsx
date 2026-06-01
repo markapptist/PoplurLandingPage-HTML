@@ -634,11 +634,7 @@ export default function HomeScreen() {
 
     try {
       await saveBetaSignupEmail(normalizedEmail);
-      try {
-        await sendBetaInviteEmail(normalizedEmail);
-      } catch {
-        // Local/dev builds may not have RESEND_API_KEY; keep the signup instead of surfacing server config.
-      }
+      await sendBetaInviteEmail(normalizedEmail);
       setSubmitted(true);
     } catch (error) {
       setSubmitted(false);

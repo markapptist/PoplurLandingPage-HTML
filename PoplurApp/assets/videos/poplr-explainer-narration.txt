@@ -1,0 +1,19 @@
+Meet Poplur.
+[[slnc 350]]
+A social platform where every post begins at a place.
+[[slnc 450]]
+Drop content on any coordinate, anywhere in the world.
+[[slnc 350]]
+It starts with zero radius.
+Then, as people react, it expands outward.
+[[slnc 450]]
+From a street.
+To a city.
+To the world.
+[[slnc 500]]
+And with AI trend data,
+Poplur helps you find the exact place to post next.
+[[slnc 450]]
+Post with precision.
+Grow your radius.
+Reach the world.

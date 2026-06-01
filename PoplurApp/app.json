@@ -20,8 +20,10 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "output": "server",
+      "shortName": "Poplur",
+      "name": "Poplur",
+      "favicon": "./assets/images/logo3.png"
     },
     "plugins": [
       "expo-router",
@@ -34,7 +36,8 @@
             "imageWidth": 76
           }
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

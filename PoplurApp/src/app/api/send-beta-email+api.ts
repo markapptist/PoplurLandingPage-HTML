@@ -13,6 +13,7 @@ const path = require('node:path');
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LOGO_CONTENT_ID = 'poplur-logo';
+const FALLBACK_LOGO_URL = 'https://poplur.ca/favicon.ico';
 
 type SendEmailRequest = {
   email?: unknown;
@@ -43,6 +44,9 @@ export async function POST(request: Request) {
     );
   }
 
+  const logoContent = await getLogoContent();
+  const logoSrc = logoContent ? `cid:${LOGO_CONTENT_ID}` : FALLBACK_LOGO_URL;
+
   const response = await fetch(RESEND_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -50,17 +54,21 @@ export async function POST(request: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      attachments: [
-        {
-          content: await getLogoContent(),
-          contentId: LOGO_CONTENT_ID,
-          filename: 'logo3.png',
-        },
-      ],
+      ...(logoContent
+        ? {
+            attachments: [
+              {
+                content: logoContent,
+                contentId: LOGO_CONTENT_ID,
+                filename: 'logo3.png',
+              },
+            ],
+          }
+        : {}),
       from,
       to: email,
       subject: betaInviteSubject,
-      html: createBetaInviteHtml({ logoSrc: `cid:${LOGO_CONTENT_ID}` }),
+      html: createBetaInviteHtml({ logoSrc }),
       text: createBetaInviteText(),
     }),
   });
@@ -85,7 +93,11 @@ export async function POST(request: Request) {
 
 async function getLogoContent() {
   const logoPath = path.join(process.cwd(), 'assets/images/logo3.png');
-  const logo = await readFile(logoPath);
+  try {
+    const logo = await readFile(logoPath);
 
-  return logo.toString('base64');
+    return logo.toString('base64');
+  } catch {
+    return null;
+  }
 }

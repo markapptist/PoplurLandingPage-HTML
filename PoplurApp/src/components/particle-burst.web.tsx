@@ -1,0 +1,254 @@
+import { useEffect, useRef } from 'react';
+import { StyleSheet, View } from 'react-native';
+import * as THREE from 'three';
+
+type ParticleBurstProps = {
+  active?: boolean;
+  triggerCount?: number;
+};
+
+type ConfettiPiece = {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  spin: THREE.Vector3;
+  born: number;
+  life: number;
+};
+
+type SmokePuff = {
+  mesh: THREE.Sprite;
+  velocity: THREE.Vector3;
+  born: number;
+  life: number;
+  startScale: number;
+  endScale: number;
+};
+
+const COLORS = ['#ff0a8a', '#ff49b6', '#fff7fb', '#5df5d0', '#ffd26b'];
+
+function randomBetween(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
+
+function createSmokeTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  if (!context) return new THREE.CanvasTexture(canvas);
+
+  const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 62);
+  gradient.addColorStop(0, 'rgba(255, 210, 238, 0.5)');
+  gradient.addColorStop(0.32, 'rgba(255, 10, 138, 0.32)');
+  gradient.addColorStop(0.72, 'rgba(78, 8, 66, 0.14)');
+  gradient.addColorStop(1, 'rgba(78, 8, 66, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurstProps) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const confettiRef = useRef<ConfettiPiece[]>([]);
+  const smokeRef = useRef<SmokePuff[]>([]);
+  const activeRef = useRef(active);
+  const latestTriggerRef = useRef(triggerCount);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
+  useEffect(() => {
+    latestTriggerRef.current = triggerCount;
+  }, [triggerCount]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      canvas,
+    });
+    const clock = new THREE.Clock();
+    const smokeTexture = createSmokeTexture();
+    const confettiGeometry = new THREE.PlaneGeometry(0.055, 0.024);
+
+    camera.position.z = 6;
+    renderer.setClearColor(0x000000, 0);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+    function resize() {
+      const width = window.innerWidth || 1;
+      const height = window.innerHeight || 1;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    }
+
+    function burst() {
+      const originY = window.innerWidth < 700 ? 0.95 : 0.76;
+      const origin = new THREE.Vector3(0, originY, 0);
+
+      for (let i = 0; i < 52; i += 1) {
+        const material = new THREE.MeshBasicMaterial({
+          color: COLORS[i % COLORS.length],
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.95,
+          depthWrite: false,
+        });
+        const mesh = new THREE.Mesh(confettiGeometry, material);
+        mesh.position.copy(origin);
+        mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+        mesh.scale.setScalar(randomBetween(0.78, 1.45));
+        scene.add(mesh);
+        confettiRef.current.push({
+          mesh,
+          velocity: new THREE.Vector3(
+            randomBetween(-1.45, 1.45),
+            randomBetween(1.25, 2.65),
+            randomBetween(-0.28, 0.28),
+          ),
+          spin: new THREE.Vector3(
+            randomBetween(-7, 7),
+            randomBetween(-9, 9),
+            randomBetween(-6, 6),
+          ),
+          born: performance.now(),
+          life: randomBetween(1250, 1850),
+        });
+      }
+
+      for (let i = 0; i < 15; i += 1) {
+        const material = new THREE.SpriteMaterial({
+          map: smokeTexture,
+          color: i % 2 ? '#ff49b6' : '#4a0a3b',
+          transparent: true,
+          opacity: 0.26,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+        const mesh = new THREE.Sprite(material);
+        mesh.position.set(randomBetween(-0.4, 0.4), originY + randomBetween(-0.08, 0.08), -0.14);
+        scene.add(mesh);
+        smokeRef.current.push({
+          mesh,
+          velocity: new THREE.Vector3(randomBetween(-0.18, 0.18), randomBetween(0.16, 0.42), 0),
+          born: performance.now(),
+          life: randomBetween(1300, 2300),
+          startScale: randomBetween(0.18, 0.34),
+          endScale: randomBetween(0.72, 1.18),
+        });
+      }
+    }
+
+    function disposeConfetti(piece: ConfettiPiece) {
+      scene.remove(piece.mesh);
+      piece.mesh.geometry.dispose();
+      const material = piece.mesh.material;
+      if (Array.isArray(material)) material.forEach((item) => item.dispose());
+      else material.dispose();
+    }
+
+    function disposeSmoke(puff: SmokePuff) {
+      scene.remove(puff.mesh);
+      const material = puff.mesh.material;
+      if (Array.isArray(material)) material.forEach((item) => item.dispose());
+      else material.dispose();
+    }
+
+    let animationId = 0;
+    let seenTrigger = latestTriggerRef.current;
+
+    function animate() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const now = performance.now();
+
+      if (!activeRef.current) {
+        confettiRef.current.forEach(disposeConfetti);
+        smokeRef.current.forEach(disposeSmoke);
+        confettiRef.current = [];
+        smokeRef.current = [];
+      }
+
+      if (latestTriggerRef.current !== seenTrigger) {
+        seenTrigger = latestTriggerRef.current;
+        if (seenTrigger > 0 && activeRef.current) burst();
+      }
+
+      confettiRef.current = confettiRef.current.filter((piece) => {
+        const age = now - piece.born;
+        const t = age / piece.life;
+        if (t >= 1) {
+          disposeConfetti(piece);
+          return false;
+        }
+        piece.velocity.y -= 2.4 * dt;
+        piece.mesh.position.addScaledVector(piece.velocity, dt);
+        piece.mesh.rotation.x += piece.spin.x * dt;
+        piece.mesh.rotation.y += piece.spin.y * dt;
+        piece.mesh.rotation.z += piece.spin.z * dt;
+        const material = piece.mesh.material as THREE.MeshBasicMaterial;
+        material.opacity = Math.max(0, 1 - t);
+        return true;
+      });
+
+      smokeRef.current = smokeRef.current.filter((puff) => {
+        const age = now - puff.born;
+        const t = age / puff.life;
+        if (t >= 1) {
+          disposeSmoke(puff);
+          return false;
+        }
+        puff.mesh.position.addScaledVector(puff.velocity, dt);
+        const scale = puff.startScale + (puff.endScale - puff.startScale) * t;
+        puff.mesh.scale.set(scale, scale, scale);
+        const material = puff.mesh.material as THREE.SpriteMaterial;
+        material.opacity = 0.26 * Math.sin(Math.PI * t);
+        return true;
+      });
+
+      renderer.render(scene, camera);
+      animationId = requestAnimationFrame(animate);
+    }
+
+    resize();
+    animationId = requestAnimationFrame(animate);
+    window.addEventListener('resize', resize);
+
+    return () => {
+      cancelAnimationFrame(animationId);
+      window.removeEventListener('resize', resize);
+      confettiRef.current.forEach(disposeConfetti);
+      smokeRef.current.forEach(disposeSmoke);
+      confettiGeometry.dispose();
+      smokeTexture.dispose();
+      renderer.dispose();
+    };
+  }, []);
+
+  return (
+    <View pointerEvents="none" style={styles.container}>
+      <canvas ref={canvasRef} style={styles.canvas} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 4,
+  },
+  canvas: {
+    width: '100%',
+    height: '100%',
+    display: 'block',
+  } as any,
+});

@@ -9,7 +9,7 @@ import {
   getBetaInviteLinks,
 } from '@/emails/betaInviteEmail';
 
-const LOGO_SOURCE = require('@/assets/images/logo1.png');
+const LOGO_SOURCE = require('@/assets/images/logo3.png');
 
 export default function EmailPreviewScreen() {
   const { androidUrl, iosUrl } = getBetaInviteLinks();
@@ -45,7 +45,15 @@ export default function EmailPreviewScreen() {
 
           <View style={styles.emailBody}>
             <View style={styles.hero}>
-              <Image source={LOGO_SOURCE} style={styles.logo} resizeMode="contain" />
+              <View style={styles.brandRow}>
+                <Image source={LOGO_SOURCE} style={styles.logo} resizeMode="contain" />
+                <View>
+                  <ThemedText style={styles.wordmark}>Poplur</ThemedText>
+                  <ThemedText type="smallBold" style={styles.tagline}>
+                    Places are better live
+                  </ThemedText>
+                </View>
+              </View>
               <ThemedText type="smallBold" style={styles.kicker}>
                 Poplur beta access
               </ThemedText>
@@ -172,21 +180,41 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   hero: {
-    backgroundColor: '#15151f',
+    backgroundColor: '#18001f',
+    borderTopWidth: 8,
+    borderTopColor: '#ff0a8a',
     borderTopLeftRadius: 8,
     borderTopRightRadius: 8,
     padding: 30,
   },
-  logo: { width: 92, height: 92, marginBottom: 10 },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginBottom: 24,
+  },
+  logo: { width: 74, height: 74, borderRadius: 18 },
+  wordmark: {
+    color: '#ffffff',
+    fontSize: 30,
+    lineHeight: 34,
+    fontWeight: 900,
+  },
+  tagline: {
+    color: '#ffbfe1',
+    fontSize: 12,
+    marginTop: 3,
+    textTransform: 'uppercase',
+  },
   kicker: {
     color: '#9ee8d5',
     textTransform: 'uppercase',
     fontSize: 13,
     marginBottom: 12,
   },
-  heroTitle: { color: '#ffffff', maxWidth: 520 },
+  heroTitle: { color: '#ffffff', maxWidth: 520, fontWeight: 900 },
   heroCopy: {
-    color: '#e6e8ef',
+    color: '#f5ddea',
     lineHeight: 26,
     marginTop: 14,
     maxWidth: 540,
@@ -205,10 +233,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
-  emailButtonDark: { backgroundColor: '#15151f' },
-  emailButtonGreen: { backgroundColor: '#24d7a4' },
+  emailButtonDark: { backgroundColor: '#18001f' },
+  emailButtonGreen: { backgroundColor: '#ff0a8a' },
   darkButtonText: { color: '#ffffff', textAlign: 'center' },
-  greenButtonText: { color: '#08120f', textAlign: 'center' },
+  greenButtonText: { color: '#ffffff', textAlign: 'center' },
   tipBox: {
     marginTop: 8,
     padding: 18,
@@ -221,9 +249,9 @@ const styles = StyleSheet.create({
   tipStrong: { color: '#15151f' },
   footer: {
     gap: 9,
-    backgroundColor: '#f8f9fb',
+    backgroundColor: '#fff5fb',
     borderTopWidth: 1,
-    borderTopColor: '#e8ebf1',
+    borderTopColor: '#ffd3e9',
     borderBottomLeftRadius: 8,
     borderBottomRightRadius: 8,
     padding: 22,

@@ -6,9 +6,10 @@ export const betaInviteFrom = 'Poplur <hello@poplur.ca>';
 type BetaInviteEmailOptions = {
   androidUrl?: string;
   iosUrl?: string;
+  logoSrc?: string;
 };
 
-const defaultIosUrl = 'https://testflight.apple.com/join/poplur-beta';
+const defaultIosUrl = 'https://testflight.apple.com/join/Q4v1ChjU';
 const defaultAndroidUrl = 'https://play.google.com/apps/testing/com.poplur.app';
 
 export function getBetaInviteLinks(options: BetaInviteEmailOptions = {}) {
@@ -36,6 +37,7 @@ export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
 
 export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
   const { androidUrl, iosUrl } = getBetaInviteLinks(options);
+  const logoSrc = options.logoSrc ?? 'cid:poplur-logo';
 
   return `<!doctype html>
 <html lang="en">
@@ -51,10 +53,30 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
         <td align="center">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e4e7ee;border-radius:8px;overflow:hidden;">
             <tr>
-              <td style="background:#15151f;padding:30px 30px 34px;">
-                <div style="font-size:13px;font-weight:700;letter-spacing:0;text-transform:uppercase;color:#9ee8d5;">Poplur beta access</div>
-                <h1 style="margin:16px 0 0;font-size:36px;line-height:1.08;color:#ffffff;font-weight:800;letter-spacing:0;">Your beta links are ready.</h1>
-                <p style="margin:16px 0 0;font-size:17px;line-height:1.55;color:#e6e8ef;">Thanks for joining early. Use the links below to install Poplur and start exploring what is happening around real places.</p>
+              <td style="background:#18001f;padding:0;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="background:#ff0a8a;height:8px;line-height:8px;font-size:1px;">&nbsp;</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:30px 30px 34px;background:#18001f;">
+                      <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 24px;">
+                        <tr>
+                          <td width="74" height="74" align="center" valign="middle" style="width:74px;height:74px;">
+                            <img src="${logoSrc}" width="74" height="74" alt="Poplur" style="display:block;width:74px;height:74px;border-radius:18px;border:0;outline:none;text-decoration:none;">
+                          </td>
+                          <td style="padding-left:16px;">
+                            <div style="font-size:30px;line-height:1;color:#ffffff;font-weight:900;letter-spacing:0;font-family:Avenir Next,Avenir,Inter,Arial,sans-serif;">Poplur</div>
+                            <div style="margin-top:7px;font-size:12px;line-height:1.4;color:#ffbfe1;font-weight:800;text-transform:uppercase;letter-spacing:0;font-family:Avenir Next,Avenir,Inter,Arial,sans-serif;">Places are better live</div>
+                          </td>
+                        </tr>
+                      </table>
+                      <div style="font-size:13px;font-weight:800;letter-spacing:0;text-transform:uppercase;color:#9ee8d5;">Poplur beta access</div>
+                      <h1 style="margin:16px 0 0;font-size:38px;line-height:1.08;color:#ffffff;font-weight:900;letter-spacing:0;">Your beta links are ready.</h1>
+                      <p style="margin:16px 0 0;font-size:17px;line-height:1.55;color:#f5ddea;">Thanks for joining early. Use the links below to install Poplur and start exploring what is happening around real places.</p>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
             <tr>
@@ -67,7 +89,7 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
                   </tr>
                   <tr>
                     <td>
-                      <a href="${iosUrl}" style="display:block;background:#15151f;border-radius:8px;color:#ffffff;font-size:16px;font-weight:800;line-height:54px;text-align:center;text-decoration:none;">Get Poplur for iOS</a>
+                      <a href="${iosUrl}" style="display:block;background:#18001f;border-radius:8px;color:#ffffff;font-size:16px;font-weight:800;line-height:54px;text-align:center;text-decoration:none;">Get Poplur for iOS</a>
                     </td>
                   </tr>
                   <tr>
@@ -75,7 +97,7 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
                   </tr>
                   <tr>
                     <td>
-                      <a href="${androidUrl}" style="display:block;background:#24d7a4;border-radius:8px;color:#08120f;font-size:16px;font-weight:800;line-height:54px;text-align:center;text-decoration:none;">Get Poplur for Android</a>
+                      <a href="${androidUrl}" style="display:block;background:#ff0a8a;border-radius:8px;color:#ffffff;font-size:16px;font-weight:800;line-height:54px;text-align:center;text-decoration:none;">Get Poplur for Android</a>
                     </td>
                   </tr>
                 </table>
@@ -86,9 +108,9 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
               </td>
             </tr>
             <tr>
-              <td style="padding:22px 30px;background:#f8f9fb;border-top:1px solid #e8ebf1;">
+              <td style="padding:22px 30px;background:#fff5fb;border-top:1px solid #ffd3e9;">
                 <p style="margin:0;font-size:13px;line-height:1.5;color:#777f90;">You received this because you requested Poplur beta access from the website.</p>
-                <p style="margin:10px 0 0;font-size:13px;line-height:1.5;color:#777f90;">Poplur</p>
+                <p style="margin:10px 0 0;font-size:15px;line-height:1.5;color:#18001f;font-weight:900;">Poplur</p>
               </td>
             </tr>
           </table>

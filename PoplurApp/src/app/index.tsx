@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
   Animated,
@@ -16,10 +17,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AnimatedIcon } from '@/components/animated-icon';
 import { PageCube } from '@/components/page-cube';
+import { ParticleBurst } from '@/components/particle-burst';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts, Spacing } from '@/constants/theme';
 import { sendBetaInviteEmail } from '@/services/betaEmailService';
+import { saveBetaSignupEmail } from '@/services/betaSignupService';
 
 // [0]=Home, [1]=Beta/Signup, [2]=About (cube bottom face)
 const PAGE_LABELS = ['Home', 'Beta', 'About'];
@@ -31,6 +34,10 @@ const CUBE_BOTTOM = Spacing.five;
 const BACKGROUND_VIDEO_SOURCE = require('@/assets/videos/poplur-users-app-background.mp4');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const EXPLAINER_VIDEO_SOURCE = require('@/assets/videos/poplr-explainer-narrated.mp4');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const EXPLAINER_NARRATION_SOURCE = require('@/assets/videos/poplr-explainer-narration.wav');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const LOGO_SOURCE = require('@/assets/images/logo3.png');
 
 export default function HomeScreen() {
   const { height, width } = useWindowDimensions();
@@ -43,11 +50,12 @@ export default function HomeScreen() {
   const [currentSection, setCurrentSection] = useState(0); // vertical: 0=Logo 1=About
   const [popCount, setPopCount] = useState(0);
   const [hintMessageIndex, setHintMessageIndex] = useState(0);
-  const [soundPromptDismissed, setSoundPromptDismissed] = useState(false);
   const hScrollRef = useRef<ScrollView>(null);    // outer horizontal pager
   const homeScrollRef = useRef<ScrollView>(null); // home page inner vertical scroll
   const activePageRef = useRef(0);
+  const currentSectionRef = useRef(0);
   const hasInteractedRef = useRef(Platform.OS !== 'web');
+  const narrationAudioRef = useRef<HTMLAudioElement | null>(null);
   const hintMotion = useRef(new Animated.Value(0)).current;
   const hintTextOpacity = useRef(new Animated.Value(1)).current;
   const backgroundPlayer = useVideoPlayer(BACKGROUND_VIDEO_SOURCE, (player) => {
@@ -56,9 +64,9 @@ export default function HomeScreen() {
     player.play();
   });
   const explainerPlayer = useVideoPlayer(EXPLAINER_VIDEO_SOURCE, (player) => {
-    player.loop = false;
+    player.loop = true;
     player.muted = true;
-    player.pause();
+    player.play();
   });
 
   useEffect(() => {
@@ -68,15 +76,47 @@ export default function HomeScreen() {
   }, [backgroundPlayer]);
 
   useEffect(() => {
-    explainerPlayer.loop = false;
+    explainerPlayer.loop = true;
     explainerPlayer.muted = true;
-    explainerPlayer.pause();
+    explainerPlayer.play();
   }, [explainerPlayer]);
 
   useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const audio = document.createElement('audio');
+    audio.src = EXPLAINER_NARRATION_SOURCE;
+    audio.preload = 'auto';
+    audio.volume = 1;
+    audio.style.display = 'none';
+    document.body.appendChild(audio);
+    narrationAudioRef.current = audio;
+    (window as any).__poplurNarrationAudio = audio;
+    return () => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.remove();
+      narrationAudioRef.current = null;
+      delete (window as any).__poplurNarrationAudio;
+    };
+  }, []);
+
+  useEffect(() => {
+    currentSectionRef.current = currentSection;
     const isExplainerVisible = activePage === 0 && currentSection === 1;
     if (isExplainerVisible) {
       restartExplainer(hasInteractedRef.current);
+      if (Platform.OS === 'web') {
+        let attempts = 0;
+        const retry = window.setInterval(() => {
+          attempts += 1;
+          if (activePageRef.current === 0 && currentSectionRef.current === 1) {
+            playExplainerElement(false, attempts === 1);
+            if (hasInteractedRef.current) playNarrationAudio(attempts === 1);
+          }
+          if (attempts >= 8) window.clearInterval(retry);
+        }, 260);
+        return () => window.clearInterval(retry);
+      }
     } else {
       stopExplainer();
     }
@@ -84,10 +124,29 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
+    const interval = window.setInterval(() => {
+      const video = getExplainerElement();
+      if (!video) return;
+      video.muted = true;
+      video.defaultMuted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.setAttribute('muted', '');
+      video.setAttribute('autoplay', '');
+      video.setAttribute('playsinline', '');
+      video.loop = true;
+      if (video.paused) video.play().catch(() => {});
+    }, 450);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
     function enableBackgroundMusic() {
       hasInteractedRef.current = true;
-      backgroundPlayer.muted = false;
+      backgroundPlayer.muted = true;
       backgroundPlayer.play();
+      primeNarrationAudio();
       if (activePage === 0 && currentSection === 1) {
         restartExplainer(true);
       }
@@ -109,8 +168,9 @@ export default function HomeScreen() {
     function unlockExplainerFromGesture() {
       if (activePageRef.current !== 0) return;
       hasInteractedRef.current = true;
-      playExplainerElement(true, true);
-      explainerPlayer.muted = false;
+      playExplainerElement(false, true);
+      playNarrationAudio(true);
+      explainerPlayer.muted = true;
       explainerPlayer.play();
     }
 
@@ -120,7 +180,7 @@ export default function HomeScreen() {
 
     function handlePointerDown(event: PointerEvent) {
       pointerStartY = event.clientY;
-      if (activePageRef.current === 0 && currentSection === 1) unlockExplainerFromGesture();
+      if (activePageRef.current === 0 && currentSectionRef.current === 1) unlockExplainerFromGesture();
     }
 
     function handlePointerMove(event: PointerEvent) {
@@ -136,14 +196,16 @@ export default function HomeScreen() {
     window.addEventListener('wheel', handleWheel, { passive: true });
     window.addEventListener('pointerdown', handlePointerDown, { passive: true });
     window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    window.addEventListener('touchmove', unlockExplainerFromGesture, { passive: true });
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('wheel', handleWheel);
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('touchmove', unlockExplainerFromGesture);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentSection, explainerPlayer]);
+  }, [explainerPlayer]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -250,17 +312,19 @@ export default function HomeScreen() {
   }, []);
 
   function restartExplainer(withSound: boolean) {
-    explainerPlayer.loop = false;
+    explainerPlayer.loop = true;
     explainerPlayer.currentTime = 0;
     if (Platform.OS === 'web') {
       explainerPlayer.muted = true;
       explainerPlayer.play();
-      playExplainerElement(withSound);
+      playExplainerElement(false);
+      if (withSound) playNarrationAudio(true);
       if (withSound) {
         window.setTimeout(() => {
-          explainerPlayer.muted = false;
+          explainerPlayer.muted = true;
           explainerPlayer.play();
-          playExplainerElement(true, false);
+          playExplainerElement(false, false);
+          playNarrationAudio(false);
         }, 80);
       }
       return;
@@ -270,15 +334,20 @@ export default function HomeScreen() {
   }
 
   function stopExplainer() {
-    explainerPlayer.pause();
-    explainerPlayer.currentTime = 0;
+    explainerPlayer.loop = true;
     explainerPlayer.muted = true;
+    explainerPlayer.play();
     if (Platform.OS === 'web') {
       const video = getExplainerElement();
       if (video) {
-        video.pause();
-        video.currentTime = 0;
         video.muted = true;
+        video.loop = true;
+        video.play().catch(() => {});
+      }
+      const audio = narrationAudioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
       }
     }
   }
@@ -290,35 +359,71 @@ export default function HomeScreen() {
     ) ?? null;
   }
 
+  function isExplainerElementVisible(video: HTMLVideoElement) {
+    const style = window.getComputedStyle(video);
+    const rect = video.getBoundingClientRect();
+    return Number(style.opacity) > 0.5 && rect.width > 0 && rect.height > 0;
+  }
+
   function playExplainerElement(withSound: boolean, reset = true) {
     const video = getExplainerElement();
     if (!video) return;
     if (reset) video.currentTime = 0;
     video.volume = 1;
-    video.muted = !withSound;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute('muted', '');
+    video.setAttribute('autoplay', '');
+    video.setAttribute('playsinline', '');
     const playPromise = video.play();
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch(() => {
         video.muted = true;
-        video.play()
-          .then(() => {
-            if (withSound) {
-              window.setTimeout(() => {
-                video.muted = false;
-                video.volume = 1;
-                video.play().catch(() => {});
-              }, 180);
-            }
-          })
-          .catch(() => {});
+        video.play().catch(() => {});
       });
     }
   }
 
-  function playExplainerWithSound() {
-    hasInteractedRef.current = true;
-    setSoundPromptDismissed(true);
-    restartExplainer(true);
+  function getNarrationAudio() {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+    if (!narrationAudioRef.current && typeof document !== 'undefined') {
+      const audio = document.createElement('audio');
+      audio.src = EXPLAINER_NARRATION_SOURCE;
+      audio.preload = 'auto';
+      audio.volume = 1;
+      audio.style.display = 'none';
+      document.body.appendChild(audio);
+      narrationAudioRef.current = audio;
+      (window as any).__poplurNarrationAudio = audio;
+    }
+    return narrationAudioRef.current;
+  }
+
+  function primeNarrationAudio() {
+    const audio = getNarrationAudio();
+    if (!audio) return;
+    audio.muted = true;
+    audio.currentTime = 0;
+    audio.play()
+      .then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = false;
+      })
+      .catch(() => {
+        audio.muted = false;
+      });
+  }
+
+  function playNarrationAudio(reset = true) {
+    const audio = getNarrationAudio();
+    if (!audio) return;
+    if (reset) audio.currentTime = 0;
+    audio.muted = false;
+    audio.volume = 1;
+    audio.play().catch(() => {});
   }
 
   function updateActivePage(event: NativeSyntheticEvent<NativeScrollEvent>) {
@@ -334,6 +439,7 @@ export default function HomeScreen() {
       activePageRef.current = next;
       setActivePage(next);
       if (next !== 0) {
+        currentSectionRef.current = 0;
         setCurrentSection(0);
         homeScrollRef.current?.scrollTo({ y: 0, animated: false });
       }
@@ -347,6 +453,7 @@ export default function HomeScreen() {
     setPageProgress(p);
     // Navigating away from home → reset vertical section
     if (p !== 0) {
+      currentSectionRef.current = 0;
       setCurrentSection(0);
       homeScrollRef.current?.scrollTo({ y: 0, animated: false });
     }
@@ -366,6 +473,7 @@ export default function HomeScreen() {
 
   function scrollToSection(section: number) {
     const s = Math.max(0, Math.min(1, section));
+    currentSectionRef.current = s;
     setCurrentSection(s);
     if (s === 1) {
       hasInteractedRef.current = true;
@@ -381,12 +489,24 @@ export default function HomeScreen() {
     homeScrollRef.current?.scrollTo({ y: s * pageHeight, animated: true });
   }
 
+  function startExplainerNarrationGesture() {
+    if (Platform.OS !== 'web' || activePageRef.current !== 0) return;
+    hasInteractedRef.current = true;
+    primeNarrationAudio();
+    window.setTimeout(() => {
+      if (activePageRef.current === 0 && currentSectionRef.current === 1) {
+        playNarrationAudio(true);
+      }
+    }, 140);
+  }
+
   function handleHomeVertScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
     const y = event.nativeEvent.contentOffset.y;
     const h = event.nativeEvent.layoutMeasurement.height || pageHeight;
     if (h > 0) {
       const nextSection = y > h * 0.18 ? 1 : 0;
       if (nextSection !== currentSection) {
+        currentSectionRef.current = nextSection;
         setCurrentSection(nextSection);
         if (nextSection === 1) {
           hasInteractedRef.current = true;
@@ -408,6 +528,7 @@ export default function HomeScreen() {
     setIsSubmittingEmail(true);
 
     try {
+      await saveBetaSignupEmail(normalizedEmail);
       await sendBetaInviteEmail(normalizedEmail);
       setSubmitted(true);
     } catch (error) {
@@ -446,6 +567,7 @@ export default function HomeScreen() {
     hintMessageIndex === 0
       ? { arrow: '→', text: 'Swipe right to join', transform: [{ translateX: leftArrowShift }] }
       : { arrow: '↓', text: 'Swipe down to learn about', transform: [{ translateY: downArrowShift }] };
+  const isHomeLogoPage = activePage === 0 && currentSection === 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -480,6 +602,7 @@ export default function HomeScreen() {
         />
         <View style={styles.backgroundOverlay} />
       </View>
+      <ParticleBurst active={isHomeLogoPage} triggerCount={popCount} />
 
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.topPagination}>
@@ -566,6 +689,7 @@ export default function HomeScreen() {
             nestedScrollEnabled
             snapToInterval={Platform.OS !== 'web' ? pageHeight : undefined}
             decelerationRate={Platform.OS !== 'web' ? 'fast' : undefined}
+            onScrollBeginDrag={startExplainerNarrationGesture}
             onScroll={handleHomeVertScroll}
             scrollEventThrottle={16}
           >
@@ -609,20 +733,6 @@ export default function HomeScreen() {
 
             {/* Section 1 — Explainer background */}
             <View style={[styles.explainerSlide, sectionSize, webVertSectionSnap]}>
-              {!soundPromptDismissed ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={playExplainerWithSound}
-                  style={({ pressed }) => [
-                    styles.soundButton,
-                    pressed && styles.soundButtonPressed,
-                  ]}
-                >
-                  <ThemedText type="smallBold" style={styles.soundButtonText}>
-                    Play narration
-                  </ThemedText>
-                </Pressable>
-              ) : null}
             </View>
           </ScrollView>
 
@@ -638,7 +748,7 @@ export default function HomeScreen() {
               <View pointerEvents="none" style={styles.signupBrandWash} />
               <View style={styles.signupContent}>
                 <View style={styles.signupMark}>
-                  <ThemedText style={styles.signupMarkText}>P</ThemedText>
+                  <Image contentFit="cover" source={LOGO_SOURCE} style={styles.signupMarkImage} />
                 </View>
                 <ThemedText type="title" style={styles.signupTitle}>
                   Join the Poplur beta
@@ -957,33 +1067,9 @@ const styles = StyleSheet.create({
   explainerSlide: {
     width: '100%',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.four,
-  },
-  soundButton: {
-    minHeight: 42,
-    borderRadius: 8,
-    paddingHorizontal: Spacing.three,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: Spacing.four,
-    backgroundColor: 'rgba(255, 10, 138, 0.86)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    shadowColor: '#ff0a8a',
-    shadowOpacity: 0.42,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-  },
-  soundButtonPressed: {
-    opacity: 0.82,
-    transform: [{ translateY: 1 }],
-  },
-  soundButtonText: {
-    color: '#ffffff',
-    fontFamily: Fonts.sans,
-    fontWeight: 900,
   },
   explainerVideo: {
     width: '100%',
@@ -1018,23 +1104,17 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ff0a8a',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.72)',
+    overflow: 'hidden',
     shadowColor: '#ff0a8a',
     shadowOpacity: 0.65,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 10 },
   },
-  signupMarkText: {
-    color: '#ffffff',
-    fontFamily: Fonts.sans,
-    fontSize: 44,
-    fontWeight: 900,
-    lineHeight: 52,
-    textShadowColor: 'rgba(89, 0, 52, 0.52)',
-    textShadowOffset: { width: 0, height: 3 },
-    textShadowRadius: 4,
+  signupMarkImage: {
+    width: '100%',
+    height: '100%',
   },
   signupTitle: {
     textAlign: 'center',

@@ -5,8 +5,14 @@ import {
   createBetaInviteText,
 } from '@/emails/betaInviteEmail';
 
+declare const require: any;
+
+const { readFile } = require('node:fs/promises');
+const path = require('node:path');
+
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const LOGO_CONTENT_ID = 'poplur-logo';
 
 type SendEmailRequest = {
   email?: unknown;
@@ -44,10 +50,17 @@ export async function POST(request: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      attachments: [
+        {
+          content: await getLogoContent(),
+          contentId: LOGO_CONTENT_ID,
+          filename: 'logo3.png',
+        },
+      ],
       from,
       to: email,
       subject: betaInviteSubject,
-      html: createBetaInviteHtml(),
+      html: createBetaInviteHtml({ logoSrc: `cid:${LOGO_CONTENT_ID}` }),
       text: createBetaInviteText(),
     }),
   });
@@ -68,4 +81,11 @@ export async function POST(request: Request) {
   const result = (await response.json()) as { id?: string };
 
   return Response.json({ id: result.id ?? null, ok: true });
+}
+
+async function getLogoContent() {
+  const logoPath = path.join(process.cwd(), 'assets/images/logo3.png');
+  const logo = await readFile(logoPath);
+
+  return logo.toString('base64');
 }

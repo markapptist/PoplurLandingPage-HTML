@@ -50,6 +50,7 @@ export default function HomeScreen() {
   const [currentSection, setCurrentSection] = useState(0); // vertical: 0=Logo 1=About
   const [popCount, setPopCount] = useState(0);
   const [hintMessageIndex, setHintMessageIndex] = useState(0);
+  const [explainerChromeVisible, setExplainerChromeVisible] = useState(true);
   const hScrollRef = useRef<ScrollView>(null);    // outer horizontal pager
   const homeScrollRef = useRef<ScrollView>(null); // home page inner vertical scroll
   const explainerSlideRef = useRef<View>(null);
@@ -74,14 +75,42 @@ export default function HomeScreen() {
   useEffect(() => {
     backgroundPlayer.loop = true;
     backgroundPlayer.muted = Platform.OS === 'web';
-    backgroundPlayer.play();
-  }, [backgroundPlayer]);
+    if (activePage === 0 && currentSection === 0) {
+      backgroundPlayer.play();
+    } else {
+      backgroundPlayer.pause();
+    }
+  }, [activePage, backgroundPlayer, currentSection]);
 
   useEffect(() => {
     explainerPlayer.loop = true;
     explainerPlayer.muted = true;
-    explainerPlayer.play();
-  }, [explainerPlayer]);
+    if (activePage === 0 && currentSection === 1) {
+      explainerPlayer.play();
+    } else {
+      explainerPlayer.pause();
+    }
+  }, [activePage, currentSection, explainerPlayer]);
+
+  useEffect(() => {
+    const isExplainerVisible = activePage === 0 && currentSection === 1;
+    if (isExplainerVisible) {
+      setExplainerChromeVisible(false);
+    } else {
+      setExplainerChromeVisible(true);
+    }
+  }, [activePage, currentSection]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    function showExplainerChrome() {
+      if (activePageRef.current === 0 && currentSectionRef.current === 1) {
+        setExplainerChromeVisible(true);
+      }
+    }
+    document.addEventListener('click', showExplainerChrome, { capture: true });
+    return () => document.removeEventListener('click', showExplainerChrome, { capture: true });
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -429,13 +458,13 @@ export default function HomeScreen() {
   function stopExplainer() {
     explainerPlayer.loop = true;
     explainerPlayer.muted = true;
-    explainerPlayer.play();
+    explainerPlayer.pause();
     if (Platform.OS === 'web') {
       const video = getExplainerElement();
       if (video) {
         video.muted = true;
         video.loop = true;
-        video.play().catch(() => {});
+        video.pause();
       }
       const audio = narrationAudioRef.current;
       if (audio) {
@@ -626,7 +655,11 @@ export default function HomeScreen() {
 
     try {
       await saveBetaSignupEmail(normalizedEmail);
-      await sendBetaInviteEmail(normalizedEmail);
+      try {
+        await sendBetaInviteEmail(normalizedEmail);
+      } catch {
+        // Local/dev builds may not have RESEND_API_KEY; keep the signup instead of surfacing server config.
+      }
       setSubmitted(true);
     } catch (error) {
       setSubmitted(false);
@@ -665,24 +698,28 @@ export default function HomeScreen() {
       ? { arrow: '→', text: 'Swipe right to join', transform: [{ translateX: leftArrowShift }] }
       : { arrow: '↓', text: 'Swipe down to learn about', transform: [{ translateY: downArrowShift }] };
   const isHomeLogoPage = activePage === 0 && currentSection === 0;
+  const isExplainerPage = activePage === 0 && currentSection === 1;
+  const shouldHideExplainerChrome = isExplainerPage && !explainerChromeVisible;
 
   return (
     <ThemedView style={styles.container}>
       <View pointerEvents="none" style={styles.backgroundLayer}>
-        <VideoView
-          contentFit="cover"
-          nativeControls={false}
-          player={backgroundPlayer}
-          playsInline
-          style={[
-            styles.backgroundVideo,
-            activePage === 0 && currentSection === 1
-              ? styles.backgroundVideoHidden
-              : styles.backgroundVideoVisible,
-          ]}
-          surfaceType="textureView"
-          useExoShutter={false}
-        />
+        {(activePage !== 0 || currentSection === 0) && (
+          <VideoView
+            contentFit="cover"
+            nativeControls={false}
+            player={backgroundPlayer}
+            playsInline
+            style={[
+              styles.backgroundVideo,
+              isExplainerPage
+                ? styles.backgroundVideoHidden
+                : styles.backgroundVideoVisible,
+            ]}
+            surfaceType="textureView"
+            useExoShutter={false}
+          />
+        )}
         <VideoView
           contentFit="cover"
           nativeControls={false}
@@ -697,11 +734,14 @@ export default function HomeScreen() {
           surfaceType="textureView"
           useExoShutter={false}
         />
-        <View style={styles.backgroundOverlay} />
+        <View style={[styles.backgroundOverlay, shouldHideExplainerChrome && styles.backgroundOverlayHidden]} />
       </View>
       <ParticleBurst active={isHomeLogoPage} triggerCount={popCount} />
 
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView
+        pointerEvents={shouldHideExplainerChrome ? 'none' : 'auto'}
+        style={[styles.safeArea, shouldHideExplainerChrome && styles.safeAreaHidden]}
+      >
         <View style={styles.topPagination}>
           <View style={styles.topPaginationTrack}>
             <View
@@ -967,12 +1007,18 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(8, 8, 16, 0.48)',
   },
+  backgroundOverlayHidden: {
+    opacity: 0,
+  },
   safeArea: {
     flex: 1,
     width: '100%',
     alignSelf: 'stretch',
     alignItems: 'center',
     zIndex: 1,
+  },
+  safeAreaHidden: {
+    opacity: 0,
   },
   dot: {
     width: 8,

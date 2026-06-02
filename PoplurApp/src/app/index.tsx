@@ -24,19 +24,14 @@ import { Fonts, Spacing } from '@/constants/theme';
 import { sendBetaInviteEmail } from '@/services/betaEmailService';
 import { saveBetaSignupEmail } from '@/services/betaSignupService';
 
-// [0]=Home, [1]=Beta/Signup, [2]=About (cube bottom face)
-const PAGE_LABELS = ['Home', 'Beta', 'About'];
+// [0]=Home, [1]=Beta/Signup, [2]=Preview (cube bottom face)
+const PAGE_LABELS = ['Home', 'Beta', 'Preview'];
 const HORIZONTAL_PAGE_LABELS = ['Home', 'Join'];
 
-const CUBE_HEIGHT = 118;
 const CUBE_BOTTOM = Spacing.five;
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const BACKGROUND_VIDEO_SOURCE = require('@/assets/videos/poplur-users-app-background.mp4');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const EXPLAINER_VIDEO_SOURCE = require('@/assets/videos/poplr-explainer-narrated.mp4');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const EXPLAINER_NARRATION_SOURCE = require('@/assets/videos/poplr-explainer-narration.wav');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+const TEASER_VIDEO_SOURCE = require('@/assets/videos/poplur-users-app-background.mp4');
+const TEASER_VIDEO_FILE_HINT = 'poplur-users-app-background';
 const LOGO_SOURCE = require('@/assets/images/logo3.png');
 
 export default function HomeScreen() {
@@ -52,12 +47,10 @@ export default function HomeScreen() {
   const [hintMessageIndex, setHintMessageIndex] = useState(0);
   const hScrollRef = useRef<ScrollView>(null);    // outer horizontal pager
   const homeScrollRef = useRef<ScrollView>(null); // home page inner vertical scroll
-  const explainerSlideRef = useRef<View>(null);
+  const teaserSlideRef = useRef<View>(null);
   const activePageRef = useRef(0);
   const currentSectionRef = useRef(0);
   const hasInteractedRef = useRef(Platform.OS !== 'web');
-  const explainerSoundRequestedRef = useRef(false);
-  const narrationAudioRef = useRef<HTMLAudioElement | null>(null);
   const hintMotion = useRef(new Animated.Value(0)).current;
   const hintTextOpacity = useRef(new Animated.Value(1)).current;
   const backgroundPlayer = useVideoPlayer(BACKGROUND_VIDEO_SOURCE, (player) => {
@@ -65,7 +58,7 @@ export default function HomeScreen() {
     player.muted = Platform.OS === 'web';
     player.play();
   });
-  const explainerPlayer = useVideoPlayer(EXPLAINER_VIDEO_SOURCE, (player) => {
+  const teaserPlayer = useVideoPlayer(TEASER_VIDEO_SOURCE, (player) => {
     player.loop = true;
     player.muted = true;
     player.play();
@@ -82,86 +75,59 @@ export default function HomeScreen() {
   }, [activePage, backgroundPlayer, currentSection]);
 
   useEffect(() => {
-    explainerPlayer.loop = true;
-    explainerPlayer.muted = true;
+    teaserPlayer.loop = true;
+    teaserPlayer.muted = true;
     if (activePage === 0 && currentSection === 1) {
-      explainerPlayer.play();
+      teaserPlayer.play();
     } else {
-      explainerPlayer.pause();
+      teaserPlayer.pause();
     }
-  }, [activePage, currentSection, explainerPlayer]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const audio = document.createElement('audio');
-    audio.src = EXPLAINER_NARRATION_SOURCE;
-    audio.preload = 'auto';
-    audio.volume = 1;
-    audio.style.display = 'none';
-    document.body.appendChild(audio);
-    narrationAudioRef.current = audio;
-    (window as any).__poplurNarrationAudio = audio;
-    return () => {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.remove();
-      narrationAudioRef.current = null;
-      delete (window as any).__poplurNarrationAudio;
-    };
-  }, []);
+  }, [activePage, currentSection, teaserPlayer]);
 
   useEffect(() => {
     currentSectionRef.current = currentSection;
-    const isExplainerVisible = activePage === 0 && currentSection === 1;
-    if (isExplainerVisible) {
-      restartExplainer(hasInteractedRef.current);
+    const isTeaserVisible = activePage === 0 && currentSection === 1;
+    if (isTeaserVisible) {
+      restartTeaser();
       if (Platform.OS === 'web') {
         let attempts = 0;
         const retry = window.setInterval(() => {
           attempts += 1;
           if (activePageRef.current === 0 && currentSectionRef.current === 1) {
-            playExplainerElement(false, attempts === 1);
-            if (hasInteractedRef.current) playNarrationAudio(attempts === 1);
+            playTeaserElement(attempts === 1);
           }
           if (attempts >= 8) window.clearInterval(retry);
         }, 260);
         return () => window.clearInterval(retry);
       }
     } else {
-      stopExplainer();
+      stopTeaser();
     }
-  }, [activePage, currentSection, explainerPlayer]);
+  }, [activePage, currentSection, teaserPlayer]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const interval = window.setInterval(() => {
-      const video = getExplainerElement();
+      const video = getTeaserElement();
       if (!video) return;
-      const shouldPlaySound = Number(window.getComputedStyle(video).opacity) > 0.5;
-      const shouldStartMuted = !shouldPlaySound || video.paused;
-      video.muted = shouldStartMuted;
-      video.defaultMuted = shouldStartMuted;
+      video.muted = true;
+      video.defaultMuted = true;
       video.autoplay = true;
       video.playsInline = true;
-      if (shouldPlaySound && !shouldStartMuted) {
-        video.removeAttribute('muted');
-      } else {
-        video.setAttribute('muted', '');
-      }
+      video.setAttribute('muted', '');
       video.setAttribute('autoplay', '');
       video.setAttribute('playsinline', '');
       video.loop = true;
       if (video.paused) video.play().catch(() => {});
-      if (shouldPlaySound) window.setTimeout(unmuteExplainerElement, 60);
     }, 450);
     return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const target = (explainerSlideRef.current as any)?.getBoundingClientRect
-      ? (explainerSlideRef.current as any)
-      : (explainerSlideRef.current as any)?.getScrollableNode?.();
+    const target = (teaserSlideRef.current as any)?.getBoundingClientRect
+      ? (teaserSlideRef.current as any)
+      : (teaserSlideRef.current as any)?.getScrollableNode?.();
     if (!target || typeof IntersectionObserver === 'undefined') return;
 
     const observer = new IntersectionObserver(
@@ -170,14 +136,14 @@ export default function HomeScreen() {
         if (isVisible && activePageRef.current === 0) {
           currentSectionRef.current = 1;
           setCurrentSection(1);
-          restartExplainer(hasInteractedRef.current || explainerSoundRequestedRef.current);
+          restartTeaser();
           return;
         }
 
         if (activePageRef.current === 0) {
           currentSectionRef.current = 0;
           setCurrentSection(0);
-          stopExplainer();
+          stopTeaser();
         }
       },
       { threshold: [0, 0.38, 0.62, 1] },
@@ -185,7 +151,7 @@ export default function HomeScreen() {
 
     observer.observe(target);
     return () => observer.disconnect();
-  }, [explainerPlayer]);
+  }, [teaserPlayer]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -209,10 +175,9 @@ export default function HomeScreen() {
       setCurrentSection(nextSection);
       if (nextSection === 1) {
         hasInteractedRef.current = true;
-        explainerSoundRequestedRef.current = true;
-        restartExplainer(true);
+        restartTeaser();
       } else {
-        stopExplainer();
+        stopTeaser();
       }
     }
 
@@ -226,7 +191,7 @@ export default function HomeScreen() {
       window.removeEventListener('wheel', syncWebSectionFromScroll, { capture: true });
       window.removeEventListener('touchmove', syncWebSectionFromScroll, { capture: true });
     };
-  }, [explainerPlayer]);
+  }, [teaserPlayer]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -235,7 +200,7 @@ export default function HomeScreen() {
       backgroundPlayer.muted = true;
       backgroundPlayer.play();
       if (activePage === 0 && currentSection === 1) {
-        restartExplainer(true);
+        restartTeaser();
       }
     }
     document.addEventListener('pointerdown', enableBackgroundMusic, { capture: true, once: true });
@@ -250,66 +215,7 @@ export default function HomeScreen() {
       window.removeEventListener('wheel', enableBackgroundMusic, { capture: true });
       window.removeEventListener('keydown', enableBackgroundMusic, { capture: true });
     };
-  }, [activePage, backgroundPlayer, currentSection, explainerPlayer]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    let pointerStartY = 0;
-
-    function unlockExplainerFromGesture() {
-      if (activePageRef.current !== 0) return;
-      hasInteractedRef.current = true;
-      explainerSoundRequestedRef.current = true;
-      playExplainerElement(false, true);
-      playNarrationAudio(true);
-      explainerPlayer.muted = true;
-      explainerPlayer.play();
-    }
-
-    function handleWheel(event: WheelEvent) {
-      if (event.deltaY > 8) unlockExplainerFromGesture();
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      pointerStartY = event.clientY;
-      if (activePageRef.current === 0) {
-        hasInteractedRef.current = true;
-        explainerSoundRequestedRef.current = true;
-      }
-      if (activePageRef.current === 0 && currentSectionRef.current === 1) unlockExplainerFromGesture();
-    }
-
-    function handlePointerMove(event: PointerEvent) {
-      if (pointerStartY - event.clientY > 24) unlockExplainerFromGesture();
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === ' ') {
-        unlockExplainerFromGesture();
-      }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown, { capture: true, passive: true });
-    document.addEventListener('mousedown', () => {
-      hasInteractedRef.current = true;
-      explainerSoundRequestedRef.current = true;
-    }, { capture: true, passive: true });
-    document.addEventListener('touchstart', () => {
-      hasInteractedRef.current = true;
-      explainerSoundRequestedRef.current = true;
-    }, { capture: true, passive: true });
-    window.addEventListener('wheel', handleWheel, { capture: true, passive: true });
-    window.addEventListener('pointermove', handlePointerMove, { capture: true, passive: true });
-    window.addEventListener('touchmove', unlockExplainerFromGesture, { capture: true, passive: true });
-    window.addEventListener('keydown', handleKeyDown, { capture: true });
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, { capture: true });
-      window.removeEventListener('wheel', handleWheel, { capture: true });
-      window.removeEventListener('pointermove', handlePointerMove, { capture: true });
-      window.removeEventListener('touchmove', unlockExplainerFromGesture, { capture: true });
-      window.removeEventListener('keydown', handleKeyDown, { capture: true });
-    };
-  }, [explainerPlayer]);
+  }, [activePage, backgroundPlayer, currentSection, teaserPlayer]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -398,7 +304,6 @@ export default function HomeScreen() {
     function getAudio(): HTMLAudioElement | null {
       if (!audio) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
           const src = require('@/assets/pop.mp3') as string;
           audio = new (window as any).Audio(src);
           (audio as HTMLAudioElement).preload = 'auto';
@@ -415,59 +320,41 @@ export default function HomeScreen() {
     return () => document.removeEventListener('click', handleClick);
   }, []);
 
-  function restartExplainer(withSound: boolean) {
-    explainerPlayer.loop = true;
-    explainerPlayer.currentTime = 0;
+  function restartTeaser() {
+    teaserPlayer.loop = true;
+    teaserPlayer.currentTime = 0;
+    teaserPlayer.muted = true;
     if (Platform.OS === 'web') {
-      explainerPlayer.muted = !withSound;
-      explainerPlayer.play();
-      playExplainerElement(withSound);
-      if (withSound) {
-        window.setTimeout(() => {
-          explainerPlayer.muted = false;
-          unmuteExplainerElement();
-        }, 80);
-      }
+      teaserPlayer.play();
+      playTeaserElement();
       return;
     }
-    explainerPlayer.muted = !withSound;
-    explainerPlayer.play();
+    teaserPlayer.play();
   }
 
-  function stopExplainer() {
-    explainerPlayer.loop = true;
-    explainerPlayer.muted = true;
-    explainerPlayer.pause();
+  function stopTeaser() {
+    teaserPlayer.loop = true;
+    teaserPlayer.muted = true;
+    teaserPlayer.pause();
     if (Platform.OS === 'web') {
-      const video = getExplainerElement();
+      const video = getTeaserElement();
       if (video) {
         video.muted = true;
         video.loop = true;
         video.pause();
       }
-      const audio = narrationAudioRef.current;
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
     }
   }
 
-  function getExplainerElement() {
+  function getTeaserElement() {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return null;
     return Array.from(document.querySelectorAll('video')).find((video) =>
-      (video.currentSrc || video.src).includes('poplr-explainer-narrated'),
+      (video.currentSrc || video.src).includes(TEASER_VIDEO_FILE_HINT),
     ) ?? null;
   }
 
-  function isExplainerElementVisible(video: HTMLVideoElement) {
-    const style = window.getComputedStyle(video);
-    const rect = video.getBoundingClientRect();
-    return Number(style.opacity) > 0.5 && rect.width > 0 && rect.height > 0;
-  }
-
-  function playExplainerElement(withSound: boolean, reset = true) {
-    const video = getExplainerElement();
+  function playTeaserElement(reset = true) {
+    const video = getTeaserElement();
     if (!video) return;
     if (reset) video.currentTime = 0;
     video.volume = 1;
@@ -481,52 +368,10 @@ export default function HomeScreen() {
     const playPromise = video.play();
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch(() => {
-        if (!withSound) {
-          video.muted = true;
-          video.play().catch(() => {});
-        }
+        video.muted = true;
+        video.play().catch(() => {});
       });
     }
-    if (withSound) window.setTimeout(unmuteExplainerElement, 70);
-  }
-
-  function unmuteExplainerElement() {
-    const video = getExplainerElement();
-    if (!video) return;
-    video.volume = 1;
-    video.muted = false;
-    video.defaultMuted = false;
-    video.removeAttribute('muted');
-  }
-
-  function getNarrationAudio() {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
-    if (!narrationAudioRef.current && typeof document !== 'undefined') {
-      const audio = document.createElement('audio');
-      audio.src = EXPLAINER_NARRATION_SOURCE;
-      audio.preload = 'auto';
-      audio.volume = 1;
-      audio.style.display = 'none';
-      document.body.appendChild(audio);
-      narrationAudioRef.current = audio;
-      (window as any).__poplurNarrationAudio = audio;
-    }
-    return narrationAudioRef.current;
-  }
-
-  function primeNarrationAudio() {
-    const audio = getNarrationAudio();
-    if (!audio) return;
-    audio.muted = false;
-    audio.load();
-  }
-
-  function playNarrationAudio(reset = true) {
-    playExplainerElement(true, reset);
-    const audio = getNarrationAudio();
-    if (!audio) return;
-    audio.pause();
-    audio.currentTime = 0;
   }
 
   function updateActivePage(event: NativeSyntheticEvent<NativeScrollEvent>) {
@@ -580,10 +425,9 @@ export default function HomeScreen() {
     setCurrentSection(s);
     if (s === 1) {
       hasInteractedRef.current = true;
-      explainerSoundRequestedRef.current = true;
-      restartExplainer(true);
+      restartTeaser();
     } else {
-      stopExplainer();
+      stopTeaser();
     }
     if (Platform.OS === 'web') {
       const node = (homeScrollRef.current as any)?.getScrollableNode?.();
@@ -591,17 +435,6 @@ export default function HomeScreen() {
       if (node) { node.scrollTo({ top: s * vh, behavior: 'smooth' }); return; }
     }
     homeScrollRef.current?.scrollTo({ y: s * pageHeight, animated: true });
-  }
-
-  function startExplainerNarrationGesture() {
-    if (Platform.OS !== 'web' || activePageRef.current !== 0) return;
-    hasInteractedRef.current = true;
-    explainerSoundRequestedRef.current = true;
-    window.setTimeout(() => {
-      if (activePageRef.current === 0 && currentSectionRef.current === 1) {
-        playNarrationAudio(true);
-      }
-    }, 140);
   }
 
   function handleHomeVertScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
@@ -614,10 +447,9 @@ export default function HomeScreen() {
         setCurrentSection(nextSection);
         if (nextSection === 1) {
           hasInteractedRef.current = true;
-          explainerSoundRequestedRef.current = true;
-          restartExplainer(true);
+          restartTeaser();
         } else {
-          stopExplainer();
+          stopTeaser();
         }
       }
     }
@@ -665,9 +497,9 @@ export default function HomeScreen() {
   const currentHint =
     hintMessageIndex === 0
       ? { arrow: '→', text: 'Swipe right to join', transform: [{ translateX: leftArrowShift }] }
-      : { arrow: '↓', text: 'Swipe down to learn about', transform: [{ translateY: downArrowShift }] };
+      : { arrow: '↓', text: 'Swipe down for a preview', transform: [{ translateY: downArrowShift }] };
   const isHomeLogoPage = activePage === 0 && currentSection === 0;
-  const isExplainerPage = activePage === 0 && currentSection === 1;
+  const isTeaserPage = activePage === 0 && currentSection === 1;
 
   return (
     <ThemedView style={styles.container}>
@@ -679,7 +511,7 @@ export default function HomeScreen() {
           playsInline
           style={[
             styles.backgroundVideo,
-            isExplainerPage
+            isTeaserPage
               ? styles.backgroundVideoHidden
               : styles.backgroundVideoVisible,
           ]}
@@ -689,11 +521,11 @@ export default function HomeScreen() {
         <VideoView
           contentFit="cover"
           nativeControls={false}
-          player={explainerPlayer}
+          player={teaserPlayer}
           playsInline
           style={[
             styles.backgroundVideo,
-            activePage === 0 && currentSection === 1
+            isTeaserPage
               ? styles.backgroundVideoVisible
               : styles.backgroundVideoHidden,
           ]}
@@ -789,7 +621,6 @@ export default function HomeScreen() {
             nestedScrollEnabled
             snapToInterval={Platform.OS !== 'web' ? pageHeight : undefined}
             decelerationRate={Platform.OS !== 'web' ? 'fast' : undefined}
-            onScrollBeginDrag={startExplainerNarrationGesture}
             onScroll={handleHomeVertScroll}
             scrollEventThrottle={16}
           >
@@ -831,8 +662,30 @@ export default function HomeScreen() {
               )}
             </View>
 
-            {/* Section 1 — Explainer background */}
-            <View ref={explainerSlideRef} style={[styles.explainerSlide, sectionSize, webVertSectionSnap]}>
+            {/* Section 1 — Teaser */}
+            <View ref={teaserSlideRef} style={[styles.teaserSlide, sectionSize, webVertSectionSnap]}>
+              <View pointerEvents="none" style={styles.teaserShade} />
+              <View style={styles.teaserContent}>
+                <ThemedText style={styles.teaserEyebrow}>Poplur beta</ThemedText>
+                <ThemedText type="title" style={styles.teaserTitle}>
+                  The Future of Social Media
+                </ThemedText>
+                <ThemedText style={styles.teaserText}>
+                  An AI location-based social media platform for sharing media using our brand new algorithm. Ensure virality on your posts faster using Poplur
+                </ThemedText>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => scrollToPage(1)}
+                  style={({ pressed }) => [
+                    styles.teaserButton,
+                    pressed && styles.teaserButtonPressed,
+                  ]}
+                >
+                  <ThemedText type="smallBold" style={styles.teaserButtonText}>
+                    Join the beta
+                  </ThemedText>
+                </Pressable>
+              </View>
             </View>
           </ScrollView>
 
@@ -1149,19 +1002,80 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.two,
   },
 
-  // Section 1 — Explainer video
-  explainerSlide: {
+  // Section 1 — Teaser
+  teaserSlide: {
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.two,
+    overflow: 'hidden',
+    paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.four,
   },
-  explainerVideo: {
+  teaserShade: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(13, 0, 18, 0.8)',
+  },
+  teaserContent: {
     width: '100%',
-    height: '100%',
-    maxWidth: 720,
-    maxHeight: 1280,
+    maxWidth: 560,
+    alignItems: 'center',
+    gap: Spacing.four,
+  },
+  teaserEyebrow: {
+    color: '#ffd6ef',
+    fontFamily: Fonts.sans,
+    fontSize: 13,
+    fontWeight: 900,
+    letterSpacing: 0,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(255, 10, 138, 0.58)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
+  },
+  teaserTitle: {
+    color: '#ffffff',
+    fontFamily: Fonts.sans,
+    fontWeight: 900,
+    textAlign: 'center',
+    textShadowColor: 'rgba(255, 10, 138, 0.62)',
+    textShadowOffset: { width: 0, height: 3 },
+    textShadowRadius: 20,
+  },
+  teaserText: {
+    maxWidth: 500,
+    color: '#ffe4f4',
+    fontFamily: Fonts.sans,
+    fontSize: 19,
+    fontWeight: 800,
+    lineHeight: 27,
+    textAlign: 'center',
+    textShadowColor: 'rgba(18, 0, 23, 0.78)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
+  },
+  teaserButton: {
+    minHeight: 52,
+    borderRadius: 8,
+    marginTop: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ff0a8a',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.52)',
+    shadowColor: '#ff0a8a',
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+  },
+  teaserButtonPressed: {
+    opacity: 0.82,
+    transform: [{ translateY: 1 }],
+  },
+  teaserButtonText: {
+    color: '#ffffff',
+    textAlign: 'center',
   },
 
   // Slide 2 — Beta signup

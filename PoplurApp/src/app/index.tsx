@@ -21,6 +21,7 @@ import { ParticleBurst } from '@/components/particle-burst';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts, Spacing } from '@/constants/theme';
+import { usePoplurPerformance } from '@/performance/usePoplurPerformance';
 import { sendBetaInviteEmail } from '@/services/betaEmailService';
 import { saveBetaSignupEmail } from '@/services/betaSignupService';
 
@@ -30,12 +31,12 @@ const HORIZONTAL_PAGE_LABELS = ['Home', 'Join'];
 
 const CUBE_BOTTOM = Spacing.five;
 const BACKGROUND_VIDEO_SOURCE = require('@/assets/videos/poplur-users-app-background.mp4');
-const TEASER_VIDEO_SOURCE = require('@/assets/videos/poplur-users-app-background.mp4');
 const TEASER_VIDEO_FILE_HINT = 'poplur-users-app-background';
 const LOGO_SOURCE = require('@/assets/images/logo3.png');
 
 export default function HomeScreen() {
   const { height, width } = useWindowDimensions();
+  const performancePolicy = usePoplurPerformance();
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [emailError, setEmailError] = useState('');
@@ -56,33 +57,22 @@ export default function HomeScreen() {
   const backgroundPlayer = useVideoPlayer(BACKGROUND_VIDEO_SOURCE, (player) => {
     player.loop = true;
     player.muted = Platform.OS === 'web';
-    player.play();
   });
-  const teaserPlayer = useVideoPlayer(TEASER_VIDEO_SOURCE, (player) => {
-    player.loop = true;
-    player.muted = true;
-    player.play();
-  });
+  const isHomeLogoPage = activePage === 0 && currentSection === 0;
+  const shouldPlayBackgroundVideo =
+    performancePolicy.isForeground &&
+    performancePolicy.expensiveVideoBackedTexturesAllowed &&
+    activePage === 0;
 
   useEffect(() => {
     backgroundPlayer.loop = true;
     backgroundPlayer.muted = Platform.OS === 'web';
-    if (activePage === 0 && currentSection === 0) {
+    if (shouldPlayBackgroundVideo) {
       backgroundPlayer.play();
     } else {
       backgroundPlayer.pause();
     }
-  }, [activePage, backgroundPlayer, currentSection]);
-
-  useEffect(() => {
-    teaserPlayer.loop = true;
-    teaserPlayer.muted = true;
-    if (activePage === 0 && currentSection === 1) {
-      teaserPlayer.play();
-    } else {
-      teaserPlayer.pause();
-    }
-  }, [activePage, currentSection, teaserPlayer]);
+  }, [backgroundPlayer, shouldPlayBackgroundVideo]);
 
   useEffect(() => {
     currentSectionRef.current = currentSection;
@@ -103,25 +93,7 @@ export default function HomeScreen() {
     } else {
       stopTeaser();
     }
-  }, [activePage, currentSection, teaserPlayer]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const interval = window.setInterval(() => {
-      const video = getTeaserElement();
-      if (!video) return;
-      video.muted = true;
-      video.defaultMuted = true;
-      video.autoplay = true;
-      video.playsInline = true;
-      video.setAttribute('muted', '');
-      video.setAttribute('autoplay', '');
-      video.setAttribute('playsinline', '');
-      video.loop = true;
-      if (video.paused) video.play().catch(() => {});
-    }, 450);
-    return () => window.clearInterval(interval);
-  }, []);
+  }, [activePage, backgroundPlayer, currentSection, shouldPlayBackgroundVideo]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -151,7 +123,7 @@ export default function HomeScreen() {
 
     observer.observe(target);
     return () => observer.disconnect();
-  }, [teaserPlayer]);
+  }, [backgroundPlayer]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -181,24 +153,24 @@ export default function HomeScreen() {
       }
     }
 
-    const interval = window.setInterval(syncWebSectionFromScroll, 160);
+    const initialFrame = window.requestAnimationFrame(syncWebSectionFromScroll);
     window.addEventListener('scroll', syncWebSectionFromScroll, { capture: true, passive: true });
     window.addEventListener('wheel', syncWebSectionFromScroll, { capture: true, passive: true });
     window.addEventListener('touchmove', syncWebSectionFromScroll, { capture: true, passive: true });
     return () => {
-      window.clearInterval(interval);
+      window.cancelAnimationFrame(initialFrame);
       window.removeEventListener('scroll', syncWebSectionFromScroll, { capture: true });
       window.removeEventListener('wheel', syncWebSectionFromScroll, { capture: true });
       window.removeEventListener('touchmove', syncWebSectionFromScroll, { capture: true });
     };
-  }, [teaserPlayer]);
+  }, [backgroundPlayer]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     function enableBackgroundMusic() {
       hasInteractedRef.current = true;
       backgroundPlayer.muted = true;
-      backgroundPlayer.play();
+      if (shouldPlayBackgroundVideo) backgroundPlayer.play();
       if (activePage === 0 && currentSection === 1) {
         restartTeaser();
       }
@@ -215,9 +187,18 @@ export default function HomeScreen() {
       window.removeEventListener('wheel', enableBackgroundMusic, { capture: true });
       window.removeEventListener('keydown', enableBackgroundMusic, { capture: true });
     };
-  }, [activePage, backgroundPlayer, currentSection, teaserPlayer]);
+  }, [activePage, backgroundPlayer, currentSection, shouldPlayBackgroundVideo]);
 
   useEffect(() => {
+    if (
+      !performancePolicy.isForeground ||
+      !performancePolicy.decorativeRenderingAllowed ||
+      activePage !== 0
+    ) {
+      hintMotion.stopAnimation();
+      hintMotion.setValue(0);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(hintMotion, {
@@ -234,9 +215,14 @@ export default function HomeScreen() {
     );
     loop.start();
     return () => loop.stop();
-  }, [hintMotion]);
+  }, [activePage, hintMotion, performancePolicy.decorativeRenderingAllowed, performancePolicy.isForeground]);
 
   useEffect(() => {
+    if (
+      !performancePolicy.isForeground ||
+      !performancePolicy.decorativeRenderingAllowed ||
+      activePage !== 0
+    ) return;
     const interval = window.setInterval(() => {
       Animated.timing(hintTextOpacity, {
         duration: 220,
@@ -252,9 +238,19 @@ export default function HomeScreen() {
       });
     }, 2400);
     return () => window.clearInterval(interval);
-  }, [hintTextOpacity]);
+  }, [
+    activePage,
+    hintTextOpacity,
+    performancePolicy.decorativeRenderingAllowed,
+    performancePolicy.isForeground,
+  ]);
 
   useEffect(() => {
+    if (
+      !performancePolicy.isForeground ||
+      !performancePolicy.particlesAllowed ||
+      !isHomeLogoPage
+    ) return;
     const pop = () => setPopCount((count) => count + 1);
     const launchTimer = setTimeout(pop, 720);
     const interval = setInterval(pop, 4200);
@@ -262,7 +258,7 @@ export default function HomeScreen() {
       clearTimeout(launchTimer);
       clearInterval(interval);
     };
-  }, []);
+  }, [isHomeLogoPage, performancePolicy.isForeground, performancePolicy.particlesAllowed]);
 
   const pageSize   = Math.max(width, 1);
   const pageHeight = Math.max(height, 1);
@@ -317,25 +313,34 @@ export default function HomeScreen() {
       setPopCount((c) => c + 1);
     }
     document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
+    return () => {
+      document.removeEventListener('click', handleClick);
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+        audio = null;
+      }
+    };
   }, []);
 
   function restartTeaser() {
-    teaserPlayer.loop = true;
-    teaserPlayer.currentTime = 0;
-    teaserPlayer.muted = true;
+    backgroundPlayer.loop = true;
+    backgroundPlayer.currentTime = 0;
+    backgroundPlayer.muted = Platform.OS === 'web';
+    if (!shouldPlayBackgroundVideo) return;
     if (Platform.OS === 'web') {
-      teaserPlayer.play();
+      backgroundPlayer.play();
       playTeaserElement();
       return;
     }
-    teaserPlayer.play();
+    backgroundPlayer.play();
   }
 
   function stopTeaser() {
-    teaserPlayer.loop = true;
-    teaserPlayer.muted = true;
-    teaserPlayer.pause();
+    backgroundPlayer.loop = true;
+    backgroundPlayer.muted = Platform.OS === 'web';
+    if (!isHomeLogoPage || !shouldPlayBackgroundVideo) backgroundPlayer.pause();
     if (Platform.OS === 'web') {
       const video = getTeaserElement();
       if (video) {
@@ -498,9 +503,6 @@ export default function HomeScreen() {
     hintMessageIndex === 0
       ? { arrow: '→', text: 'Swipe right to join', transform: [{ translateX: leftArrowShift }] }
       : { arrow: '↓', text: 'Swipe down for a preview', transform: [{ translateY: downArrowShift }] };
-  const isHomeLogoPage = activePage === 0 && currentSection === 0;
-  const isTeaserPage = activePage === 0 && currentSection === 1;
-
   return (
     <ThemedView style={styles.container}>
       <View pointerEvents="none" style={styles.backgroundLayer}>
@@ -509,32 +511,16 @@ export default function HomeScreen() {
           nativeControls={false}
           player={backgroundPlayer}
           playsInline
-          style={[
-            styles.backgroundVideo,
-            isTeaserPage
-              ? styles.backgroundVideoHidden
-              : styles.backgroundVideoVisible,
-          ]}
-          surfaceType="textureView"
-          useExoShutter={false}
-        />
-        <VideoView
-          contentFit="cover"
-          nativeControls={false}
-          player={teaserPlayer}
-          playsInline
-          style={[
-            styles.backgroundVideo,
-            isTeaserPage
-              ? styles.backgroundVideoVisible
-              : styles.backgroundVideoHidden,
-          ]}
+          style={styles.backgroundVideo}
           surfaceType="textureView"
           useExoShutter={false}
         />
         <View style={styles.backgroundOverlay} />
       </View>
-      <ParticleBurst active={isHomeLogoPage} triggerCount={popCount} />
+      <ParticleBurst
+        active={isHomeLogoPage && performancePolicy.isForeground}
+        triggerCount={popCount}
+      />
 
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.topPagination}>
@@ -627,7 +613,14 @@ export default function HomeScreen() {
             {/* Section 0 — Logo hero */}
             <View style={[styles.logoSlide, sectionSize, webVertSectionSnap]}>
               <View style={styles.logoArea}>
-                <AnimatedIcon triggerCount={popCount} />
+                <AnimatedIcon
+                  active={
+                    isHomeLogoPage &&
+                    performancePolicy.isForeground &&
+                    performancePolicy.decorativeRenderingAllowed
+                  }
+                  triggerCount={popCount}
+                />
                 <Animated.View
                   pointerEvents="none"
                   style={[
@@ -803,8 +796,6 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '100%',
   },
-  backgroundVideoVisible: { opacity: 1 },
-  backgroundVideoHidden: { opacity: 0 },
   backgroundOverlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(8, 8, 16, 0.48)',

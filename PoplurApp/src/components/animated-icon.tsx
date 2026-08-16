@@ -74,20 +74,36 @@ const glowKeyframe = new Keyframe({
   },
 });
 
-export function AnimatedIcon(_props: { triggerCount?: number }) {
+export function AnimatedIcon({ active = true }: { active?: boolean; triggerCount?: number }) {
   return (
     <View style={styles.iconContainer}>
-      <Animated.View entering={glowKeyframe.duration(60 * 1000 * 4)} style={styles.glow}>
-        <Image style={styles.glow} source={require('@/assets/images/logo-glow.png')} />
-      </Animated.View>
+      {active ? (
+        <Animated.View entering={glowKeyframe.duration(60 * 1000 * 4)} style={styles.glow}>
+          <Image style={styles.glow} source={require('@/assets/images/logo-glow.png')} />
+        </Animated.View>
+      ) : (
+        <View style={[styles.glow, styles.glowInactive]}>
+          <Image style={styles.glow} source={require('@/assets/images/logo-glow.png')} />
+        </View>
+      )}
 
-      <Animated.View style={styles.imageContainer} entering={logoKeyframe.duration(DURATION)}>
-        <Image
-          contentFit="cover"
-          style={styles.image}
-          source={require('@/assets/images/logo3.png')}
-        />
-      </Animated.View>
+      {active ? (
+        <Animated.View style={styles.imageContainer} entering={logoKeyframe.duration(DURATION)}>
+          <Image
+            contentFit="cover"
+            style={styles.image}
+            source={require('@/assets/images/logo3.png')}
+          />
+        </Animated.View>
+      ) : (
+        <View style={styles.imageContainer}>
+          <Image
+            contentFit="cover"
+            style={styles.image}
+            source={require('@/assets/images/logo3.png')}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -105,6 +121,9 @@ const styles = StyleSheet.create({
     width: 201,
     height: 201,
     position: 'absolute',
+  },
+  glowInactive: {
+    opacity: 0.55,
   },
   iconContainer: {
     justifyContent: 'center',

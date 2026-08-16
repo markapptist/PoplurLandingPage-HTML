@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import Animated, {
   Easing,
+  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -11,7 +12,10 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { usePoplurPerformance } from '@/performance/usePoplurPerformance';
+
 type AnimatedIconProps = {
+  active?: boolean;
   triggerCount?: number;
 };
 
@@ -19,7 +23,8 @@ export function AnimatedSplashOverlay() {
   return null;
 }
 
-export function AnimatedIcon({ triggerCount = 0 }: AnimatedIconProps) {
+export function AnimatedIcon({ active = true, triggerCount = 0 }: AnimatedIconProps) {
+  const performancePolicy = usePoplurPerformance();
   // ── Entry animation (shared values, controlled via useEffect so they fire
   //    exactly once on mount and are never reset by re-renders) ──
   const entryOpacity = useSharedValue(0);
@@ -47,25 +52,37 @@ export function AnimatedIcon({ triggerCount = 0 }: AnimatedIconProps) {
       withTiming(-1, { duration: D * 0.26 }),
       withSpring(0, { damping: 9, stiffness: 200 }),
     );
-    glowOpacity.value = withTiming(1, { duration: 800 });
-    glowRotate.value = withRepeat(
-      withTiming(360, { duration: 9000, easing: Easing.linear }),
-      -1,
-      false,
-    );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // empty deps — exactly one run
 
+  useEffect(() => {
+    cancelAnimation(glowRotate);
+    const shouldAnimate =
+      active &&
+      performancePolicy.isForeground &&
+      performancePolicy.decorativeRenderingAllowed;
+    glowOpacity.value = withTiming(shouldAnimate ? 1 : 0.55, { duration: 240 });
+    if (shouldAnimate) {
+      glowRotate.value = withRepeat(
+        withTiming(360, { duration: 9000, easing: Easing.linear }),
+        -1,
+        false,
+      );
+    }
+    return () => cancelAnimation(glowRotate);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, performancePolicy.decorativeRenderingAllowed, performancePolicy.isForeground]);
+
   // Pop on click
   useEffect(() => {
-    if (triggerCount > 0) {
+    if (triggerCount > 0 && active && performancePolicy.isForeground) {
       popScale.value = withSequence(
         withTiming(1.18, { duration: 80, easing: Easing.out(Easing.cubic) }),
         withSpring(1, { damping: 8, stiffness: 220 }),
       );
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [triggerCount]);
+  }, [active, performancePolicy.isForeground, triggerCount]);
 
   const glowStyle = useAnimatedStyle(() => ({
     opacity: glowOpacity.value,

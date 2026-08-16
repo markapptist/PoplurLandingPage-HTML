@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import * as THREE from 'three';
 
+import { PoplurPerformanceManager } from '@/performance/poplurPerformanceManager';
+
 type ParticleBurstProps = {
   active?: boolean;
   triggerCount?: number;
@@ -56,13 +58,17 @@ export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurst
   const smokeRef = useRef<SmokePuff[]>([]);
   const activeRef = useRef(active);
   const latestTriggerRef = useRef(triggerCount);
+  const setActiveRef = useRef<(active: boolean) => void>(() => {});
+  const requestBurstRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     activeRef.current = active;
+    setActiveRef.current(active);
   }, [active]);
 
   useEffect(() => {
     latestTriggerRef.current = triggerCount;
+    requestBurstRef.current();
   }, [triggerCount]);
 
   useEffect(() => {
@@ -71,18 +77,20 @@ export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurst
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+    const initialPolicy = PoplurPerformanceManager.policy;
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
-      antialias: true,
+      antialias: initialPolicy.mode === 'FULL',
       canvas,
     });
-    const clock = new THREE.Clock();
     const smokeTexture = createSmokeTexture();
     const confettiGeometry = new THREE.PlaneGeometry(0.055, 0.024);
 
     camera.position.z = 6;
     renderer.setClearColor(0x000000, 0);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio || 1, initialPolicy.maximumPixelRatio),
+    );
 
     function resize() {
       const width = window.innerWidth || 1;
@@ -92,11 +100,20 @@ export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurst
       renderer.setSize(width, height, false);
     }
 
-    function burst() {
+    function burst(density: number, maxObjects: number) {
+      clearParticles();
       const originY = window.innerWidth < 700 ? 0.95 : 0.76;
       const origin = new THREE.Vector3(0, originY, 0);
+      const confettiCount = Math.min(
+        Math.floor(52 * density),
+        Math.max(0, maxObjects - Math.ceil(15 * density)),
+      );
+      const smokeCount = Math.min(
+        Math.ceil(15 * density),
+        Math.max(0, maxObjects - confettiCount),
+      );
 
-      for (let i = 0; i < 52; i += 1) {
+      for (let i = 0; i < confettiCount; i += 1) {
         const material = new THREE.MeshBasicMaterial({
           color: COLORS[i % COLORS.length],
           side: THREE.DoubleSide,
@@ -126,7 +143,7 @@ export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurst
         });
       }
 
-      for (let i = 0; i < 15; i += 1) {
+      for (let i = 0; i < smokeCount; i += 1) {
         const material = new THREE.SpriteMaterial({
           map: smokeTexture,
           color: i % 2 ? '#ff49b6' : '#4a0a3b',
@@ -151,7 +168,8 @@ export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurst
 
     function disposeConfetti(piece: ConfettiPiece) {
       scene.remove(piece.mesh);
-      piece.mesh.geometry.dispose();
+      // All pieces share confettiGeometry; disposing it per piece invalidated
+      // the surviving meshes. It is released once when the renderer unmounts.
       const material = piece.mesh.material;
       if (Array.isArray(material)) material.forEach((item) => item.dispose());
       else material.dispose();
@@ -164,23 +182,57 @@ export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurst
       else material.dispose();
     }
 
-    let animationId = 0;
-    let seenTrigger = latestTriggerRef.current;
+    function clearParticles() {
+      confettiRef.current.forEach(disposeConfetti);
+      smokeRef.current.forEach(disposeSmoke);
+      confettiRef.current = [];
+      smokeRef.current = [];
+    }
 
-    function animate() {
-      const dt = Math.min(clock.getDelta(), 0.05);
-      const now = performance.now();
+    let animationId = 0;
+    let wakeTimer = 0;
+    let seenTrigger = latestTriggerRef.current;
+    let rendererActive = false;
+    let disposed = false;
+    let targetFPS = initialPolicy.targetFPS;
+    let particleDensity = initialPolicy.particleDensityMultiplier;
+    let maxParticleObjects = initialPolicy.maxParticleObjects;
+    let particlesAllowed = initialPolicy.particlesAllowed;
+    let lastFrameTime = performance.now();
+
+    function cancelLoop() {
+      if (animationId) cancelAnimationFrame(animationId);
+      if (wakeTimer) window.clearTimeout(wakeTimer);
+      animationId = 0;
+      wakeTimer = 0;
+    }
+
+    function scheduleNextFrame(immediate = false) {
+      if (disposed || !rendererActive || animationId || wakeTimer) return;
+      const delay = immediate ? 0 : Math.max(0, 1000 / targetFPS - 2);
+      wakeTimer = window.setTimeout(() => {
+        wakeTimer = 0;
+        if (!disposed && rendererActive) animationId = requestAnimationFrame(animate);
+      }, delay);
+    }
+
+    function animate(now: number) {
+      animationId = 0;
+      if (disposed || !rendererActive) return;
+      const interval = now - lastFrameTime;
+      const dt = Math.min(interval / 1000, 0.05);
+      lastFrameTime = now;
+      PoplurPerformanceManager.reportFrameInterval(interval);
 
       if (!activeRef.current) {
-        confettiRef.current.forEach(disposeConfetti);
-        smokeRef.current.forEach(disposeSmoke);
-        confettiRef.current = [];
-        smokeRef.current = [];
+        clearParticles();
       }
 
       if (latestTriggerRef.current !== seenTrigger) {
         seenTrigger = latestTriggerRef.current;
-        if (seenTrigger > 0 && activeRef.current) burst();
+        if (seenTrigger > 0 && activeRef.current && particlesAllowed) {
+          burst(particleDensity, maxParticleObjects);
+        }
       }
 
       confettiRef.current = confettiRef.current.filter((piece) => {
@@ -216,21 +268,88 @@ export function ParticleBurst({ active = true, triggerCount = 0 }: ParticleBurst
       });
 
       renderer.render(scene, camera);
-      animationId = requestAnimationFrame(animate);
+      if (confettiRef.current.length > 0 || smokeRef.current.length > 0) {
+        scheduleNextFrame();
+      } else {
+        rendererHandle.setDemand(false);
+      }
     }
 
     resize();
-    animationId = requestAnimationFrame(animate);
+    const rendererHandle = PoplurPerformanceManager.registerRenderer({
+      id: 'LandingParticleBurst',
+      heavy: true,
+      priority: 40,
+      demanded: false,
+      onActiveChange: (isActive, policy) => {
+        rendererActive = isActive;
+        targetFPS = policy.targetFPS;
+        particleDensity = policy.particleDensityMultiplier;
+        maxParticleObjects = policy.maxParticleObjects;
+        particlesAllowed = policy.particlesAllowed;
+        renderer.setPixelRatio(
+          Math.min(window.devicePixelRatio || 1, policy.maximumPixelRatio),
+        );
+        resize();
+        if (!particlesAllowed) {
+          clearParticles();
+          cancelLoop();
+          // The policy may change while a burst owns the lease. Drop demand as
+          // well as the objects so EMERGENCY mode cannot reserve a dead canvas.
+          queueMicrotask(() => {
+            if (!disposed) rendererHandle.setDemand(false);
+          });
+          return;
+        }
+        if (isActive) {
+          lastFrameTime = performance.now();
+          scheduleNextFrame(true);
+        } else {
+          cancelLoop();
+        }
+      },
+      releaseInactiveResources: clearParticles,
+    });
+
+    const requestBurst = () => {
+      if (!activeRef.current || latestTriggerRef.current <= seenTrigger) return;
+      if (!PoplurPerformanceManager.policy.particlesAllowed) {
+        seenTrigger = latestTriggerRef.current;
+        clearParticles();
+        rendererHandle.setDemand(false);
+        return;
+      }
+      rendererHandle.setDemand(true);
+      if (rendererActive) scheduleNextFrame(true);
+    };
+    requestBurstRef.current = requestBurst;
+    setActiveRef.current = (isActive) => {
+      if (isActive) requestBurst();
+      else {
+        seenTrigger = latestTriggerRef.current;
+        clearParticles();
+        rendererHandle.setDemand(false);
+        cancelLoop();
+      }
+    };
     window.addEventListener('resize', resize);
 
     return () => {
-      cancelAnimationFrame(animationId);
+      disposed = true;
+      rendererHandle.dispose();
+      cancelLoop();
+      requestBurstRef.current = () => {};
+      setActiveRef.current = () => {};
       window.removeEventListener('resize', resize);
-      confettiRef.current.forEach(disposeConfetti);
-      smokeRef.current.forEach(disposeSmoke);
+      clearParticles();
       confettiGeometry.dispose();
       smokeTexture.dispose();
       renderer.dispose();
+      // This React-owned canvas is reused during StrictMode effect replay, so
+      // release Three resources and its large backing store without poisoning
+      // the canvas via WEBGL_lose_context.
+      canvas.width = 1;
+      canvas.height = 1;
     };
   }, []);
 

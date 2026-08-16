@@ -3,6 +3,8 @@ import { StyleSheet, View } from 'react-native';
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
+import { PoplurPerformanceManager } from '@/performance/poplurPerformanceManager';
+
 type PageCubeProps = {
   currentPage: number;
   currentSection: number;
@@ -106,19 +108,23 @@ export function PageCube({
   const onSwipePageRef = useRef(onSwipePage);
   const onSwipeSectionRef = useRef(onSwipeSection);
   const triggerPopRef = useRef(false);
+  const wakeLoopRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     currentPageRef.current = Number.isFinite(currentPage) ? currentPage : 0;
+    wakeLoopRef.current();
   }, [currentPage]);
 
   useEffect(() => {
     pageProgressRef.current = Number.isFinite(pageProgress)
       ? Math.max(0, Math.min(1, pageProgress))
       : currentPageRef.current;
+    wakeLoopRef.current();
   }, [pageProgress]);
 
   useEffect(() => {
     currentSectionRef.current = Number.isFinite(currentSection) ? currentSection : 0;
+    wakeLoopRef.current();
   }, [currentSection]);
 
   useEffect(() => {
@@ -130,7 +136,10 @@ export function PageCube({
   }, [onSwipeSection]);
 
   useEffect(() => {
-    if (triggerCount > 0) triggerPopRef.current = true;
+    if (triggerCount > 0) {
+      triggerPopRef.current = true;
+      wakeLoopRef.current();
+    }
   }, [triggerCount]);
 
   useEffect(() => {
@@ -138,16 +147,17 @@ export function PageCube({
     if (!canvas) return;
 
     const targetCanvas = canvas;
+    const initialPolicy = PoplurPerformanceManager.policy;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
-      antialias: true,
+      antialias: initialPolicy.mode === 'FULL',
       canvas,
-      preserveDrawingBuffer: true,
     });
 
-    const geometry = new RoundedBoxGeometry(1.55, 1.55, 1.55, 10, 0.24);
+    const geometrySegments = initialPolicy.mode === 'FULL' ? 8 : initialPolicy.mode === 'REDUCED' ? 6 : 4;
+    const geometry = new RoundedBoxGeometry(1.55, 1.55, 1.55, geometrySegments, 0.24);
     const homeTexture = createFaceTexture(pageLabels[0] ?? 'Home', '#fff7fb');
     const betaTexture = createFaceTexture(pageLabels[1] ?? 'Beta', '#fff7fb', '#ff49b6');
     const aboutTexture = createFaceTexture(pageLabels[2] ?? 'About', '#fff7fb', '#ff1797');
@@ -187,7 +197,9 @@ export function PageCube({
     cube.rotation.set(BASE_X, BASE_Y, BASE_Z);
     scene.add(ambient, key, fill, rim, cube);
     renderer.setClearColor(0x000000, 0);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio || 1, initialPolicy.maximumPixelRatio),
+    );
     renderer.setSize(118, 118, false);
 
     // These track the resting rotation for each page/section state.
@@ -209,7 +221,14 @@ export function PageCube({
       endX: number; endY: number;
       startTime: number;
     } | null = null;
-    let animFrameId: number;
+    let animFrameId = 0;
+    let wakeTimer = 0;
+    let scrollSnapFrame = 0;
+    let scrollSnapRestore: { element: HTMLElement; previous: string } | null = null;
+    let rendererActive = false;
+    let disposed = false;
+    let targetFPS = initialPolicy.targetFPS;
+    let decorativeRenderingAllowed = initialPolicy.decorativeRenderingAllowed;
 
     function render() {
       renderer.render(scene, camera);
@@ -220,10 +239,19 @@ export function PageCube({
       while (element) {
         if (element.scrollWidth > element.clientWidth) {
           const prev = element.style.scrollSnapType;
+          if (scrollSnapFrame) cancelAnimationFrame(scrollSnapFrame);
+          if (scrollSnapRestore) {
+            scrollSnapRestore.element.style.scrollSnapType = scrollSnapRestore.previous;
+          }
           element.style.scrollSnapType = 'none';
           element.scrollLeft = window.innerWidth * nextPage;
-          requestAnimationFrame(() => {
-            if (element) element.style.scrollSnapType = prev;
+          scrollSnapRestore = { element, previous: prev };
+          scrollSnapFrame = requestAnimationFrame(() => {
+            scrollSnapFrame = 0;
+            if (scrollSnapRestore) {
+              scrollSnapRestore.element.style.scrollSnapType = scrollSnapRestore.previous;
+              scrollSnapRestore = null;
+            }
           });
           return;
         }
@@ -240,15 +268,27 @@ export function PageCube({
       cube.rotation.x += (baseRotationX - cube.rotation.x) * 0.22;
       cube.rotation.y += (baseRotationY - cube.rotation.y) * 0.22;
       cube.rotation.z += (BASE_Z - cube.rotation.z) * 0.22;
+      return (
+        Math.abs(nextX - baseRotationX) > 0.001 ||
+        Math.abs(nextY - baseRotationY) > 0.001 ||
+        Math.abs(baseRotationX - cube.rotation.x) > 0.001 ||
+        Math.abs(baseRotationY - cube.rotation.y) > 0.001 ||
+        Math.abs(BASE_Z - cube.rotation.z) > 0.001
+      );
     }
 
     function animate(now: number) {
+      animFrameId = 0;
+      if (disposed || !rendererActive) return;
       const dt = Math.min(now - lastFrameTime, 50) / 1000;
+      PoplurPerformanceManager.reportFrameInterval(now - lastFrameTime);
       lastFrameTime = now;
       floatElapsed += dt;
 
       // Gentle float — organic sine wave on Y position
-      cube.position.y = Math.sin(floatElapsed * 1.35) * 0.11;
+      if (decorativeRenderingAllowed) {
+        cube.position.y = Math.sin(floatElapsed * 1.35) * 0.11;
+      }
 
       // Pop
       if (triggerPopRef.current) {
@@ -262,6 +302,7 @@ export function PageCube({
       }
 
       // Rotation animation (drives both X and Y simultaneously)
+      let baseMotionPending = false;
       if (rotTarget) {
         const progress = Math.min((now - rotTarget.startTime) / 320, 1);
         const eased = 1 - Math.pow(1 - progress, 3);
@@ -275,14 +316,57 @@ export function PageCube({
           popStartTime = now;
         }
       } else if (!swipeStart) {
-        syncBaseRotation();
+        baseMotionPending = syncBaseRotation();
       }
 
       render();
-      animFrameId = requestAnimationFrame(animate);
+      const hasRequiredMotion = Boolean(
+        swipeStart || isAnimating || rotTarget || popStartTime !== null || baseMotionPending
+      );
+      if (decorativeRenderingAllowed || hasRequiredMotion) scheduleNextFrame();
     }
 
-    animFrameId = requestAnimationFrame(animate);
+    function cancelLoop() {
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+      if (wakeTimer) window.clearTimeout(wakeTimer);
+      animFrameId = 0;
+      wakeTimer = 0;
+    }
+
+    function scheduleNextFrame(immediate = false) {
+      if (disposed || !rendererActive || animFrameId || wakeTimer) return;
+      const delay = immediate ? 0 : Math.max(0, 1000 / targetFPS - 2);
+      wakeTimer = window.setTimeout(() => {
+        wakeTimer = 0;
+        if (!disposed && rendererActive) animFrameId = requestAnimationFrame(animate);
+      }, delay);
+    }
+
+    function wakeLoop() {
+      if (disposed || !rendererActive) return;
+      lastFrameTime = performance.now();
+      scheduleNextFrame(true);
+    }
+    wakeLoopRef.current = wakeLoop;
+
+    const rendererHandle = PoplurPerformanceManager.registerRenderer({
+      id: 'LandingPageCube',
+      // A capped 118px on-demand canvas is intentionally classified as light;
+      // the full-screen particle renderer remains the sole heavy 3D lease.
+      heavy: false,
+      priority: 20,
+      onActiveChange: (active, policy) => {
+        rendererActive = active;
+        targetFPS = policy.targetFPS;
+        decorativeRenderingAllowed = policy.decorativeRenderingAllowed;
+        renderer.setPixelRatio(
+          Math.min(window.devicePixelRatio || 1, policy.maximumPixelRatio),
+        );
+        renderer.setSize(118, 118, false);
+        if (active) wakeLoop();
+        else cancelLoop();
+      },
+    });
 
     function onPointerDown(event: PointerEvent) {
       if (isAnimating) return;
@@ -293,6 +377,7 @@ export function PageCube({
       ) {
         return;
       }
+      wakeLoop();
       swipeStart = { x: event.clientX, y: event.clientY };
       try { targetCanvas.setPointerCapture(event.pointerId); } catch { /* best-effort */ }
     }
@@ -377,7 +462,15 @@ export function PageCube({
     window.addEventListener('pointercancel', onPointerUp);
 
     return () => {
-      cancelAnimationFrame(animFrameId);
+      disposed = true;
+      rendererHandle.dispose();
+      cancelLoop();
+      if (scrollSnapFrame) cancelAnimationFrame(scrollSnapFrame);
+      if (scrollSnapRestore) {
+        scrollSnapRestore.element.style.scrollSnapType = scrollSnapRestore.previous;
+        scrollSnapRestore = null;
+      }
+      wakeLoopRef.current = () => {};
       window.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
@@ -388,6 +481,11 @@ export function PageCube({
       betaTexture.dispose();
       aboutTexture.dispose();
       renderer.dispose();
+      // React reuses this canvas during StrictMode's effect replay. Shrink its
+      // backing store after releasing Three resources; forceContextLoss would
+      // permanently poison the reused DOM canvas.
+      canvas.width = 1;
+      canvas.height = 1;
     };
   }, [pageLabels]);
 

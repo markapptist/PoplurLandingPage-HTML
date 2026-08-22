@@ -92,7 +92,7 @@ export function AnimatedIcon({ active = true }: { active?: boolean; triggerCount
           <Image
             contentFit="cover"
             style={styles.image}
-            source={require('@/assets/images/logo3.png')}
+            source={require('@/assets/images/welcome-logo.png')}
           />
         </Animated.View>
       ) : (
@@ -100,7 +100,7 @@ export function AnimatedIcon({ active = true }: { active?: boolean; triggerCount
           <Image
             contentFit="cover"
             style={styles.image}
-            source={require('@/assets/images/logo3.png')}
+            source={require('@/assets/images/welcome-logo.png')}
           />
         </View>
       )}

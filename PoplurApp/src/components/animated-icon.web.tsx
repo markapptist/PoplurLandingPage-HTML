@@ -113,7 +113,7 @@ export function AnimatedIcon({ active = true, triggerCount = 0 }: AnimatedIconPr
           <Image
             contentFit="cover"
             style={styles.image}
-            source={require('@/assets/images/logo3.png')}
+            source={require('@/assets/images/welcome-logo.png')}
           />
         </Animated.View>
       </Animated.View>

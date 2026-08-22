@@ -23,7 +23,7 @@
       "output": "server",
       "shortName": "Poplur",
       "name": "Poplur",
-      "favicon": "./assets/images/logo3.png"
+      "favicon": "./assets/images/welcome-logo.png"
     },
     "plugins": [
       "expo-router",

@@ -15,9 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
 import { PageCube } from '@/components/page-cube';
-import { ParticleBurst } from '@/components/particle-burst';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts, Spacing } from '@/constants/theme';
@@ -30,9 +28,29 @@ const PAGE_LABELS = ['Home', 'Beta', 'Preview'];
 const HORIZONTAL_PAGE_LABELS = ['Home', 'Join'];
 
 const CUBE_BOTTOM = Spacing.five;
-const BACKGROUND_VIDEO_SOURCE = require('@/assets/videos/poplur-users-app-background.mp4');
-const TEASER_VIDEO_FILE_HINT = 'poplur-users-app-background';
-const LOGO_SOURCE = require('@/assets/images/logo3.png');
+const FEED_VIDEO_SOURCES = [
+  require('@/assets/videos/ad-food.mp4'),
+  require('@/assets/videos/ad-music.mp4'),
+  require('@/assets/videos/ad-cartoon.mp4'),
+  require('@/assets/videos/ad-shopping.mp4'),
+  require('@/assets/videos/ad-comedy.mp4'),
+  require('@/assets/videos/ad-sports.mp4'),
+  require('@/assets/videos/ad-kids.mp4'),
+  require('@/assets/videos/ad-french.mp4'),
+  require('@/assets/videos/ad-spanish-1.mp4'),
+  require('@/assets/videos/ad-spanish-2.mp4'),
+  require('@/assets/videos/ad-spanish-3.mp4'),
+];
+function pickRandomVideo(excludeIndex: number) {
+  let next = Math.floor(Math.random() * FEED_VIDEO_SOURCES.length);
+  if (next === excludeIndex && FEED_VIDEO_SOURCES.length > 1) {
+    next = (next + 1) % FEED_VIDEO_SOURCES.length;
+  }
+  return next;
+}
+const BACKGROUND_VIDEO_SOURCE = FEED_VIDEO_SOURCES[Math.floor(Math.random() * FEED_VIDEO_SOURCES.length)];
+const TEASER_VIDEO_FILE_HINT = 'ad-';
+const LOGO_SOURCE = require('@/assets/images/welcome-logo.png');
 
 export default function HomeScreen() {
   const { height, width } = useWindowDimensions();
@@ -44,8 +62,9 @@ export default function HomeScreen() {
   const [activePage, setActivePage] = useState(0);        // horizontal: 0=Home 1=Beta
   const [pageProgress, setPageProgress] = useState(0);
   const [currentSection, setCurrentSection] = useState(0); // vertical: 0=Logo 1=About
-  const [popCount, setPopCount] = useState(0);
   const [hintMessageIndex, setHintMessageIndex] = useState(0);
+  const [isMuted, setIsMuted] = useState(true);
+  const videoIndexRef = useRef(0);
   const hScrollRef = useRef<ScrollView>(null);    // outer horizontal pager
   const homeScrollRef = useRef<ScrollView>(null); // home page inner vertical scroll
   const teaserSlideRef = useRef<View>(null);
@@ -55,24 +74,35 @@ export default function HomeScreen() {
   const hintMotion = useRef(new Animated.Value(0)).current;
   const hintTextOpacity = useRef(new Animated.Value(1)).current;
   const backgroundPlayer = useVideoPlayer(BACKGROUND_VIDEO_SOURCE, (player) => {
-    player.loop = true;
-    player.muted = Platform.OS === 'web';
+    player.loop = false;
+    player.muted = true;
   });
   const isHomeLogoPage = activePage === 0 && currentSection === 0;
   const shouldPlayBackgroundVideo =
     performancePolicy.isForeground &&
-    performancePolicy.expensiveVideoBackedTexturesAllowed &&
-    activePage === 0;
+    performancePolicy.expensiveVideoBackedTexturesAllowed;
 
   useEffect(() => {
-    backgroundPlayer.loop = true;
-    backgroundPlayer.muted = Platform.OS === 'web';
+    backgroundPlayer.loop = false;
+    backgroundPlayer.muted = isMuted;
     if (shouldPlayBackgroundVideo) {
       backgroundPlayer.play();
     } else {
       backgroundPlayer.pause();
     }
-  }, [backgroundPlayer, shouldPlayBackgroundVideo]);
+  }, [backgroundPlayer, isMuted, shouldPlayBackgroundVideo]);
+
+  useEffect(() => {
+    const sub = backgroundPlayer.addListener('playToEnd', () => {
+      const next = pickRandomVideo(videoIndexRef.current);
+      videoIndexRef.current = next;
+      backgroundPlayer.replace(FEED_VIDEO_SOURCES[next]);
+      backgroundPlayer.loop = false;
+      backgroundPlayer.muted = isMuted;
+      if (shouldPlayBackgroundVideo) backgroundPlayer.play();
+    });
+    return () => sub.remove();
+  }, [backgroundPlayer, isMuted, shouldPlayBackgroundVideo]);
 
   useEffect(() => {
     currentSectionRef.current = currentSection;
@@ -169,7 +199,7 @@ export default function HomeScreen() {
     if (Platform.OS !== 'web') return;
     function enableBackgroundMusic() {
       hasInteractedRef.current = true;
-      backgroundPlayer.muted = true;
+      backgroundPlayer.muted = isMuted;
       if (shouldPlayBackgroundVideo) backgroundPlayer.play();
       if (activePage === 0 && currentSection === 1) {
         restartTeaser();
@@ -245,21 +275,6 @@ export default function HomeScreen() {
     performancePolicy.isForeground,
   ]);
 
-  useEffect(() => {
-    if (
-      !performancePolicy.isForeground ||
-      !performancePolicy.particlesAllowed ||
-      !isHomeLogoPage
-    ) return;
-    const pop = () => setPopCount((count) => count + 1);
-    const launchTimer = setTimeout(pop, 720);
-    const interval = setInterval(pop, 4200);
-    return () => {
-      clearTimeout(launchTimer);
-      clearInterval(interval);
-    };
-  }, [isHomeLogoPage, performancePolicy.isForeground, performancePolicy.particlesAllowed]);
-
   const pageSize   = Math.max(width, 1);
   const pageHeight = Math.max(height, 1);
 
@@ -293,41 +308,10 @@ export default function HomeScreen() {
   const canSubmit = normalizedEmail.length > 0;
   const isCompact = width < 640;
 
-  // Web: every click → pop.mp3 + animation trigger
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    let audio: HTMLAudioElement | null = null;
-    function getAudio(): HTMLAudioElement | null {
-      if (!audio) {
-        try {
-          const src = require('@/assets/pop.mp3') as string;
-          audio = new (window as any).Audio(src);
-          (audio as HTMLAudioElement).preload = 'auto';
-        } catch { /* audio not available */ }
-      }
-      return audio;
-    }
-    function handleClick() {
-      const a = getAudio();
-      if (a) { a.currentTime = 0; a.play().catch(() => {}); }
-      setPopCount((c) => c + 1);
-    }
-    document.addEventListener('click', handleClick);
-    return () => {
-      document.removeEventListener('click', handleClick);
-      if (audio) {
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
-        audio = null;
-      }
-    };
-  }, []);
-
   function restartTeaser() {
-    backgroundPlayer.loop = true;
+    backgroundPlayer.loop = false;
     backgroundPlayer.currentTime = 0;
-    backgroundPlayer.muted = Platform.OS === 'web';
+    backgroundPlayer.muted = isMuted;
     if (!shouldPlayBackgroundVideo) return;
     if (Platform.OS === 'web') {
       backgroundPlayer.play();
@@ -338,14 +322,14 @@ export default function HomeScreen() {
   }
 
   function stopTeaser() {
-    backgroundPlayer.loop = true;
-    backgroundPlayer.muted = Platform.OS === 'web';
+    backgroundPlayer.loop = false;
+    backgroundPlayer.muted = isMuted;
     if (!isHomeLogoPage || !shouldPlayBackgroundVideo) backgroundPlayer.pause();
     if (Platform.OS === 'web') {
       const video = getTeaserElement();
       if (video) {
-        video.muted = true;
-        video.loop = true;
+        video.muted = isMuted;
+        video.loop = false;
         video.pause();
       }
     }
@@ -363,11 +347,12 @@ export default function HomeScreen() {
     if (!video) return;
     if (reset) video.currentTime = 0;
     video.volume = 1;
-    video.muted = true;
-    video.defaultMuted = true;
+    video.muted = isMuted;
+    video.defaultMuted = isMuted;
     video.autoplay = true;
     video.playsInline = true;
-    video.setAttribute('muted', '');
+    if (isMuted) video.setAttribute('muted', '');
+    else video.removeAttribute('muted');
     video.setAttribute('autoplay', '');
     video.setAttribute('playsinline', '');
     const playPromise = video.play();
@@ -517,12 +502,21 @@ export default function HomeScreen() {
         />
         <View style={styles.backgroundOverlay} />
       </View>
-      <ParticleBurst
-        active={isHomeLogoPage && performancePolicy.isForeground}
-        triggerCount={popCount}
-      />
-
       <SafeAreaView style={styles.safeArea}>
+        <Pressable
+          accessibilityLabel={isMuted ? 'Unmute video' : 'Mute video'}
+          accessibilityRole="button"
+          onPress={() => {
+            const next = !isMuted;
+            setIsMuted(next);
+            backgroundPlayer.muted = next;
+            const vid = getTeaserElement();
+            if (vid) vid.muted = next;
+          }}
+          style={({ pressed }) => [styles.muteButton, pressed && { opacity: 0.7 }]}
+        >
+          <ThemedText style={styles.muteButtonIcon}>{isMuted ? '\u{1F507}' : '\u{1F50A}'}</ThemedText>
+        </Pressable>
         <View style={styles.topPagination}>
           <View style={styles.topPaginationTrack}>
             <View
@@ -613,14 +607,6 @@ export default function HomeScreen() {
             {/* Section 0 — Logo hero */}
             <View style={[styles.logoSlide, sectionSize, webVertSectionSnap]}>
               <View style={styles.logoArea}>
-                <AnimatedIcon
-                  active={
-                    isHomeLogoPage &&
-                    performancePolicy.isForeground &&
-                    performancePolicy.decorativeRenderingAllowed
-                  }
-                  triggerCount={popCount}
-                />
                 <Animated.View
                   pointerEvents="none"
                   style={[
@@ -649,7 +635,7 @@ export default function HomeScreen() {
                     onSwipePage={scrollToPage}
                     onSwipeSection={scrollToSection}
                     pageLabels={PAGE_LABELS}
-                    triggerCount={popCount}
+                    triggerCount={0}
                   />
                 </View>
               )}
@@ -767,7 +753,7 @@ export default function HomeScreen() {
               onSwipePage={scrollToPage}
               onSwipeSection={scrollToSection}
               pageLabels={PAGE_LABELS}
-              triggerCount={popCount}
+              triggerCount={0}
               pageProgress={pageProgress}
             />
           </View>
@@ -788,7 +774,7 @@ const styles = StyleSheet.create({
   },
   backgroundLayer: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#15151f',
+    backgroundColor: '#0a0a14',
     zIndex: 0,
   },
   backgroundVideo: {
@@ -798,7 +784,7 @@ const styles = StyleSheet.create({
   },
   backgroundOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(8, 8, 16, 0.48)',
+    backgroundColor: 'rgba(0, 0, 0, 0.15)',
   },
   safeArea: {
     flex: 1,
@@ -806,6 +792,21 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     alignItems: 'center',
     zIndex: 1,
+  },
+  muteButton: {
+    position: 'absolute',
+    top: 12,
+    left: 14,
+    zIndex: 200,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  muteButtonIcon: {
+    fontSize: 18,
+    lineHeight: 22,
   },
   dot: {
     width: 8,
@@ -832,9 +833,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 4,
-    backgroundColor: 'rgba(22, 0, 28, 0.46)',
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
+    borderColor: 'rgba(255, 255, 255, 0.22)',
     overflow: 'hidden',
   },
   topPaginationIndicator: {
@@ -846,7 +847,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.72)',
-    shadowColor: '#ff0a8a',
+    shadowColor: '#ef3d82',
     shadowOpacity: 0.6,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 0 },
@@ -871,7 +872,7 @@ const styles = StyleSheet.create({
   },
   topPaginationDotActive: {
     backgroundColor: '#ffffff',
-    shadowColor: '#ff0a8a',
+    shadowColor: '#ef3d82',
     shadowOpacity: 0.8,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
@@ -957,13 +958,13 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 10, 138, 0.82)',
+    backgroundColor: 'rgba(239, 61, 130, 0.9)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.74)',
-    shadowColor: '#ff0a8a',
-    shadowOpacity: 0.62,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
+    borderColor: 'rgba(255, 255, 255, 0.65)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
   heroHintArrowText: {
     color: '#ffffff',
@@ -1004,7 +1005,7 @@ const styles = StyleSheet.create({
   },
   teaserShade: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(13, 0, 18, 0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
   },
   teaserContent: {
     width: '100%',
@@ -1013,7 +1014,7 @@ const styles = StyleSheet.create({
     gap: Spacing.four,
   },
   teaserEyebrow: {
-    color: '#ffd6ef',
+    color: 'rgba(255, 255, 255, 0.8)',
     fontFamily: Fonts.sans,
     fontSize: 13,
     fontWeight: 900,
@@ -1046,26 +1047,26 @@ const styles = StyleSheet.create({
     textShadowRadius: 10,
   },
   teaserButton: {
-    minHeight: 52,
-    borderRadius: 8,
+    minHeight: 58,
+    borderRadius: 29,
     marginTop: Spacing.three,
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: Spacing.five,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ff0a8a',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.52)',
-    shadowColor: '#ff0a8a',
-    shadowOpacity: 0.5,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
+    backgroundColor: '#fffafd',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.75)',
+    shadowColor: '#050505',
+    shadowOpacity: 1,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 6 },
   },
   teaserButtonPressed: {
-    opacity: 0.82,
-    transform: [{ translateY: 1 }],
+    opacity: 0.92,
+    transform: [{ translateY: 2 }],
   },
   teaserButtonText: {
-    color: '#ffffff',
+    color: '#080609',
     textAlign: 'center',
   },
 
@@ -1075,11 +1076,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-    backgroundColor: 'rgba(18, 0, 23, 0.28)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
   signupBrandWash: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(31, 0, 36, 0.58)',
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
   },
   signupContent: {
     width: '100%',
@@ -1098,8 +1099,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.72)',
     overflow: 'hidden',
-    shadowColor: '#ff0a8a',
-    shadowOpacity: 0.65,
+    shadowColor: '#000000',
+    shadowOpacity: 0.5,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 10 },
   },
@@ -1112,7 +1113,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontFamily: Fonts.sans,
     fontWeight: 900,
-    textShadowColor: 'rgba(255, 0, 137, 0.5)',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 3 },
     textShadowRadius: 18,
   },
@@ -1120,22 +1121,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 480,
     lineHeight: 26,
-    color: '#ffe2f3',
+    color: 'rgba(255, 255, 255, 0.85)',
     opacity: 0.96,
     fontWeight: 700,
   },
   signupPanel: {
     width: '100%',
     padding: Spacing.three,
-    borderRadius: 8,
+    borderRadius: 10,
     flexDirection: 'row',
     gap: Spacing.three,
     alignItems: 'center',
-    backgroundColor: 'rgba(32, 0, 38, 0.82)',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 33, 151, 0.72)',
-    shadowColor: '#ff0a8a',
-    shadowOpacity: 0.35,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.25,
     shadowRadius: 28,
     shadowOffset: { width: 0, height: 16 },
   },
@@ -1146,7 +1147,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 187, 226, 0.42)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
     color: '#ffffff',
     fontFamily: Fonts.sans,
     fontSize: 16,
@@ -1156,23 +1157,23 @@ const styles = StyleSheet.create({
   emailInputCompact: { alignSelf: 'stretch', width: '100%' },
   signupButton: {
     minHeight: 56,
-    borderRadius: 8,
+    borderRadius: 28,
     paddingHorizontal: Spacing.four,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#ff0a8a',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.42)',
-    shadowColor: '#ff0a8a',
-    shadowOpacity: 0.48,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
+    backgroundColor: '#fffafd',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.75)',
+    shadowColor: '#050505',
+    shadowOpacity: 1,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 5 },
   },
   signupButtonCompact: { alignSelf: 'stretch' },
   signupButtonDisabled: { opacity: 0.52 },
   signupButtonPressed: { opacity: 0.82, transform: [{ translateY: 1 }] },
   signupButtonText: {
-    color: '#ffffff',
+    color: '#080609',
     textAlign: 'center',
     fontFamily: Fonts.sans,
     fontWeight: 900,

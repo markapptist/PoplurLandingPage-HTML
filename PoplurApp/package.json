@@ -39,6 +39,7 @@
     "@types/three": "^0.184.1",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~56.0.4",
+    "playwright-core": "1.62.1",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -47,7 +48,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test-control:proxy": "node ./scripts/test-control-proxy.mjs",
+    "test-control:runner": "node ./scripts/synthetic-app-runner.mjs",
+    "test-control:runner:test": "node --test ./scripts/synthetic-runner-actions.test.mjs"
   },
   "private": true
 }

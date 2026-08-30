@@ -1,65 +1,284 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { readOwnerDashboard, setOwnerSimulationEnabled, stepOwnerSimulation, type BetaDashboard, type BetaMapCell, type BetaSyntheticProfile } from '@/services/testControl';
+import {
+  readOwnerDashboard,
+  type BetaDashboard,
+  type BetaMapCell,
+  type BetaRunnerActor,
+  type BetaRunnerAnalytics,
+} from '@/services/testControl';
+import {
+  readSyntheticRunnerFrames,
+  readSyntheticRunnerFrameImage,
+  readSyntheticRunnerState,
+  setSyntheticRunnerEnabled,
+  type SyntheticRunnerActor,
+  type SyntheticRunnerFrame,
+  type SyntheticRunnerState,
+} from '@/services/syntheticRunner';
+import {
+  subscribeRealtimePublicPosts,
+  type RealtimePublicPost,
+} from '@/services/realtimePublicPosts';
 import BetaDotWorld from '@/components/BetaDotWorld';
 import { betaMapPoint } from '@/components/betaMapProjection';
 
 const REFRESH_MS = 15_000;
+const RUNNER_REFRESH_MS = 2_500;
 const PERSONA_MARKS: Record<string, string> = { food: '🍜', sports: '⚽', music: '🎧', performance: '💻', tech: '💻', news: '📰' };
 const ago = (time: number) => !time ? '—' : Date.now() - time < 12_000 ? 'NOW' : Date.now() - time < 3_600_000 ? `${Math.round((Date.now() - time) / 60_000)}m ago` : `${Math.round((Date.now() - time) / 3_600_000)}h ago`;
 const clock = (time: number) => time ? new Date(time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+const words = (value: string) => value.replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+const duration = (milliseconds: number) => {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  const remainder = seconds % 60;
+  return hours ? `${hours}h ${minutes}m` : minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
+};
 
-function WorldMap({ cells }: { cells: BetaMapCell[] }) {
+function WorldMap({ cells, realtimeState }: { cells: BetaMapCell[]; realtimeState: 'connecting' | 'live' | 'offline' }) {
   const positionedCells = cells.slice(0, 12).map(cell => ({ cell, point: betaMapPoint(cell.place) })).filter((item): item is { cell: BetaMapCell; point: readonly [number, number] } => item.point !== null);
   return <View style={styles.map} accessibilityLabel="Coarse closed-beta activity map">
     <View style={styles.mapGrid} />
     <View style={styles.mapHeading}><Text style={styles.kicker}>COARSE ACTIVITY MAP</Text><Text style={styles.mapTitle}>Where the beta is moving</Text><Text style={styles.mapRule}>City and regional buckets only — never coordinates.</Text></View>
     <View style={styles.mapViewport}><BetaDotWorld cells={cells} />
       {positionedCells.map(({ cell, point }) => { const [x, y] = point; const left = x * 100; const top = y * 100; const size = Math.min(33, 10 + cell.events * 3); const syntheticOnly = (cell.realEvents ?? 0) === 0 && (cell.syntheticEvents ?? 0) > 0; return <View key={cell.place} style={[styles.mapPoint, { left: `${left}%`, top: `${top}%` } as never]}><View style={[styles.pulse, syntheticOnly && styles.pulseSim, { width: size + 12, height: size + 12, borderRadius: size }]} /><View style={[styles.dot, syntheticOnly && styles.dotSim, { width: size, height: size, borderRadius: size }]} /><View style={styles.dotCopy}><Text style={styles.dotPlace}>{cell.place}</Text><Text style={styles.dotMeta}>{cell.realEvents ?? 0} beta · {cell.syntheticEvents ?? 0} sim · {Math.round(cell.peakRadiusKm)} km peak</Text></View></View>; })}
-      {!cells.length && <View style={styles.mapEmpty}><Text style={styles.mapEmptyTitle}>AWAITING FIRST BETA SIGNAL</Text><Text style={[styles.copy, styles.mapEmptyCopy]}>The map is ready. Opted-in posts and live simulation pulses will appear here.</Text></View>}
+      {!cells.length && <View style={styles.mapEmpty}><Text style={styles.mapEmptyTitle}>NO PUBLIC POSTS ON THE MAP</Text><Text style={[styles.copy, styles.mapEmptyCopy]}>Published posts with an approximate public area will appear here the instant Firestore reports them.</Text></View>}
     </View>
-    <View style={styles.mapFoot}><View style={styles.liveDot} /><Text style={styles.mapFootText}>LIVE DESK · 15 SECOND REFRESH</Text></View>
+    <View style={styles.mapFoot}><View style={[styles.liveDot, realtimeState === 'live' ? styles.statusLive : styles.statusAway]} /><Text style={styles.mapFootText}>FIRESTORE REALTIME · {realtimeState.toUpperCase()}</Text></View>
   </View>;
 }
 
+function AnalyticsBars({ title, counts }: { title: string; counts: Record<string, number> }) {
+  const entries = Object.entries(counts).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 8);
+  const maximum = Math.max(1, ...entries.map(([, count]) => count));
+  return <View style={styles.analyticsGroup}><Text style={styles.analyticsTitle}>{title}</Text>{!entries.length ? <Text style={styles.analyticsEmpty}>Waiting for recorded synthetic events.</Text> : entries.map(([label, count]) => <View key={label} style={styles.analyticsRow}><View style={styles.analyticsLabelRow}><Text style={styles.analyticsLabel}>{words(label)}</Text><Text style={styles.analyticsValue}>{count}</Text></View><View style={styles.analyticsTrack}><View style={[styles.analyticsFill, { width: `${Math.max(5, (count / maximum) * 100)}%` } as never]} /></View></View>)}</View>;
+}
+
+function SessionAnalytics({ analytics }: { analytics: BetaRunnerAnalytics }) {
+  return <View style={styles.analyticsPanel}>
+    <View style={styles.analyticsSummary}><View><Text style={styles.analyticsNumber}>{analytics.eventCount}</Text><Text style={styles.analyticsCaption}>RECORDED EVENTS</Text></View><View><Text style={styles.analyticsNumber}>{analytics.sessionCount}</Text><Text style={styles.analyticsCaption}>SESSIONS</Text></View><View><Text style={styles.analyticsNumber}>{duration(analytics.averageDwellMs)}</Text><Text style={styles.analyticsCaption}>AVG DWELL</Text></View></View>
+    <View style={styles.analyticsColumns}><AnalyticsBars title="Screens" counts={analytics.screenCounts} /><AnalyticsBars title="Actions" counts={analytics.actionCounts} /></View>
+    <Text style={styles.analyticsWindow}>{analytics.windowStartMs && analytics.windowEndMs ? `${clock(analytics.windowStartMs)} – ${clock(analytics.windowEndMs)} runtime window` : 'Analytics will fill as synthetic journeys are recorded.'}</Text>
+  </View>;
+}
+
+const pageIsVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+
+function ActualRunnerFrameImage({ actorId, frame, frameKey, actor, onUnavailable }: { actorId: string; frame: SyntheticRunnerFrame; frameKey: string; actor: string; onUnavailable: (key: string) => void }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let localUrl = '';
+    const load = async () => {
+      try {
+        const image = await readSyntheticRunnerFrameImage(actorId, frame.sequence);
+        if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') throw new Error('Object URLs are unavailable.');
+        localUrl = URL.createObjectURL(image);
+        if (cancelled) URL.revokeObjectURL(localUrl);
+        else setObjectUrl(localUrl);
+      } catch {
+        if (!cancelled) onUnavailable(frameKey);
+      }
+    };
+    void load();
+    return () => { cancelled = true; if (localUrl) URL.revokeObjectURL(localUrl); };
+  }, [actorId, frame.sequence, frameKey, onUnavailable]);
+  if (!objectUrl) return <View style={styles.frameLoading}><ActivityIndicator color="#ff4aa3" /><Text style={styles.frameLoadingText}>Loading actual local frame…</Text></View>;
+  return <Image accessibilityLabel={`Actual local Poplur frame for ${actor} on ${frame.screen || 'unknown screen'}`} resizeMode="contain" source={{ uri: objectUrl }} style={styles.actualFrame} />;
+}
+
+function ActualSessionMonitor({ dashboard }: { dashboard: BetaDashboard }) {
+  const [runnerState, setRunnerState] = useState<SyntheticRunnerState | null>(null);
+  const [runnerError, setRunnerError] = useState<string | null>(null);
+  const [chosenActorId, setChosenActorId] = useState<string | null>(null);
+  const [framesByActor, setFramesByActor] = useState<Record<string, SyntheticRunnerFrame[]>>({});
+  const [frameErrors, setFrameErrors] = useState<Record<string, string>>({});
+  const [replayFrame, setReplayFrame] = useState<{ actorId: string; sequence: number } | null>(null);
+  const [brokenFrame, setBrokenFrame] = useState<string | null>(null);
+  const [commandBusy, setCommandBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (delay = RUNNER_REFRESH_MS) => { if (!cancelled) timer = setTimeout(read, delay); };
+    const read = async () => {
+      if (cancelled) return;
+      if (!pageIsVisible()) { schedule(); return; }
+      try {
+        const next = await readSyntheticRunnerState();
+        if (!cancelled) {
+          setRunnerState(next);
+          setRunnerError(null);
+          if (!next.enabled) {
+            setFramesByActor({});
+            setReplayFrame(null);
+            setBrokenFrame(null);
+          }
+        }
+      } catch {
+        if (!cancelled) { setRunnerState(null); setRunnerError('The local session runner is offline.'); }
+      } finally { schedule(); }
+    };
+    const onVisibility = () => { if (pageIsVisible()) { if (timer) clearTimeout(timer); schedule(0); } };
+    schedule(0);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility); };
+  }, []);
+
+  const actors = runnerState?.actors ?? [];
+  const selected = actors.find(actor => actor.actorId === chosenActorId) ?? actors[0] ?? null;
+
+  useEffect(() => {
+    const actorId = selected?.actorId;
+    if (!actorId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (delay = RUNNER_REFRESH_MS) => { if (!cancelled) timer = setTimeout(read, delay); };
+    const read = async () => {
+      if (cancelled) return;
+      if (!pageIsVisible()) { schedule(); return; }
+      try {
+        const frames = await readSyntheticRunnerFrames(actorId);
+        if (!cancelled) {
+          setFramesByActor(current => ({ ...current, [actorId]: frames }));
+          setFrameErrors(current => { const next = { ...current }; delete next[actorId]; return next; });
+        }
+      } catch {
+        if (!cancelled) setFrameErrors(current => ({ ...current, [actorId]: 'The local frame sequence is offline.' }));
+      } finally { schedule(); }
+    };
+    const onVisibility = () => { if (pageIsVisible()) { if (timer) clearTimeout(timer); schedule(0); } };
+    schedule(0);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility); };
+  }, [selected?.actorId]);
+
+  const frames = selected ? framesByActor[selected.actorId] ?? [] : [];
+  const replayIndex = replayFrame && selected?.actorId === replayFrame.actorId
+    ? frames.findIndex(frame => frame.sequence === replayFrame.sequence)
+    : -1;
+  const isLiveView = replayFrame === null || replayIndex < 0;
+  const currentIndex = isLiveView ? 0 : replayIndex;
+  const currentFrame = frames[currentIndex] ?? null;
+  const currentKey = selected && currentFrame ? `${selected.actorId}:${currentFrame.sequence}` : '';
+  const frameOffline = Boolean(selected && frameErrors[selected.actorId]) || brokenFrame === currentKey;
+  const suppressed = Boolean(currentFrame?.frameSuppressed || (isLiveView && selected?.frameSuppressed));
+  const runnerUnavailable = runnerState?.status === 'offline' || runnerState?.status === 'error' || selected?.status === 'offline' || selected?.status === 'error';
+  const status = runnerError || frameOffline || !runnerState || runnerUnavailable
+    ? 'OFFLINE'
+    : suppressed
+      ? 'FRAME SUPPRESSED'
+      : !selected || !runnerState.enabled || runnerState.status === 'paused' || runnerState.status === 'starting' || selected.status === 'paused' || selected.status === 'starting'
+        ? 'PAUSED'
+        : 'REAL APP SESSION';
+  const screen = currentFrame?.screen || selected?.currentScreen || '';
+  const action = currentFrame?.action || selected?.action || '';
+  const canShowFrame = Boolean(status === 'REAL APP SESSION' && selected && currentFrame && !frameOffline && !suppressed);
+
+  const choose = (actor: SyntheticRunnerActor) => { setChosenActorId(actor.actorId); setReplayFrame(null); setBrokenFrame(null); };
+  const toggleRunner = async (enabled: boolean) => {
+    if (commandBusy) return;
+    setCommandBusy(true);
+    try {
+      const next = await setSyntheticRunnerEnabled(enabled);
+      setRunnerState(next);
+      setRunnerError(null);
+      if (!next.enabled) {
+        setFramesByActor({});
+        setReplayFrame(null);
+        setBrokenFrame(null);
+      }
+    } catch {
+      setRunnerError('The local runner could not change state safely.');
+    } finally {
+      setCommandBusy(false);
+    }
+  };
+  const previous = () => {
+    if (!selected) return;
+    const targetIndex = currentIndex + 1;
+    if (targetIndex < frames.length) setReplayFrame({ actorId: selected.actorId, sequence: frames[targetIndex].sequence });
+  };
+  const next = () => {
+    if (!selected || isLiveView) return;
+    if (currentIndex <= 1) setReplayFrame(null);
+    else setReplayFrame({ actorId: selected.actorId, sequence: frames[currentIndex - 1].sequence });
+  };
+
+  return <View style={styles.monitorCard}>
+    <View style={styles.monitorHeading}><View style={styles.flex}><Text style={styles.kicker}>LOCAL SYNTHETIC RUNNER</Text><Text style={styles.monitorTitle}>Live AI Session Monitor</Text><Text style={styles.copy}>Watch actual isolated Poplur app sessions and replay only the real frames held by this local runner.</Text></View><View style={[styles.monitorStatus, status === 'REAL APP SESSION' ? styles.monitorLive : status === 'FRAME SUPPRESSED' ? styles.monitorReplay : styles.monitorPaused]}><Text style={styles.monitorStatusText}>{status}</Text></View></View>
+    <View style={styles.privacyStrip}><Text style={styles.privacyTitle}>ACTUAL ISOLATED SYNTHETIC POPLUR SESSIONS · LOCAL ONLY</Text><Text style={styles.privacyCopy}>These are actual local app frames, never a reconstruction. Human account access, camera, microphone, messages and private routes are blocked or frame-suppressed. Frames never leave this machine.</Text></View>
+    <View style={styles.runnerControl}><View style={styles.flex}><Text style={styles.runnerControlLabel}>EXPLICIT LOCAL CONTROL</Text><Text style={styles.runnerControlTitle}>{commandBusy ? 'Changing runner state safely…' : runnerState?.enabled ? 'Runner is on' : 'Runner is off'}</Text><Text style={styles.runnerControlCopy}>{runnerState?.enabled ? 'Turn this off before app maintenance. Stopping clears every local frame.' : 'OFF is safe. Nothing starts until you switch it on yourself.'}</Text></View><Switch accessibilityLabel="Start or stop the isolated synthetic runner" disabled={commandBusy || !runnerState} onValueChange={enabled => { void toggleRunner(enabled); }} thumbColor="#fff" trackColor={{ false: '#5c5260', true: '#e42254' }} value={runnerState?.enabled === true} /></View>
+    {!!actors.length && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.personaTabs}>{actors.map(actor => { const active = actor.actorId === selected?.actorId; return <Pressable key={actor.actorId} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => choose(actor)} style={[styles.personaTab, active && styles.personaTabActive]}><View style={[styles.personaTabDot, actor.status === 'live' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text numberOfLines={1} style={[styles.personaTabName, active && styles.personaTabNameActive]}>{actor.actor}</Text><Text numberOfLines={1} style={styles.personaTabMeta}>{actor.currentScreen ? words(actor.currentScreen) : words(actor.status)}</Text></View></Pressable>; })}</ScrollView>}
+    <View style={styles.sessionMetaGrid}><SessionFact label="CURRENT SCREEN" value={screen ? words(screen) : 'No live session'} /><SessionFact label="CURRENT ACTION" value={action ? words(action) : 'No live action'} /><SessionFact label="SESSION" value={selected?.sessionId ? selected.sessionId.slice(-16) : 'Not running'} /><SessionFact label="LOCAL FRAMES" value={`${selected?.frameCount ?? frames.length}`} /></View>
+    <View style={styles.monitorColumns}>
+      <View style={styles.framePanel}><View style={styles.panelHeading}><View><Text style={styles.panelKicker}>{isLiveView ? 'LATEST ACTUAL FRAME' : `ACTUAL FRAME ${currentFrame?.sequence ?? '—'}`}</Text><Text style={styles.panelTitle}>{selected?.actor ?? 'No local actor running'}</Text></View><Text style={styles.panelPlace}>{currentFrame ? clock(currentFrame.capturedAtMs) : status}</Text></View>
+        <View style={styles.frameViewport}>{canShowFrame && currentFrame && selected ? <ActualRunnerFrameImage key={currentKey} actor={selected.actor} actorId={selected.actorId} frame={currentFrame} frameKey={currentKey} onUnavailable={setBrokenFrame} /> : <View style={styles.framePlaceholder}><Text style={styles.framePlaceholderTitle}>{status}</Text><Text style={styles.framePlaceholderCopy}>{runnerError || (frameOffline ? 'The local frame endpoint is unavailable.' : suppressed ? 'This protected step intentionally does not expose a frame.' : !selected ? 'The runner is off. No app session has started.' : 'Waiting for the first actual local frame.')}</Text></View>}</View>
+      </View>
+      <View style={styles.replayPanel}><View style={styles.panelHeading}><View><Text style={styles.panelKicker}>LOCAL FRAME REPLAY</Text><Text style={styles.panelTitle}>{frames.length ? `${frames.length} actual frames` : 'No frame sequence'}</Text></View><Text style={styles.panelPlace}>{selected?.sessionId ? selected.sessionId.slice(-12) : 'runner off'}</Text></View><View style={styles.replayControls}><ReplayButton label="LIVE" active={isLiveView} onPress={() => setReplayFrame(null)} disabled={!frames.length} /><ReplayButton label="PREV" onPress={previous} disabled={frames.length < 2 || currentIndex >= frames.length - 1} /><ReplayButton label="NEXT" onPress={next} disabled={!frames.length || isLiveView} /></View><View style={styles.eventList}>{!frames.length ? <Text style={styles.analyticsEmpty}>No frame recording is available. Nothing is inferred from legacy simulation events.</Text> : frames.slice(0, 8).map(frame => { const active = currentFrame?.sequence === frame.sequence; return <Pressable key={frame.sequence} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => { if (selected) setReplayFrame({ actorId: selected.actorId, sequence: frame.sequence }); }} style={[styles.eventRow, active && styles.eventRowActive]}><Text style={styles.eventTime}>{clock(frame.capturedAtMs)}</Text><View style={styles.flex}><Text style={styles.eventAction}>{frame.frameSuppressed ? 'Frame Suppressed' : (frame.action ? words(frame.action) : 'Actual Frame')}</Text><Text style={styles.eventMeta}>{frame.screen ? words(frame.screen) : 'Unknown screen'} · sequence {frame.sequence}</Text></View><Text style={styles.eventType}>{frame.frameSuppressed ? 'PROTECTED' : 'LOCAL JPEG'}</Text></Pressable>; })}</View></View>
+    </View>
+    <SessionAnalytics analytics={dashboard.runnerAnalytics} />
+  </View>;
+}
+
+function SessionFact({ label, value }: { label: string; value: string }) { return <View style={styles.sessionFact}><Text style={styles.sessionFactLabel}>{label}</Text><Text numberOfLines={2} style={styles.sessionFactValue}>{value}</Text></View>; }
+function ReplayButton({ label, active = false, disabled = false, onPress }: { label: string; active?: boolean; disabled?: boolean; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityState={{ selected: active, disabled }} disabled={disabled} onPress={onPress} style={[styles.replayButton, active && styles.replayButtonActive, disabled && styles.replayButtonDisabled]}><Text style={[styles.replayButtonText, active && styles.replayButtonTextActive]}>{label}</Text></Pressable>; }
+
 export default function TestControlScreen() {
-  const [dashboard, setDashboard] = useState<BetaDashboard | null>(null); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<string | null>(null);
+  const [dashboard, setDashboard] = useState<BetaDashboard | null>(null); const [loading, setLoading] = useState(true); const [notice, setNotice] = useState<string | null>(null);
+  const [realtimePosts, setRealtimePosts] = useState<RealtimePublicPost[]>([]);
+  const [realtimeCells, setRealtimeCells] = useState<BetaMapCell[]>([]);
+  const [realtimeState, setRealtimeState] = useState<'connecting' | 'live' | 'offline'>('connecting');
   const refreshInFlight = useRef(false); const requestGeneration = useRef(0);
   const refresh = useCallback(async () => { if (refreshInFlight.current) return; refreshInFlight.current = true; const generation = ++requestGeneration.current; setLoading(true); try { const next = await readOwnerDashboard(); if (generation === requestGeneration.current) { setDashboard(next); setNotice(null); } } catch (error) { if (generation === requestGeneration.current) setNotice(error instanceof Error ? error.message : 'The local beta desk connection is unavailable.'); } finally { refreshInFlight.current = false; if (generation === requestGeneration.current) setLoading(false); } }, []);
   useEffect(() => { let cancelled = false; let timer: ReturnType<typeof setTimeout> | undefined; const schedule = (delay = REFRESH_MS) => { if (!cancelled) timer = setTimeout(run, delay); }; const run = async () => { if (cancelled) return; if (typeof document === 'undefined' || document.visibilityState !== 'hidden') await refresh(); schedule(); }; const onVisibility = () => { if (document.visibilityState === 'visible') { if (timer) clearTimeout(timer); schedule(0); } }; schedule(0); if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility); return () => { cancelled = true; if (timer) clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility); }; }, [refresh]);
-  useEffect(() => {
-    if (!dashboard?.simulationEnabled) return;
-    let cancelled = false; let timer: ReturnType<typeof setTimeout> | undefined; let stepping = false;
-    const schedule = (delay = REFRESH_MS) => { if (!cancelled) timer = setTimeout(step, delay); };
-    const step = async () => { if (cancelled || stepping) return; if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { schedule(); return; } stepping = true; try { await stepOwnerSimulation(); if (!cancelled) await refresh(); } catch (error) { if (!cancelled) setNotice(error instanceof Error ? error.message : 'The simulation runner could not reach Poplur.'); } finally { stepping = false; schedule(); } };
-    schedule(0);
-    return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [dashboard?.simulationEnabled, refresh]);
-  const toggleSimulation = async (enabled: boolean) => { if (busy) return; setBusy(true); try { const next = await setOwnerSimulationEnabled(enabled); setDashboard(previous => previous ? { ...previous, simulationEnabled: next } : previous); setNotice(next ? 'Shared simulation resumed on enrolled test devices.' : 'Shared simulation paused on enrolled test devices.'); } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not update the shared simulation.'); } finally { setBusy(false); } };
-  const events = useMemo(() => { if (!dashboard) return []; const posts = dashboard.posts.map(post => ({ id: `post-${post.id}`, actor: post.label, kind: 'posted', place: post.place, radius: post.radiusKm, at: post.updatedAtMs || post.postedAtMs, simulated: false })); const simulation = dashboard.simulation.map(event => ({ id: `sim-${event.id}`, actor: event.actor, kind: event.kind, place: event.place, radius: event.radiusKm, at: event.eventAtMs, simulated: true })); return [...posts, ...simulation].sort((a, b) => b.at - a.at).slice(0, 10); }, [dashboard]);
-  const radiusDelta = dashboard?.posts.reduce((sum, post) => sum + post.radiusDeltaKm, 0) ?? 0; const velocity = Math.max(0, ...(dashboard?.posts.map(post => post.viralPerHour) ?? []));
+  useEffect(() => subscribeRealtimePublicPosts(snapshot => {
+    setRealtimePosts(snapshot.posts);
+    setRealtimeCells(snapshot.cells);
+    setRealtimeState('live');
+  }, () => {
+    setRealtimePosts([]);
+    setRealtimeCells([]);
+    setRealtimeState('offline');
+  }), []);
+  const events = useMemo(() => { if (!dashboard) return []; const posts = realtimePosts.map(post => ({ id: `post-${post.id}`, actor: post.label, kind: 'posted', place: post.place, radius: post.radiusKm, at: post.updatedAtMs || post.postedAtMs, simulated: post.synthetic })); const simulation = dashboard.simulation.map(event => ({ id: `sim-${event.id}`, actor: event.actor, kind: event.kind, place: event.place, radius: event.radiusKm, at: event.eventAtMs, simulated: true })); const runner = dashboard.runnerEvents.map(event => ({ id: `runner-${event.eventId}`, actor: event.actor, kind: event.action, place: event.place, radius: 0, at: event.eventAtMs, simulated: true })); return [...posts, ...runner, ...simulation].sort((a, b) => b.at - a.at).slice(0, 10); }, [dashboard, realtimePosts]);
+  const radiusDelta = realtimePosts.reduce((sum, post) => sum + post.radiusDeltaKm, 0); const velocity = Math.max(0, ...realtimePosts.map(post => post.viralPerHour));
   return <SafeAreaView style={styles.safe} edges={['top', 'bottom']}><ScrollView contentContainerStyle={styles.page}>
     <View style={styles.broadcast}><View style={styles.broadcastLeft}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE BETA DESK</Text></View><Text style={styles.broadcastRight}>PRIVATE · LOCAL OWNER VIEW</Text></View>
-    <View style={styles.header}><Text style={styles.brand}>POPLUR</Text><Text style={styles.title}>Beta Control Room</Text><Text style={styles.subtitle}>A newsroom view of the closed beta: post location buckets, timing, radius movement, viral pace, simulation signals and tester reports.</Text></View>
+    <View style={styles.header}><Text style={styles.brand}>POPLUR</Text><Text style={styles.title}>Beta Control Room</Text><Text style={styles.subtitle}>A newsroom view of the closed beta: Firestore-realtime public post regions, timing, radius movement, viral pace, runner signals and tester reports.</Text></View>
     <View style={styles.headline}><View><Text style={styles.kicker}>THE BETA IN MOTION</Text><Text style={styles.roomTitle}>Global Situation Room</Text></View><Pressable onPress={refresh} style={styles.refresh}><Text style={styles.refreshText}>{loading ? 'SYNCING' : 'REFRESH'}</Text></Pressable></View>
-    <WorldMap cells={dashboard?.map ?? []} />
+    <WorldMap cells={realtimeCells} realtimeState={realtimeState} />
     {!dashboard ? <View style={styles.connecting}><ActivityIndicator color="#ff4aa3" /><View style={styles.flex}><Text style={styles.cardTitle}>{loading ? 'Connecting to your private desk…' : 'Desk unavailable'}</Text><Text style={styles.copy}>The world stays visible while the local telemetry link reconnects.</Text></View></View> : <>
-      <View style={styles.stats}><Metric label="TESTERS LIVE" value={`${dashboard.rows.filter(row => row.state === 'active').length}`} note={`${dashboard.rows.length} opted-in humans`} /><Metric label="SIM PERSONAS" value={`${dashboard.syntheticProfiles.filter(profile => profile.status === 'live').length}`} note={`${dashboard.syntheticProfiles.length} clearly labelled`} /><Metric label="POSTS TRACKED" value={`${dashboard.posts.length}`} note="coarse map only" /><Metric label="RADIUS DELTA" value={`${radiusDelta >= 0 ? '+' : ''}${radiusDelta.toFixed(1)}`} suffix="km" note="across tracked posts" /><Metric label="TOP VIRAL PACE" value={velocity.toFixed(1)} note="signals / hour" /></View>
-      <View style={styles.split}><View style={styles.card}><View style={styles.row}><View><Text style={styles.kicker}>SYNTHETIC COHORT</Text><Text style={styles.cardTitle}>Live Simulation</Text></View><Switch accessibilityLabel="Pause or resume live simulation" disabled={busy} onValueChange={value => { void toggleSimulation(value); }} thumbColor="#fff" trackColor={{ false: '#5c5260', true: '#e42254' }} value={dashboard.simulationEnabled} /></View><Text style={styles.copy}>{dashboard.simulationEnabled ? 'Running. Synthetic activity is clearly labelled in the ticker.' : 'Paused. No simulated engagement will be emitted.'}</Text><Text style={[styles.simState, dashboard.simulationEnabled ? styles.simLive : styles.simPaused]}>{dashboard.simulationEnabled ? '● SIMULATION LIVE' : '○ SIMULATION PAUSED'}</Text></View><View style={styles.card}><Text style={styles.kicker}>SYNC STATUS</Text><Text style={styles.cardTitle}>Last desk update</Text><Text style={styles.time}>{clock(dashboard.generatedAtMs)}</Text><Text style={styles.copy}>The browser refreshes every 15 seconds while this local desk is open.</Text></View></View>
+      <View style={styles.stats}><Metric label="TESTERS LIVE" value={`${dashboard.rows.filter(row => row.state === 'active').length}`} note={`${dashboard.rows.length} opted-in humans`} /><Metric label="RUNNER ACTORS" value={`${dashboard.runnerActors.filter(profile => profile.state === 'live').length}`} note={`${dashboard.runnerActors.length} clearly labelled`} /><Metric label="PUBLIC POSTS LIVE" value={`${realtimePosts.length}`} note="Firestore · coarse regions" /><Metric label="RADIUS DELTA" value={`${radiusDelta >= 0 ? '+' : ''}${radiusDelta.toFixed(1)}`} suffix="km" note="across public posts" /><Metric label="TOP VIRAL PACE" value={velocity.toFixed(1)} note="signals / hour" /></View>
+      <View style={styles.split}><View style={styles.card}><Text style={styles.kicker}>SYNTHETIC COHORT</Text><Text style={styles.cardTitle}>Runner safety lock</Text><Text style={styles.copy}>{dashboard.runnerEnabled ? `Cloud generation ${dashboard.runnerGeneration} is armed. The local runner still reports its own state below.` : 'Cloud runner is OFF. No synthetic browser events can be accepted.'}</Text><Text style={[styles.simState, dashboard.runnerEnabled ? styles.simLive : styles.simPaused]}>{dashboard.runnerEnabled ? '● CLOUD RUNNER ARMED' : '○ CLOUD RUNNER OFF'}</Text></View><View style={styles.card}><Text style={styles.kicker}>SYNC STATUS</Text><Text style={styles.cardTitle}>Last desk update</Text><Text style={styles.time}>{clock(dashboard.generatedAtMs)}</Text><Text style={styles.copy}>The browser refreshes every 15 seconds while this local desk is open.</Text></View></View>
+      <ActualSessionMonitor dashboard={dashboard} />
       <Section title="Signals arriving at the desk" kicker="LIVE TICKER">{!events.length ? <Empty text="No opted-in or simulated signals have arrived yet." /> : events.map(event => <View key={event.id} style={styles.listRow}><View style={[styles.badge, event.simulated ? styles.simBadge : styles.betaBadge]}><Text style={styles.badgeText}>{event.simulated ? 'SIM' : 'BETA'}</Text></View><View style={styles.flex}><Text style={styles.name}>{event.actor} <Text style={styles.verb}>{event.kind.replace('-', ' ')}</Text></Text><Text style={styles.meta}>{event.place} · {Math.round(event.radius)} km radius</Text></View><Text style={styles.when}>{ago(event.at)}</Text></View>)}</Section>
-      <Section title="The first five testing profiles" kicker="SIMULATION PERSONAS"><View style={styles.personaGrid}>{!dashboard.syntheticProfiles.length ? <Empty text="The beta cohort manifest is loading." /> : dashboard.syntheticProfiles.map(profile => <PersonaCard key={profile.id} profile={profile} />)}</View></Section>
-      <Section title="Radius and virality desk" kicker="POST MOMENTUM">{!dashboard.posts.length ? <Empty text="An opted-in tester post will appear here after it lands on the map." /> : dashboard.posts.slice(0, 12).map(post => <View key={post.id} style={styles.listRow}><View style={styles.rate}><Text style={styles.rateValue}>{Math.round(post.viralPerHour)}</Text><Text style={styles.rateLabel}>/HR</Text></View><View style={styles.flex}><Text style={styles.name}>{post.label} · {post.place}</Text><Text style={styles.meta}>Posted {clock(post.postedAtMs)} · {post.initialRadiusKm.toFixed(1)} km → {post.radiusKm.toFixed(1)} km ({post.radiusDeltaKm >= 0 ? '+' : ''}{post.radiusDeltaKm.toFixed(1)} km)</Text></View><Text style={styles.when}>{ago(post.updatedAtMs || post.postedAtMs)}</Text></View>)}</Section>
+      <Section title="The five isolated testing profiles" kicker="RUNNER PERSONAS"><View style={styles.personaGrid}>{!dashboard.runnerActors.length ? <Empty text="The beta runner manifest is loading." /> : dashboard.runnerActors.map(profile => <PersonaCard key={profile.id} profile={profile} />)}</View></Section>
+      <Section title="Radius and virality desk" kicker="FIRESTORE REALTIME POST MOMENTUM">{!realtimePosts.length ? <Empty text="A published post with an approximate public area will appear here immediately." /> : realtimePosts.slice(0, 12).map(post => <View key={post.id} style={styles.listRow}><View style={styles.rate}><Text style={styles.rateValue}>{Math.round(post.viralPerHour)}</Text><Text style={styles.rateLabel}>/HR</Text></View><View style={styles.flex}><Text style={styles.name}>{post.label} · {post.place}</Text><Text style={styles.meta}>Posted {clock(post.postedAtMs)} · {post.initialRadiusKm.toFixed(1)} km → {post.radiusKm.toFixed(1)} km ({post.radiusDeltaKm >= 0 ? '+' : ''}{post.radiusDeltaKm.toFixed(1)} km)</Text></View><Text style={styles.when}>{ago(post.updatedAtMs || post.postedAtMs)}</Text></View>)}</Section>
       <Section title="Who is testing right now" kicker="TESTER ACTIVITY">{!dashboard.rows.length ? <Empty text="No opted-in tester activity yet." /> : dashboard.rows.map(row => <View key={row.id} style={styles.listRow}><View style={[styles.statusDot, row.state === 'active' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text style={styles.name}>{row.label}</Text><Text style={styles.meta}>{row.screen.replace(/-/g, ' ')} · {row.platform} · v{row.appVersion}</Text></View><Text style={styles.when}>{row.state === 'active' ? 'LIVE' : ago(row.lastActivityAtMs)}</Text></View>)}</Section>
       <Section title="Findings, wins and improvements" kicker="WHAT TESTERS ARE SAYING">{!dashboard.feedback.length ? <Empty text="Voluntary tester reports will land here." /> : dashboard.feedback.map(report => <View key={report.id} style={styles.report}><View style={styles.row}><Text style={styles.name}>{report.label}</Text><Text style={styles.when}>{ago(report.createdAtMs)}</Text></View>{!!report.finding && <Text style={styles.reportText}><Text style={styles.reportLabel}>FOUND </Text>{report.finding}</Text>}{!!report.liked && <Text style={styles.reportText}><Text style={styles.reportLabel}>LIKED </Text>{report.liked}</Text>}{!!report.improve && <Text style={styles.reportText}><Text style={styles.reportLabel}>IMPROVE </Text>{report.improve}</Text>}</View>)}</Section>
     </>}{!!notice && <Text style={styles.notice}>{notice}</Text>}
   </ScrollView></SafeAreaView>;
 }
 function Metric({ label, value, suffix, note }: { label: string; value: string; suffix?: string; note: string }) { return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.metricValue}>{value}{suffix && <Text style={styles.metricSuffix}> {suffix}</Text>}</Text><Text style={styles.metricNote}>{note}</Text></View>; }
-function PersonaCard({ profile }: { profile: BetaSyntheticProfile }) { const personaKey = Object.keys(PERSONA_MARKS).find(key => profile.persona.toLowerCase().includes(key)); const mark = personaKey ? PERSONA_MARKS[personaKey] : '●'; return <View style={styles.personaCard}><View style={styles.personaTop}><View style={styles.personaAvatar}><Text style={styles.personaMark}>{mark}</Text><Text style={styles.personaTile}>{profile.avatarTile.toUpperCase()}</Text></View><View style={styles.flex}><Text style={styles.personaFlag}>SIMULATION PERSONA</Text><Text style={styles.name}>{profile.label}</Text><Text style={styles.meta}>{profile.persona} · {profile.place}</Text></View><Text style={[styles.personaStatus, profile.status === 'live' ? styles.simLive : styles.simPaused]}>{profile.status.toUpperCase()}</Text></View><Text style={styles.observationLabel}>SIMULATED OBSERVATION</Text><Text style={styles.reportText}><Text style={styles.reportLabel}>FOUND </Text>{profile.finding}</Text><Text style={styles.reportText}><Text style={styles.reportLabel}>LIKED </Text>{profile.liked}</Text><Text style={styles.reportText}><Text style={styles.reportLabel}>IMPROVE </Text>{profile.improve}</Text></View>; }
+function PersonaCard({ profile }: { profile: BetaRunnerActor }) { const personaKey = Object.keys(PERSONA_MARKS).find(key => profile.persona.toLowerCase().includes(key)); const mark = personaKey ? PERSONA_MARKS[personaKey] : '●'; return <View style={styles.personaCard}><View style={styles.personaTop}><View style={styles.personaAvatar}><Text style={styles.personaMark}>{mark}</Text><Text style={styles.personaTile}>{profile.avatarTile.toUpperCase()}</Text></View><View style={styles.flex}><Text style={styles.personaFlag}>ISOLATED RUNNER ACTOR</Text><Text style={styles.name}>{profile.label}</Text><Text style={styles.meta}>{profile.persona} · {profile.place}</Text></View><Text style={[styles.personaStatus, profile.state === 'live' ? styles.simLive : styles.simPaused]}>{profile.state.replace(/-/g, ' ').toUpperCase()}</Text></View><Text style={styles.observationLabel}>RUNNER ENROLMENT</Text><Text style={styles.reportText}>{profile.active ? `Allowlisted for generation ${profile.generation}.` : 'Not allowlisted. This persona cannot create a session.'}</Text></View>; }
 function Section({ title, kicker, children }: { title: string; kicker: string; children: React.ReactNode }) { return <View style={[styles.card, { flexGrow: 0, flexBasis: 'auto' }]}><Text style={styles.kicker}>{kicker}</Text><Text style={styles.cardTitle}>{title}</Text>{children}</View>; }
 function Empty({ text }: { text: string }) { return <Text style={styles.copy}>{text}</Text>; }
 
 const styles = StyleSheet.create<Record<string, any>>({
-  safe: { flex: 1, backgroundColor: '#12020c' }, page: { flexGrow: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: 20, paddingBottom: 48, gap: 16, backgroundImage: 'radial-gradient(circle at 50% 0%, #501032 0%, #18030f 38%, #080409 76%)' }, broadcast: { minHeight: 42, marginHorizontal: -20, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f20b69', borderBottomWidth: 3, borderBottomColor: '#8d0642' }, broadcastLeft: { flexDirection: 'row', gap: 8, alignItems: 'center' }, liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' }, liveText: { color: '#fff', fontWeight: '900', fontSize: 11, letterSpacing: 1.2 }, broadcastRight: { color: '#ffe1ef', fontWeight: '800', fontSize: 10, letterSpacing: 1 }, header: { paddingTop: 28, gap: 5 }, brand: { color: '#ff4aa3', fontWeight: '900', fontSize: 13, letterSpacing: 4, textShadowColor: '#ff1680', textShadowRadius: 12 }, title: { color: '#fff7fb', fontSize: 42, fontWeight: '900', letterSpacing: -1.6 }, subtitle: { color: '#e0b8cc', fontSize: 15, lineHeight: 21, maxWidth: 700 }, connecting: { flexDirection: 'row', gap: 12, padding: 18, alignItems: 'center', borderWidth: 1, borderColor: '#78204b', borderRadius: 18, backgroundColor: '#210914' }, headline: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 8 }, kicker: { color: '#ff4aa3', fontSize: 10, fontWeight: '900', letterSpacing: 1.6 }, roomTitle: { color: '#fff7fb', fontSize: 27, fontWeight: '900' }, refresh: { backgroundColor: '#ff2f91', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 2, borderColor: '#ff8ac5' }, refreshText: { color: '#fff', fontWeight: '900', fontSize: 10, letterSpacing: 1 }, stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, metric: { flexGrow: 1, flexBasis: 190, minHeight: 112, padding: 15, justifyContent: 'space-between', borderWidth: 1, borderTopWidth: 3, borderColor: '#6b2548', borderTopColor: '#ff2f91', borderRadius: 18, backgroundColor: 'rgba(39,9,25,.93)', boxShadow: '0 10px 28px rgba(0,0,0,.25)' }, metricLabel: { color: '#d29ab7', fontWeight: '900', fontSize: 10, letterSpacing: 1.1 }, metricValue: { color: '#fff9fc', fontSize: 31, fontWeight: '900' }, metricSuffix: { color: '#edbfd6', fontSize: 14 }, metricNote: { color: '#b7859f', fontSize: 11 }, map: { height: 470, position: 'relative', overflow: 'hidden', padding: 22, borderWidth: 2, borderColor: '#ff4aa3', borderRadius: 28, backgroundColor: '#130711', boxShadow: '0 22px 55px rgba(255,19,126,.18)' }, mapGrid: { ...StyleSheet.absoluteFill, backgroundImage: 'linear-gradient(rgba(255,72,161,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,72,161,.045) 1px, transparent 1px)', backgroundSize: '32px 32px', backgroundColor: '#130711' }, mapViewport: { position: 'absolute', left: '3%', right: '3%', top: 84, bottom: 54 }, mapHeading: { gap: 1, zIndex: 2 }, mapTitle: { color: '#fff7fb', fontSize: 26, fontWeight: '900' }, mapRule: { color: '#d5a7bf', fontSize: 12 }, mapPoint: { position: 'absolute', width: 0, height: 0, alignItems: 'center', justifyContent: 'center', zIndex: 3 }, pulse: { position: 'absolute', backgroundColor: 'rgba(255,39,141,.24)', borderWidth: 2, borderColor: '#fff' }, pulseSim: { backgroundColor: 'rgba(143,88,255,.28)', borderColor: '#c9afff' }, dot: { backgroundColor: '#ff1580', borderWidth: 3, borderColor: '#fff', boxShadow: '0 0 22px #ff1680' }, dotSim: { backgroundColor: '#8d5cff', borderColor: '#f1e9ff', boxShadow: '0 0 22px #8d5cff' }, dotCopy: { position: 'absolute', top: 21, left: 10, width: 160, padding: 9, borderRadius: 10, backgroundColor: 'rgba(31,5,20,.95)', borderWidth: 1, borderColor: '#ff4aa3' }, dotPlace: { color: '#fff', fontSize: 10, fontWeight: '800' }, dotMeta: { color: '#e2b4cb', fontSize: 9 }, mapEmpty: { position: 'absolute', top: '47%', left: '15%', right: '15%', alignItems: 'center', gap: 4, zIndex: 3, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,74,163,.55)', backgroundColor: 'rgba(20,4,14,.88)' }, mapEmptyTitle: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: 1.3, textAlign: 'center', textShadowColor: '#ff1680', textShadowRadius: 8 }, mapEmptyCopy: { textAlign: 'center', fontSize: 11, lineHeight: 16 }, mapFoot: { position: 'absolute', left: 22, bottom: 18, flexDirection: 'row', gap: 7, alignItems: 'center', zIndex: 3 }, mapFootText: { color: '#d4a1bc', fontSize: 9, fontWeight: '900', letterSpacing: 1 }, split: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, card: { flexGrow: 1, flexBasis: 340, gap: 12, padding: 18, borderWidth: 1, borderColor: '#6b2548', borderRadius: 20, backgroundColor: 'rgba(37,8,23,.94)', boxShadow: '0 12px 30px rgba(0,0,0,.24)' }, row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }, cardTitle: { color: '#fff8fc', fontSize: 19, fontWeight: '800' }, copy: { color: '#d5a7bf', fontSize: 13, lineHeight: 19 }, simState: { fontSize: 11, fontWeight: '900', letterSpacing: 1.1 }, simLive: { color: '#6ff5b0' }, simPaused: { color: '#d1a0b9' }, time: { color: '#fff7fb', fontSize: 27, fontWeight: '900' }, listRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#57203d' }, flex: { flex: 1, gap: 2 }, badge: { minWidth: 34, paddingVertical: 4, alignItems: 'center', borderRadius: 8 }, betaBadge: { backgroundColor: '#ed176f' }, simBadge: { backgroundColor: '#493547' }, badgeText: { color: '#fff', fontSize: 8, fontWeight: '900' }, name: { color: '#fff8fc', fontSize: 13, fontWeight: '800' }, verb: { color: '#ff6caf', textTransform: 'uppercase', fontSize: 10 }, meta: { color: '#d0a2b9', fontSize: 11 }, when: { color: '#8fddff', fontSize: 10, fontWeight: '900' }, rate: { width: 42, alignItems: 'center', borderLeftWidth: 3, borderLeftColor: '#ff2f91' }, rateValue: { color: '#fff8fc', fontSize: 18, fontWeight: '900' }, rateLabel: { color: '#c890ac', fontSize: 8, fontWeight: '900' }, statusDot: { width: 9, height: 9, borderRadius: 5 }, statusLive: { backgroundColor: '#5af0a4' }, statusAway: { backgroundColor: '#806476' }, report: { gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#57203d' }, reportText: { color: '#dec0cf', fontSize: 12, lineHeight: 18 }, reportLabel: { color: '#ff6caf', fontSize: 10, fontWeight: '900', letterSpacing: .8 }, personaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, personaCard: { flexGrow: 1, flexBasis: 290, gap: 7, minWidth: 0, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: '#70304f', backgroundColor: 'rgba(20,5,14,.86)' }, personaTop: { flexDirection: 'row', alignItems: 'center', gap: 10 }, personaAvatar: { width: 54, height: 54, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f22e88', borderWidth: 2, borderColor: '#ff9aca', boxShadow: '0 6px 18px rgba(255,28,132,.28)' }, personaMark: { fontSize: 24 }, personaTile: { position: 'absolute', right: 3, bottom: 2, color: '#fff', fontSize: 7, fontWeight: '900' }, personaFlag: { color: '#ff65ab', fontSize: 8, fontWeight: '900', letterSpacing: 1 }, personaStatus: { alignSelf: 'flex-start', fontSize: 9, fontWeight: '900', letterSpacing: .8 }, observationLabel: { color: '#8fddff', fontSize: 8, fontWeight: '900', letterSpacing: 1, marginTop: 3 }, notice: { color: '#ffe8f3', backgroundColor: '#59132f', borderRadius: 12, padding: 12, fontSize: 12 },
+  safe: { flex: 1, backgroundColor: '#12020c' }, page: { flexGrow: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: 20, paddingBottom: 48, gap: 16, backgroundImage: 'radial-gradient(circle at 50% 0%, #501032 0%, #18030f 38%, #080409 76%)' }, broadcast: { minHeight: 42, marginHorizontal: -20, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f20b69', borderBottomWidth: 3, borderBottomColor: '#8d0642' }, broadcastLeft: { flexDirection: 'row', gap: 8, alignItems: 'center' }, liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' }, liveText: { color: '#fff', fontWeight: '900', fontSize: 11, letterSpacing: 1.2 }, broadcastRight: { color: '#ffe1ef', fontWeight: '800', fontSize: 10, letterSpacing: 1 }, header: { paddingTop: 28, gap: 5 }, brand: { color: '#ff4aa3', fontWeight: '900', fontSize: 13, letterSpacing: 4, textShadowColor: '#ff1680', textShadowRadius: 12 }, title: { color: '#fff7fb', fontSize: 42, fontWeight: '900', letterSpacing: -1.6 }, subtitle: { color: '#e0b8cc', fontSize: 15, lineHeight: 21, maxWidth: 700 }, connecting: { flexDirection: 'row', gap: 12, padding: 18, alignItems: 'center', borderWidth: 1, borderColor: '#78204b', borderRadius: 18, backgroundColor: '#210914' }, headline: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 8 }, kicker: { color: '#ff4aa3', fontSize: 10, fontWeight: '900', letterSpacing: 1.6 }, roomTitle: { color: '#fff7fb', fontSize: 27, fontWeight: '900' }, refresh: { backgroundColor: '#ff2f91', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 2, borderColor: '#ff8ac5' }, refreshText: { color: '#fff', fontWeight: '900', fontSize: 10, letterSpacing: 1 }, stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, metric: { flexGrow: 1, flexBasis: 190, minHeight: 112, padding: 15, justifyContent: 'space-between', borderWidth: 1, borderTopWidth: 3, borderColor: '#6b2548', borderTopColor: '#ff2f91', borderRadius: 18, backgroundColor: 'rgba(39,9,25,.93)', boxShadow: '0 10px 28px rgba(0,0,0,.25)' }, metricLabel: { color: '#d29ab7', fontWeight: '900', fontSize: 10, letterSpacing: 1.1 }, metricValue: { color: '#fff9fc', fontSize: 31, fontWeight: '900' }, metricSuffix: { color: '#edbfd6', fontSize: 14 }, metricNote: { color: '#b7859f', fontSize: 11 }, map: { height: 470, position: 'relative', overflow: 'hidden', padding: 22, borderWidth: 2, borderColor: '#ff4aa3', borderRadius: 28, backgroundColor: '#130711', boxShadow: '0 22px 55px rgba(255,19,126,.18)' }, mapGrid: { ...StyleSheet.absoluteFill, backgroundImage: 'linear-gradient(rgba(255,72,161,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,72,161,.045) 1px, transparent 1px)', backgroundSize: '32px 32px', backgroundColor: '#130711' }, mapViewport: { position: 'absolute', left: '3%', right: '3%', top: 84, bottom: 54 }, mapHeading: { gap: 1, zIndex: 2 }, mapTitle: { color: '#fff7fb', fontSize: 26, fontWeight: '900' }, mapRule: { color: '#d5a7bf', fontSize: 12 }, mapPoint: { position: 'absolute', width: 0, height: 0, alignItems: 'center', justifyContent: 'center', zIndex: 3 }, pulse: { position: 'absolute', backgroundColor: 'rgba(255,39,141,.24)', borderWidth: 2, borderColor: '#fff' }, pulseSim: { backgroundColor: 'rgba(143,88,255,.28)', borderColor: '#c9afff' }, dot: { backgroundColor: '#ff1580', borderWidth: 3, borderColor: '#fff', boxShadow: '0 0 22px #ff1680' }, dotSim: { backgroundColor: '#8d5cff', borderColor: '#f1e9ff', boxShadow: '0 0 22px #8d5cff' }, dotCopy: { position: 'absolute', top: 21, left: 10, width: 160, padding: 9, borderRadius: 10, backgroundColor: 'rgba(31,5,20,.95)', borderWidth: 1, borderColor: '#ff4aa3' }, dotPlace: { color: '#fff', fontSize: 10, fontWeight: '800' }, dotMeta: { color: '#e2b4cb', fontSize: 9 }, mapEmpty: { position: 'absolute', top: '47%', left: '15%', right: '15%', alignItems: 'center', gap: 4, zIndex: 3, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,74,163,.55)', backgroundColor: 'rgba(20,4,14,.88)' }, mapEmptyTitle: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: 1.3, textAlign: 'center', textShadowColor: '#ff1680', textShadowRadius: 8 }, mapEmptyCopy: { textAlign: 'center', fontSize: 11, lineHeight: 16 }, mapFoot: { position: 'absolute', left: 22, bottom: 18, flexDirection: 'row', gap: 7, alignItems: 'center', zIndex: 3 }, mapFootText: { color: '#d4a1bc', fontSize: 9, fontWeight: '900', letterSpacing: 1 }, split: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, card: { flexGrow: 1, flexBasis: 340, gap: 12, padding: 18, borderWidth: 1, borderColor: '#6b2548', borderRadius: 20, backgroundColor: 'rgba(37,8,23,.94)', boxShadow: '0 12px 30px rgba(0,0,0,.24)' }, row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }, cardTitle: { color: '#fff8fc', fontSize: 19, fontWeight: '800' }, copy: { color: '#d5a7bf', fontSize: 13, lineHeight: 19 }, simState: { fontSize: 11, fontWeight: '900', letterSpacing: 1.1 }, simLive: { color: '#6ff5b0' }, simPaused: { color: '#d1a0b9' }, time: { color: '#fff7fb', fontSize: 27, fontWeight: '900' }, listRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#57203d' }, flex: { flex: 1, gap: 2 }, badge: { minWidth: 34, paddingVertical: 4, alignItems: 'center', borderRadius: 8 }, betaBadge: { backgroundColor: '#ed176f' }, simBadge: { backgroundColor: '#493547' }, badgeText: { color: '#fff', fontSize: 8, fontWeight: '900' }, name: { color: '#fff8fc', fontSize: 13, fontWeight: '800' }, verb: { color: '#ff6caf', textTransform: 'uppercase', fontSize: 10 }, meta: { color: '#d0a2b9', fontSize: 11 }, when: { color: '#8fddff', fontSize: 10, fontWeight: '900' }, rate: { width: 42, alignItems: 'center', borderLeftWidth: 3, borderLeftColor: '#ff2f91' }, rateValue: { color: '#fff8fc', fontSize: 18, fontWeight: '900' }, rateLabel: { color: '#c890ac', fontSize: 8, fontWeight: '900' }, statusDot: { width: 9, height: 9, borderRadius: 5 }, statusLive: { backgroundColor: '#5af0a4' }, statusAway: { backgroundColor: '#806476' }, report: { gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#57203d' }, reportText: { color: '#dec0cf', fontSize: 12, lineHeight: 18 }, reportLabel: { color: '#ff6caf', fontSize: 10, fontWeight: '900', letterSpacing: .8 }, personaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, personaCard: { flexGrow: 1, flexBasis: 290, gap: 7, minWidth: 0, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: '#70304f', backgroundColor: 'rgba(20,5,14,.86)' }, personaTop: { flexDirection: 'row', alignItems: 'center', gap: 10 }, personaAvatar: { width: 54, height: 54, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f22e88', borderWidth: 2, borderColor: '#ff9aca', boxShadow: '0 6px 18px rgba(255,28,132,.28)' }, personaMark: { fontSize: 24 }, personaTile: { position: 'absolute', right: 3, bottom: 2, color: '#fff', fontSize: 7, fontWeight: '900' }, personaFlag: { color: '#ff65ab', fontSize: 8, fontWeight: '900', letterSpacing: 1 }, personaStatus: { alignSelf: 'flex-start', fontSize: 9, fontWeight: '900', letterSpacing: .8 }, observationLabel: { color: '#8fddff', fontSize: 8, fontWeight: '900', letterSpacing: 1, marginTop: 3 },
+  monitorCard: { gap: 16, padding: 18, borderWidth: 2, borderColor: '#ff4aa3', borderRadius: 24, backgroundColor: 'rgba(18,4,13,.97)', boxShadow: '0 18px 48px rgba(255,19,126,.18)' },
+  monitorHeading: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, alignItems: 'center', justifyContent: 'space-between' }, monitorTitle: { color: '#fff8fc', fontSize: 25, fontWeight: '900' }, monitorStatus: { minWidth: 140, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center', borderRadius: 999, borderWidth: 1 }, monitorLive: { backgroundColor: 'rgba(28,119,79,.35)', borderColor: '#62f1aa' }, monitorReplay: { backgroundColor: 'rgba(39,102,135,.38)', borderColor: '#8fddff' }, monitorPaused: { backgroundColor: 'rgba(99,72,91,.38)', borderColor: '#aa8097' }, monitorStatusText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 1, textAlign: 'center' },
+  privacyStrip: { gap: 3, padding: 12, borderRadius: 13, borderLeftWidth: 4, borderLeftColor: '#8fddff', backgroundColor: 'rgba(40,20,54,.75)' }, privacyTitle: { color: '#b9ecff', fontSize: 10, fontWeight: '900', letterSpacing: 1 }, privacyCopy: { color: '#d9bdd0', fontSize: 11, lineHeight: 16 },
+  runnerControl: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 14, padding: 13, borderRadius: 14, borderWidth: 1, borderColor: '#783050', backgroundColor: '#260b1a' }, runnerControlLabel: { color: '#ff65ab', fontSize: 8, fontWeight: '900', letterSpacing: 1 }, runnerControlTitle: { color: '#fff', fontSize: 14, fontWeight: '900' }, runnerControlCopy: { color: '#c493ac', fontSize: 10, lineHeight: 15 },
+  personaTabs: { gap: 8, paddingRight: 4 }, personaTab: { width: 190, minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 11, paddingVertical: 9, borderRadius: 14, borderWidth: 1, borderColor: '#5f2846', backgroundColor: '#210914' }, personaTabActive: { borderColor: '#ff72b6', backgroundColor: '#4b1231' }, personaTabDot: { width: 8, height: 8, borderRadius: 4 }, personaTabName: { color: '#cba2b7', fontSize: 12, fontWeight: '800' }, personaTabNameActive: { color: '#fff' }, personaTabMeta: { color: '#a77891', fontSize: 9 },
+  sessionMetaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, sessionFact: { flexGrow: 1, flexBasis: 170, minHeight: 70, gap: 5, padding: 11, borderRadius: 13, borderWidth: 1, borderColor: '#612542', backgroundColor: '#1d0814' }, sessionFactLabel: { color: '#bf829f', fontSize: 8, fontWeight: '900', letterSpacing: .9 }, sessionFactValue: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  monitorColumns: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'stretch' }, framePanel: { flexGrow: 1, flexShrink: 1, flexBasis: 380, minWidth: 0, gap: 12, padding: 14, borderRadius: 18, backgroundColor: '#210a19', borderWidth: 1, borderColor: '#652944' }, replayPanel: { flexGrow: 1, flexShrink: 1, flexBasis: 380, minWidth: 0, gap: 12, padding: 14, borderRadius: 18, backgroundColor: '#140b15', borderWidth: 1, borderColor: '#4b3148' }, panelHeading: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' }, panelKicker: { color: '#ff62aa', fontSize: 8, fontWeight: '900', letterSpacing: .9 }, panelTitle: { color: '#fff', fontSize: 16, fontWeight: '900' }, panelPlace: { color: '#94defe', fontSize: 9, fontWeight: '800' },
+  frameViewport: { width: '100%', maxWidth: 420, aspectRatio: 9 / 16, alignSelf: 'center', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderRadius: 26, borderWidth: 3, borderColor: '#ef338a', backgroundColor: '#070407', boxShadow: '0 18px 36px rgba(0,0,0,.35)' }, actualFrame: { width: '100%', height: '100%', backgroundColor: '#070407' }, frameLoading: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: '#070407' }, frameLoadingText: { color: '#cfa3ba', fontSize: 10, fontWeight: '800' }, framePlaceholder: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, backgroundColor: 'radial-gradient(circle at 50% 35%, #46122f 0%, #12070f 64%, #070407 100%)' }, framePlaceholderTitle: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 1.1, textAlign: 'center' }, framePlaceholderCopy: { maxWidth: 280, color: '#cfa3ba', fontSize: 11, lineHeight: 17, textAlign: 'center' },
+  replayControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, replayButton: { minWidth: 70, alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 11, borderWidth: 1, borderColor: '#79506c', backgroundColor: '#2a1725' }, replayButtonActive: { borderColor: '#8fddff', backgroundColor: '#174760' }, replayButtonDisabled: { opacity: .38 }, replayButtonText: { color: '#d8b8c8', fontSize: 9, fontWeight: '900', letterSpacing: .8 }, replayButtonTextActive: { color: '#dff7ff' }, eventList: { gap: 6 }, eventRow: { minHeight: 51, flexDirection: 'row', gap: 9, alignItems: 'center', padding: 9, borderRadius: 11, borderWidth: 1, borderColor: '#44263b', backgroundColor: '#1d111b' }, eventRowActive: { borderColor: '#ff65ab', backgroundColor: '#3e142e' }, eventTime: { color: '#8fddff', fontSize: 8, fontWeight: '900' }, eventAction: { color: '#fff', fontSize: 10, fontWeight: '900' }, eventMeta: { color: '#b98ca4', fontSize: 8 }, eventType: { maxWidth: 88, color: '#eab4ce', fontSize: 7, fontWeight: '900', textAlign: 'right' },
+  analyticsPanel: { gap: 14, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#59364f', backgroundColor: '#100a10' }, analyticsSummary: { flexDirection: 'row', flexWrap: 'wrap', gap: 22 }, analyticsNumber: { color: '#fff', fontSize: 20, fontWeight: '900' }, analyticsCaption: { color: '#b7849e', fontSize: 7, fontWeight: '900', letterSpacing: .8 }, analyticsColumns: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 }, analyticsGroup: { flexGrow: 1, flexShrink: 1, flexBasis: 300, minWidth: 0, gap: 8 }, analyticsTitle: { color: '#ff65ab', fontSize: 11, fontWeight: '900' }, analyticsEmpty: { color: '#9e788d', fontSize: 10, lineHeight: 15 }, analyticsRow: { gap: 4 }, analyticsLabelRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 }, analyticsLabel: { flex: 1, color: '#e7c7d7', fontSize: 9, fontWeight: '800' }, analyticsValue: { color: '#8fddff', fontSize: 9, fontWeight: '900' }, analyticsTrack: { height: 7, overflow: 'hidden', borderRadius: 6, backgroundColor: '#30202b' }, analyticsFill: { height: '100%', borderRadius: 6, backgroundColor: '#f12784' }, analyticsWindow: { color: '#8f7181', fontSize: 8 },
+  notice: { color: '#ffe8f3', backgroundColor: '#59132f', borderRadius: 12, padding: 12, fontSize: 12 },
 });

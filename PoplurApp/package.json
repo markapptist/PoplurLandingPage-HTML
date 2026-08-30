@@ -23,6 +23,7 @@
     "expo-video": "~56.1.2",
     "expo-web-browser": "~56.0.5",
     "firebase": "^12.14.0",
+    "firebase-admin": "^14.3.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.85.3",
@@ -42,6 +43,9 @@
     "playwright-core": "1.62.1",
     "typescript": "~6.0.3"
   },
+  "overrides": {
+    "websocket-driver": "^0.7.5"
+  },
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
@@ -50,6 +54,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test-control:proxy": "node ./scripts/test-control-proxy.mjs",
+    "test-control:test": "node --test ./src/services/realtimePublicPosts.test.mjs ./scripts/synthetic-runner-actions.test.mjs",
     "test-control:runner": "node ./scripts/synthetic-app-runner.mjs",
     "test-control:runner:test": "node --test ./scripts/synthetic-runner-actions.test.mjs"
   },

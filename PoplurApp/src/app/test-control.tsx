@@ -3,10 +3,13 @@ import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Te
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   readOwnerDashboard,
+  subscribeOwnerDashboard,
   type BetaDashboard,
   type BetaMapCell,
   type BetaRunnerActor,
   type BetaRunnerAnalytics,
+  type RealtimeFeedPost,
+  type RealtimePublicPost,
 } from '@/services/testControl';
 import {
   readSyntheticRunnerFrames,
@@ -17,15 +20,14 @@ import {
   type SyntheticRunnerFrame,
   type SyntheticRunnerState,
 } from '@/services/syntheticRunner';
-import {
-  subscribeRealtimePublicPosts,
-  type RealtimePublicPost,
-} from '@/services/realtimePublicPosts';
 import BetaDotWorld from '@/components/BetaDotWorld';
 import { betaMapPoint } from '@/components/betaMapProjection';
 
 const REFRESH_MS = 15_000;
 const RUNNER_REFRESH_MS = 2_500;
+const EMPTY_PUBLIC_POSTS: RealtimePublicPost[] = [];
+const EMPTY_FEED_POSTS: RealtimeFeedPost[] = [];
+const EMPTY_MAP_CELLS: BetaMapCell[] = [];
 const PERSONA_MARKS: Record<string, string> = { food: '🍜', sports: '⚽', music: '🎧', performance: '💻', tech: '💻', news: '📰' };
 const ago = (time: number) => !time ? '—' : Date.now() - time < 12_000 ? 'NOW' : Date.now() - time < 3_600_000 ? `${Math.round((Date.now() - time) / 60_000)}m ago` : `${Math.round((Date.now() - time) / 3_600_000)}h ago`;
 const clock = (time: number) => time ? new Date(time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
@@ -62,6 +64,38 @@ function SessionAnalytics({ analytics }: { analytics: BetaRunnerAnalytics }) {
     <View style={styles.analyticsSummary}><View><Text style={styles.analyticsNumber}>{analytics.eventCount}</Text><Text style={styles.analyticsCaption}>RECORDED EVENTS</Text></View><View><Text style={styles.analyticsNumber}>{analytics.sessionCount}</Text><Text style={styles.analyticsCaption}>SESSIONS</Text></View><View><Text style={styles.analyticsNumber}>{duration(analytics.averageDwellMs)}</Text><Text style={styles.analyticsCaption}>AVG DWELL</Text></View></View>
     <View style={styles.analyticsColumns}><AnalyticsBars title="Screens" counts={analytics.screenCounts} /><AnalyticsBars title="Actions" counts={analytics.actionCounts} /></View>
     <Text style={styles.analyticsWindow}>{analytics.windowStartMs && analytics.windowEndMs ? `${clock(analytics.windowStartMs)} – ${clock(analytics.windowEndMs)} runtime window` : 'Analytics will fill as synthetic journeys are recorded.'}</Text>
+  </View>;
+}
+
+function SurfaceSyncBoard({
+  posts,
+  feedPosts,
+  rows,
+  publicState,
+  privateState,
+}: {
+  posts: RealtimePublicPost[];
+  feedPosts: RealtimeFeedPost[];
+  rows: BetaDashboard['rows'];
+  publicState: 'connecting' | 'live' | 'offline';
+  privateState: 'connecting' | 'live' | 'offline';
+}) {
+  const channels = new Set(feedPosts.map(post => post.channelId));
+  const activeScreens = new Set(rows.filter(row => row.state === 'active').map(row => row.screen));
+  const surfaces = [
+    { name: 'MAP', state: publicState, detail: `${posts.length} Firestore posts · add/change/delete` },
+    { name: 'FEED', state: publicState, detail: `${feedPosts.length} posts across ${channels.size} live channels` },
+    { name: 'PROFILE', state: publicState, detail: `${feedPosts.length} shared records · account-filtered in app` },
+    { name: 'PHONE + HOUSE', state: publicState, detail: 'Realtime radius discovery · coordinates remain in app' },
+    { name: 'NOTIFICATIONS', state: privateState, detail: 'Account listener · private notification content excluded' },
+    { name: 'DM + CALLS', state: privateState, detail: 'Realtime app state only · private content excluded' },
+    { name: 'EVERY SCREEN', state: privateState, detail: `${activeScreens.size} opted-in routes active now · route name only` },
+  ];
+  return <View style={styles.surfaceBoard}>
+    <Text style={styles.kicker}>APP ↔ FIREBASE ↔ CONTROL ROOM</Text>
+    <Text style={styles.cardTitle}>Realtime surface matrix</Text>
+    <Text style={styles.copy}>Map, Feed, Profile, Phone and House consume the same live post snapshot; notifications, DMs and calls retain their account-scoped listeners. Consenting test devices publish only their current route. Messages, media, coordinates, keystrokes, camera and microphone data never enter this desk.</Text>
+    <View style={styles.surfaceGrid}>{surfaces.map(surface => <View key={surface.name} style={styles.surfaceCard}><View style={styles.row}><Text style={styles.surfaceName}>{surface.name}</Text><Text style={[styles.surfaceState, surface.state === 'live' ? styles.simLive : styles.simPaused]}>{surface.state.toUpperCase()}</Text></View><Text style={styles.surfaceDetail}>{surface.detail}</Text></View>)}</View>
   </View>;
 }
 
@@ -167,15 +201,15 @@ function ActualSessionMonitor({ dashboard }: { dashboard: BetaDashboard }) {
   const frameOffline = Boolean(selected && frameErrors[selected.actorId]) || brokenFrame === currentKey;
   const suppressed = Boolean(currentFrame?.frameSuppressed || (isLiveView && selected?.frameSuppressed));
   const runnerUnavailable = runnerState?.status === 'offline' || runnerState?.status === 'error' || selected?.status === 'offline' || selected?.status === 'error';
+  const runnerPaused = !selected || !runnerState?.enabled || runnerState.status === 'paused'
+    || runnerState.status === 'starting' || selected.status === 'paused' || selected.status === 'starting';
   const status = runnerError || frameOffline || !runnerState || runnerUnavailable
     ? 'OFFLINE'
-    : suppressed
-      ? 'FRAME SUPPRESSED'
-      : !selected || !runnerState.enabled || runnerState.status === 'paused' || runnerState.status === 'starting' || selected.status === 'paused' || selected.status === 'starting'
-        ? 'PAUSED'
-        : 'REAL APP SESSION';
-  const screen = currentFrame?.screen || selected?.currentScreen || '';
-  const action = currentFrame?.action || selected?.action || '';
+    : runnerPaused
+      ? 'PAUSED'
+      : suppressed ? 'FRAME SUPPRESSED' : 'REAL APP SESSION';
+  const screen = status === 'REAL APP SESSION' ? (currentFrame?.screen || selected?.currentScreen || '') : '';
+  const action = status === 'REAL APP SESSION' ? (currentFrame?.action || selected?.action || '') : '';
   const canShowFrame = Boolean(status === 'REAL APP SESSION' && selected && currentFrame && !frameOffline && !suppressed);
 
   const choose = (actor: SyntheticRunnerActor) => { setChosenActorId(actor.actorId); setReplayFrame(null); setBrokenFrame(null); };
@@ -212,7 +246,7 @@ function ActualSessionMonitor({ dashboard }: { dashboard: BetaDashboard }) {
     <View style={styles.monitorHeading}><View style={styles.flex}><Text style={styles.kicker}>LOCAL SYNTHETIC RUNNER</Text><Text style={styles.monitorTitle}>Live AI Session Monitor</Text><Text style={styles.copy}>Watch actual isolated Poplur app sessions and replay only the real frames held by this local runner.</Text></View><View style={[styles.monitorStatus, status === 'REAL APP SESSION' ? styles.monitorLive : status === 'FRAME SUPPRESSED' ? styles.monitorReplay : styles.monitorPaused]}><Text style={styles.monitorStatusText}>{status}</Text></View></View>
     <View style={styles.privacyStrip}><Text style={styles.privacyTitle}>ACTUAL ISOLATED SYNTHETIC POPLUR SESSIONS · LOCAL ONLY</Text><Text style={styles.privacyCopy}>These are actual local app frames, never a reconstruction. Human account access, camera, microphone, messages and private routes are blocked or frame-suppressed. Frames never leave this machine.</Text></View>
     <View style={styles.runnerControl}><View style={styles.flex}><Text style={styles.runnerControlLabel}>EXPLICIT LOCAL CONTROL</Text><Text style={styles.runnerControlTitle}>{commandBusy ? 'Changing runner state safely…' : runnerState?.enabled ? 'Runner is on' : 'Runner is off'}</Text><Text style={styles.runnerControlCopy}>{runnerState?.enabled ? 'Turn this off before app maintenance. Stopping clears every local frame.' : 'OFF is safe. Nothing starts until you switch it on yourself.'}</Text></View><Switch accessibilityLabel="Start or stop the isolated synthetic runner" disabled={commandBusy || !runnerState} onValueChange={enabled => { void toggleRunner(enabled); }} thumbColor="#fff" trackColor={{ false: '#5c5260', true: '#e42254' }} value={runnerState?.enabled === true} /></View>
-    {!!actors.length && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.personaTabs}>{actors.map(actor => { const active = actor.actorId === selected?.actorId; return <Pressable key={actor.actorId} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => choose(actor)} style={[styles.personaTab, active && styles.personaTabActive]}><View style={[styles.personaTabDot, actor.status === 'live' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text numberOfLines={1} style={[styles.personaTabName, active && styles.personaTabNameActive]}>{actor.actor}</Text><Text numberOfLines={1} style={styles.personaTabMeta}>{actor.currentScreen ? words(actor.currentScreen) : words(actor.status)}</Text></View></Pressable>; })}</ScrollView>}
+    {!!actors.length && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.personaTabs}>{actors.map(actor => { const active = actor.actorId === selected?.actorId; return <Pressable key={actor.actorId} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => choose(actor)} style={[styles.personaTab, active && styles.personaTabActive]}><View style={[styles.personaTabDot, actor.status === 'live' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text numberOfLines={1} style={[styles.personaTabName, active && styles.personaTabNameActive]}>{actor.actor}</Text><Text numberOfLines={1} style={styles.personaTabMeta}>{runnerState?.enabled && actor.currentScreen ? words(actor.currentScreen) : words(actor.status)}</Text></View></Pressable>; })}</ScrollView>}
     <View style={styles.sessionMetaGrid}><SessionFact label="CURRENT SCREEN" value={screen ? words(screen) : 'No live session'} /><SessionFact label="CURRENT ACTION" value={action ? words(action) : 'No live action'} /><SessionFact label="SESSION" value={selected?.sessionId ? selected.sessionId.slice(-16) : 'Not running'} /><SessionFact label="LOCAL FRAMES" value={`${selected?.frameCount ?? frames.length}`} /></View>
     <View style={styles.monitorColumns}>
       <View style={styles.framePanel}><View style={styles.panelHeading}><View><Text style={styles.panelKicker}>{isLiveView ? 'LATEST ACTUAL FRAME' : `ACTUAL FRAME ${currentFrame?.sequence ?? '—'}`}</Text><Text style={styles.panelTitle}>{selected?.actor ?? 'No local actor running'}</Text></View><Text style={styles.panelPlace}>{currentFrame ? clock(currentFrame.capturedAtMs) : status}</Text></View>
@@ -229,22 +263,28 @@ function ReplayButton({ label, active = false, disabled = false, onPress }: { la
 
 export default function TestControlScreen() {
   const [dashboard, setDashboard] = useState<BetaDashboard | null>(null); const [loading, setLoading] = useState(true); const [notice, setNotice] = useState<string | null>(null);
-  const [realtimePosts, setRealtimePosts] = useState<RealtimePublicPost[]>([]);
-  const [realtimeCells, setRealtimeCells] = useState<BetaMapCell[]>([]);
-  const [realtimeState, setRealtimeState] = useState<'connecting' | 'live' | 'offline'>('connecting');
+  const [deskRealtimeState, setDeskRealtimeState] = useState<'connecting' | 'live' | 'offline'>('connecting');
   const refreshInFlight = useRef(false); const requestGeneration = useRef(0);
   const refresh = useCallback(async () => { if (refreshInFlight.current) return; refreshInFlight.current = true; const generation = ++requestGeneration.current; setLoading(true); try { const next = await readOwnerDashboard(); if (generation === requestGeneration.current) { setDashboard(next); setNotice(null); } } catch (error) { if (generation === requestGeneration.current) setNotice(error instanceof Error ? error.message : 'The local beta desk connection is unavailable.'); } finally { refreshInFlight.current = false; if (generation === requestGeneration.current) setLoading(false); } }, []);
-  useEffect(() => { let cancelled = false; let timer: ReturnType<typeof setTimeout> | undefined; const schedule = (delay = REFRESH_MS) => { if (!cancelled) timer = setTimeout(run, delay); }; const run = async () => { if (cancelled) return; if (typeof document === 'undefined' || document.visibilityState !== 'hidden') await refresh(); schedule(); }; const onVisibility = () => { if (document.visibilityState === 'visible') { if (timer) clearTimeout(timer); schedule(0); } }; schedule(0); if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility); return () => { cancelled = true; if (timer) clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility); }; }, [refresh]);
-  useEffect(() => subscribeRealtimePublicPosts(snapshot => {
-    setRealtimePosts(snapshot.posts);
-    setRealtimeCells(snapshot.cells);
-    setRealtimeState('live');
-  }, () => {
-    setRealtimePosts([]);
-    setRealtimeCells([]);
-    setRealtimeState('offline');
-  }), []);
+  useEffect(() => subscribeOwnerDashboard(next => {
+    setDashboard(next);
+    setLoading(false);
+    setNotice(null);
+  }, setDeskRealtimeState), []);
+  useEffect(() => { if (deskRealtimeState === 'live') return; let cancelled = false; let timer: ReturnType<typeof setTimeout> | undefined; const schedule = (delay = REFRESH_MS) => { if (!cancelled) timer = setTimeout(run, delay); }; const run = async () => { if (cancelled) return; if (typeof document === 'undefined' || document.visibilityState !== 'hidden') await refresh(); schedule(); }; const onVisibility = () => { if (document.visibilityState === 'visible') { if (timer) clearTimeout(timer); schedule(0); } }; schedule(0); if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility); return () => { cancelled = true; if (timer) clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility); }; }, [deskRealtimeState, refresh]);
+  const realtimePosts = dashboard?.publicPosts ?? EMPTY_PUBLIC_POSTS;
+  const realtimeFeedPosts = dashboard?.publicFeed ?? EMPTY_FEED_POSTS;
+  const realtimeCells = dashboard?.publicMap ?? EMPTY_MAP_CELLS;
+  const realtimeState = deskRealtimeState;
   const events = useMemo(() => { if (!dashboard) return []; const posts = realtimePosts.map(post => ({ id: `post-${post.id}`, actor: post.label, kind: 'posted', place: post.place, radius: post.radiusKm, at: post.updatedAtMs || post.postedAtMs, simulated: post.synthetic })); const simulation = dashboard.simulation.map(event => ({ id: `sim-${event.id}`, actor: event.actor, kind: event.kind, place: event.place, radius: event.radiusKm, at: event.eventAtMs, simulated: true })); const runner = dashboard.runnerEvents.map(event => ({ id: `runner-${event.eventId}`, actor: event.actor, kind: event.action, place: event.place, radius: 0, at: event.eventAtMs, simulated: true })); return [...posts, ...runner, ...simulation].sort((a, b) => b.at - a.at).slice(0, 10); }, [dashboard, realtimePosts]);
+  const feedChannels = useMemo(() => Object.entries(realtimeFeedPosts.reduce<Record<string, { total: number; photos: number; videos: number }>>((counts, post) => {
+    const row = counts[post.channelId] ?? { total: 0, photos: 0, videos: 0 };
+    row.total += 1;
+    if (post.mediaType === 'photo') row.photos += 1;
+    if (post.mediaType === 'video') row.videos += 1;
+    counts[post.channelId] = row;
+    return counts;
+  }, {})).sort((left, right) => right[1].total - left[1].total || left[0].localeCompare(right[0])), [realtimeFeedPosts]);
   const radiusDelta = realtimePosts.reduce((sum, post) => sum + post.radiusDeltaKm, 0); const velocity = Math.max(0, ...realtimePosts.map(post => post.viralPerHour));
   return <SafeAreaView style={styles.safe} edges={['top', 'bottom']}><ScrollView contentContainerStyle={styles.page}>
     <View style={styles.broadcast}><View style={styles.broadcastLeft}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE BETA DESK</Text></View><Text style={styles.broadcastRight}>PRIVATE · LOCAL OWNER VIEW</Text></View>
@@ -253,11 +293,13 @@ export default function TestControlScreen() {
     <WorldMap cells={realtimeCells} realtimeState={realtimeState} />
     {!dashboard ? <View style={styles.connecting}><ActivityIndicator color="#ff4aa3" /><View style={styles.flex}><Text style={styles.cardTitle}>{loading ? 'Connecting to your private desk…' : 'Desk unavailable'}</Text><Text style={styles.copy}>The world stays visible while the local telemetry link reconnects.</Text></View></View> : <>
       <View style={styles.stats}><Metric label="TESTERS LIVE" value={`${dashboard.rows.filter(row => row.state === 'active').length}`} note={`${dashboard.rows.length} opted-in humans`} /><Metric label="RUNNER ACTORS" value={`${dashboard.runnerActors.filter(profile => profile.state === 'live').length}`} note={`${dashboard.runnerActors.length} clearly labelled`} /><Metric label="PUBLIC POSTS LIVE" value={`${realtimePosts.length}`} note="Firestore · coarse regions" /><Metric label="RADIUS DELTA" value={`${radiusDelta >= 0 ? '+' : ''}${radiusDelta.toFixed(1)}`} suffix="km" note="across public posts" /><Metric label="TOP VIRAL PACE" value={velocity.toFixed(1)} note="signals / hour" /></View>
-      <View style={styles.split}><View style={styles.card}><Text style={styles.kicker}>SYNTHETIC COHORT</Text><Text style={styles.cardTitle}>Runner safety lock</Text><Text style={styles.copy}>{dashboard.runnerEnabled ? `Cloud generation ${dashboard.runnerGeneration} is armed. The local runner still reports its own state below.` : 'Cloud runner is OFF. No synthetic browser events can be accepted.'}</Text><Text style={[styles.simState, dashboard.runnerEnabled ? styles.simLive : styles.simPaused]}>{dashboard.runnerEnabled ? '● CLOUD RUNNER ARMED' : '○ CLOUD RUNNER OFF'}</Text></View><View style={styles.card}><Text style={styles.kicker}>SYNC STATUS</Text><Text style={styles.cardTitle}>Last desk update</Text><Text style={styles.time}>{clock(dashboard.generatedAtMs)}</Text><Text style={styles.copy}>The browser refreshes every 15 seconds while this local desk is open.</Text></View></View>
+      <View style={styles.split}><View style={styles.card}><Text style={styles.kicker}>SYNTHETIC COHORT</Text><Text style={styles.cardTitle}>Runner safety lock</Text><Text style={styles.copy}>{dashboard.runnerEnabled ? `Cloud generation ${dashboard.runnerGeneration} is armed. The local runner still reports its own state below.` : 'Cloud runner is OFF. No synthetic browser events can be accepted.'}</Text><Text style={[styles.simState, dashboard.runnerEnabled ? styles.simLive : styles.simPaused]}>{dashboard.runnerEnabled ? '● CLOUD RUNNER ARMED' : '○ CLOUD RUNNER OFF'}</Text></View><View style={styles.card}><Text style={styles.kicker}>SYNC STATUS</Text><Text style={styles.cardTitle}>Last desk update</Text><Text style={styles.time}>{clock(dashboard.generatedAtMs)}</Text><Text style={styles.copy}>{deskRealtimeState === 'live' ? 'Private Firestore changes are streaming to this owner-only desk now.' : 'Live stream is reconnecting; bounded 15-second polling is active as a fallback.'}</Text></View></View>
+      <SurfaceSyncBoard posts={realtimePosts} feedPosts={realtimeFeedPosts} rows={dashboard.rows} publicState={realtimeState} privateState={deskRealtimeState} />
       <ActualSessionMonitor dashboard={dashboard} />
       <Section title="Signals arriving at the desk" kicker="LIVE TICKER">{!events.length ? <Empty text="No opted-in or simulated signals have arrived yet." /> : events.map(event => <View key={event.id} style={styles.listRow}><View style={[styles.badge, event.simulated ? styles.simBadge : styles.betaBadge]}><Text style={styles.badgeText}>{event.simulated ? 'SIM' : 'BETA'}</Text></View><View style={styles.flex}><Text style={styles.name}>{event.actor} <Text style={styles.verb}>{event.kind.replace('-', ' ')}</Text></Text><Text style={styles.meta}>{event.place} · {Math.round(event.radius)} km radius</Text></View><Text style={styles.when}>{ago(event.at)}</Text></View>)}</Section>
       <Section title="The five isolated testing profiles" kicker="RUNNER PERSONAS"><View style={styles.personaGrid}>{!dashboard.runnerActors.length ? <Empty text="The beta runner manifest is loading." /> : dashboard.runnerActors.map(profile => <PersonaCard key={profile.id} profile={profile} />)}</View></Section>
       <Section title="Radius and virality desk" kicker="FIRESTORE REALTIME POST MOMENTUM">{!realtimePosts.length ? <Empty text="A published post with an approximate public area will appear here immediately." /> : realtimePosts.slice(0, 12).map(post => <View key={post.id} style={styles.listRow}><View style={styles.rate}><Text style={styles.rateValue}>{Math.round(post.viralPerHour)}</Text><Text style={styles.rateLabel}>/HR</Text></View><View style={styles.flex}><Text style={styles.name}>{post.label} · {post.place}</Text><Text style={styles.meta}>Posted {clock(post.postedAtMs)} · {post.initialRadiusKm.toFixed(1)} km → {post.radiusKm.toFixed(1)} km ({post.radiusDeltaKm >= 0 ? '+' : ''}{post.radiusDeltaKm.toFixed(1)} km)</Text></View><Text style={styles.when}>{ago(post.updatedAtMs || post.postedAtMs)}</Text></View>)}</Section>
+      <Section title="What the live Feed is receiving" kicker="FIRESTORE REALTIME FEED CHANNELS">{!feedChannels.length ? <Empty text="The wiped Feed is empty. Channels will appear here at the same moment a published Firestore post reaches the app." /> : feedChannels.map(([channelId, counts]) => <View key={channelId} style={styles.listRow}><View style={styles.badge}><Text style={styles.badgeText}>{counts.total}</Text></View><View style={styles.flex}><Text style={styles.name}>{words(channelId)}</Text><Text style={styles.meta}>{counts.photos} photos · {counts.videos} videos · {counts.total - counts.photos - counts.videos} unclassified</Text></View><Text style={styles.when}>LIVE</Text></View>)}</Section>
       <Section title="Who is testing right now" kicker="TESTER ACTIVITY">{!dashboard.rows.length ? <Empty text="No opted-in tester activity yet." /> : dashboard.rows.map(row => <View key={row.id} style={styles.listRow}><View style={[styles.statusDot, row.state === 'active' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text style={styles.name}>{row.label}</Text><Text style={styles.meta}>{row.screen.replace(/-/g, ' ')} · {row.platform} · v{row.appVersion}</Text></View><Text style={styles.when}>{row.state === 'active' ? 'LIVE' : ago(row.lastActivityAtMs)}</Text></View>)}</Section>
       <Section title="Findings, wins and improvements" kicker="WHAT TESTERS ARE SAYING">{!dashboard.feedback.length ? <Empty text="Voluntary tester reports will land here." /> : dashboard.feedback.map(report => <View key={report.id} style={styles.report}><View style={styles.row}><Text style={styles.name}>{report.label}</Text><Text style={styles.when}>{ago(report.createdAtMs)}</Text></View>{!!report.finding && <Text style={styles.reportText}><Text style={styles.reportLabel}>FOUND </Text>{report.finding}</Text>}{!!report.liked && <Text style={styles.reportText}><Text style={styles.reportLabel}>LIKED </Text>{report.liked}</Text>}{!!report.improve && <Text style={styles.reportText}><Text style={styles.reportLabel}>IMPROVE </Text>{report.improve}</Text>}</View>)}</Section>
     </>}{!!notice && <Text style={styles.notice}>{notice}</Text>}
@@ -280,5 +322,6 @@ const styles = StyleSheet.create<Record<string, any>>({
   frameViewport: { width: '100%', maxWidth: 420, aspectRatio: 9 / 16, alignSelf: 'center', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderRadius: 26, borderWidth: 3, borderColor: '#ef338a', backgroundColor: '#070407', boxShadow: '0 18px 36px rgba(0,0,0,.35)' }, actualFrame: { width: '100%', height: '100%', backgroundColor: '#070407' }, frameLoading: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: '#070407' }, frameLoadingText: { color: '#cfa3ba', fontSize: 10, fontWeight: '800' }, framePlaceholder: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, backgroundColor: 'radial-gradient(circle at 50% 35%, #46122f 0%, #12070f 64%, #070407 100%)' }, framePlaceholderTitle: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 1.1, textAlign: 'center' }, framePlaceholderCopy: { maxWidth: 280, color: '#cfa3ba', fontSize: 11, lineHeight: 17, textAlign: 'center' },
   replayControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, replayButton: { minWidth: 70, alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 11, borderWidth: 1, borderColor: '#79506c', backgroundColor: '#2a1725' }, replayButtonActive: { borderColor: '#8fddff', backgroundColor: '#174760' }, replayButtonDisabled: { opacity: .38 }, replayButtonText: { color: '#d8b8c8', fontSize: 9, fontWeight: '900', letterSpacing: .8 }, replayButtonTextActive: { color: '#dff7ff' }, eventList: { gap: 6 }, eventRow: { minHeight: 51, flexDirection: 'row', gap: 9, alignItems: 'center', padding: 9, borderRadius: 11, borderWidth: 1, borderColor: '#44263b', backgroundColor: '#1d111b' }, eventRowActive: { borderColor: '#ff65ab', backgroundColor: '#3e142e' }, eventTime: { color: '#8fddff', fontSize: 8, fontWeight: '900' }, eventAction: { color: '#fff', fontSize: 10, fontWeight: '900' }, eventMeta: { color: '#b98ca4', fontSize: 8 }, eventType: { maxWidth: 88, color: '#eab4ce', fontSize: 7, fontWeight: '900', textAlign: 'right' },
   analyticsPanel: { gap: 14, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#59364f', backgroundColor: '#100a10' }, analyticsSummary: { flexDirection: 'row', flexWrap: 'wrap', gap: 22 }, analyticsNumber: { color: '#fff', fontSize: 20, fontWeight: '900' }, analyticsCaption: { color: '#b7849e', fontSize: 7, fontWeight: '900', letterSpacing: .8 }, analyticsColumns: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 }, analyticsGroup: { flexGrow: 1, flexShrink: 1, flexBasis: 300, minWidth: 0, gap: 8 }, analyticsTitle: { color: '#ff65ab', fontSize: 11, fontWeight: '900' }, analyticsEmpty: { color: '#9e788d', fontSize: 10, lineHeight: 15 }, analyticsRow: { gap: 4 }, analyticsLabelRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 }, analyticsLabel: { flex: 1, color: '#e7c7d7', fontSize: 9, fontWeight: '800' }, analyticsValue: { color: '#8fddff', fontSize: 9, fontWeight: '900' }, analyticsTrack: { height: 7, overflow: 'hidden', borderRadius: 6, backgroundColor: '#30202b' }, analyticsFill: { height: '100%', borderRadius: 6, backgroundColor: '#f12784' }, analyticsWindow: { color: '#8f7181', fontSize: 8 },
+  surfaceBoard: { gap: 12, padding: 18, borderRadius: 22, borderWidth: 2, borderColor: '#8fddff', backgroundColor: 'rgba(8,22,31,.9)', boxShadow: '0 16px 42px rgba(73,193,241,.12)' }, surfaceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, surfaceCard: { flexGrow: 1, flexBasis: 190, minHeight: 84, gap: 8, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: '#34687d', backgroundColor: 'rgba(8,31,43,.85)' }, surfaceName: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: .9 }, surfaceState: { fontSize: 9, fontWeight: '900', letterSpacing: .8 }, surfaceDetail: { color: '#b7dce9', fontSize: 10, lineHeight: 15 },
   notice: { color: '#ffe8f3', backgroundColor: '#59132f', borderRadius: 12, padding: 12, fontSize: 12 },
 });

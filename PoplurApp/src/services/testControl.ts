@@ -43,6 +43,24 @@ export type BetaMapCell = {
   velocity: number;
 };
 
+/** Only these coarse/statistical fields may cross the loopback desk stream. */
+export type RealtimePublicPost = BetaPostRow & {
+  source: 'firestore';
+  synthetic: boolean;
+  channelId: string;
+  mediaType: 'photo' | 'video' | 'unknown';
+};
+
+export type RealtimeFeedPost = {
+  id: string;
+  label: string;
+  channelId: string;
+  mediaType: 'photo' | 'video' | 'unknown';
+  postedAtMs: number;
+  updatedAtMs: number;
+  synthetic: boolean;
+};
+
 export type BetaSimulationEvent = {
   id: string;
   eventId: string;
@@ -177,6 +195,9 @@ export type BetaDashboard = {
   runnerAnalytics: BetaRunnerAnalytics;
   counts: BetaDashboardCounts;
   feedback: BetaFeedback[];
+  publicPosts: RealtimePublicPost[];
+  publicMap: BetaMapCell[];
+  publicFeed: RealtimeFeedPost[];
 };
 
 const text = (value: unknown, maximum = 120): string => typeof value === 'string'
@@ -190,6 +211,11 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
 const metric = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): number => {
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.min(maximum, parsed)) : 0;
+};
+
+const signedMetric = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(-maximum, Math.min(maximum, parsed)) : 0;
 };
 
 const integer = (value: unknown, maximum = 1_000_000): number => Math.round(metric(value, maximum));
@@ -374,6 +400,65 @@ const runnerAnalytics = (value: unknown): BetaRunnerAnalytics => {
   };
 };
 
+const realtimePublicPost = (value: unknown): RealtimePublicPost | null => {
+  const row = record(value);
+  const id = text(row.id, 160);
+  const label = text(row.label, 80);
+  const place = text(row.place, 80);
+  const postedAtMs = timeMs(row.postedAtMs);
+  if (!id || !label || !place || !postedAtMs || row.source !== 'firestore') return null;
+  const mediaType = text(row.mediaType, 16);
+  return {
+    id,
+    label,
+    place,
+    postedAtMs,
+    updatedAtMs: timeMs(row.updatedAtMs) || postedAtMs,
+    initialRadiusKm: metric(row.initialRadiusKm, 40_075),
+    radiusKm: metric(row.radiusKm, 40_075),
+    radiusDeltaKm: signedMetric(row.radiusDeltaKm, 40_075),
+    viralScore: metric(row.viralScore, 1_000_000_000),
+    viralPerHour: metric(row.viralPerHour, 1_000_000_000),
+    source: 'firestore',
+    synthetic: row.synthetic === true,
+    channelId: text(row.channelId, 40) || 'live',
+    mediaType: mediaType === 'photo' || mediaType === 'video' ? mediaType : 'unknown',
+  };
+};
+
+const realtimeFeedPost = (value: unknown): RealtimeFeedPost | null => {
+  const row = record(value);
+  const id = text(row.id, 160);
+  const label = text(row.label, 80);
+  const postedAtMs = timeMs(row.postedAtMs);
+  if (!id || !label || !postedAtMs) return null;
+  const mediaType = text(row.mediaType, 16);
+  return {
+    id,
+    label,
+    channelId: text(row.channelId, 40) || 'live',
+    mediaType: mediaType === 'photo' || mediaType === 'video' ? mediaType : 'unknown',
+    postedAtMs,
+    updatedAtMs: timeMs(row.updatedAtMs) || postedAtMs,
+    synthetic: row.synthetic === true,
+  };
+};
+
+const betaMapCell = (value: unknown): BetaMapCell | null => {
+  const row = record(value);
+  const place = text(row.place, 80);
+  if (!place) return null;
+  return {
+    place,
+    events: integer(row.events, 1_000_000),
+    realEvents: integer(row.realEvents, 1_000_000),
+    syntheticEvents: integer(row.syntheticEvents, 1_000_000),
+    latestAtMs: timeMs(row.latestAtMs),
+    peakRadiusKm: metric(row.peakRadiusKm, 40_075),
+    velocity: metric(row.velocity, 1_000_000_000),
+  };
+};
+
 const dashboardCounts = (result: Partial<BetaDashboard>): BetaDashboardCounts => ({
   realTesters: Number(result.counts?.realTesters) || 0,
   realPosts: Number(result.counts?.realPosts) || 0,
@@ -411,11 +496,21 @@ const dashboard = (value: unknown): BetaDashboard => {
     runnerAnalytics: result.runnerAnalytics ? runnerAnalytics(result.runnerAnalytics) : emptyRunnerAnalytics(),
     counts: dashboardCounts(result),
     feedback: Array.isArray(result.feedback) ? result.feedback : [],
+    publicPosts: Array.isArray(result.publicPosts)
+      ? result.publicPosts.map(realtimePublicPost).filter((post): post is RealtimePublicPost => post !== null).slice(0, 160)
+      : [],
+    publicMap: Array.isArray(result.publicMap)
+      ? result.publicMap.map(betaMapCell).filter((cell): cell is BetaMapCell => cell !== null).slice(0, 32)
+      : [],
+    publicFeed: Array.isArray(result.publicFeed)
+      ? result.publicFeed.map(realtimeFeedPost).filter((post): post is RealtimeFeedPost => post !== null).slice(0, 160)
+      : [],
   };
 };
 
 type CallableBody<T> = { result?: T; error?: { message?: string } };
 const OWNER_PROXY = 'http://127.0.0.1:8096/api/control';
+const OWNER_LIVE = 'http://127.0.0.1:8096/api/live';
 
 async function call<T>(data: Record<string, unknown>): Promise<T> {
   const user = auth.currentUser;
@@ -462,6 +557,63 @@ export async function readActivityDashboard(): Promise<BetaDashboard> {
 
 export async function readOwnerDashboard(): Promise<BetaDashboard> {
   return dashboard(await ownerCall<unknown>({ action: 'dashboard' }));
+}
+
+/**
+ * The owner-only loopback proxy listens to the private Firestore collections
+ * with Admin credentials and emits only the callable's already-sanitized
+ * dashboard shape. No credential or private document enters browser JS.
+ */
+export function subscribeOwnerDashboard(
+  listener: (value: BetaDashboard) => void,
+  onState: (state: 'connecting' | 'live' | 'offline') => void = () => {},
+): () => void {
+  let stopped = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let controller: AbortController | undefined;
+  const connect = async () => {
+    if (stopped) return;
+    onState('connecting');
+    controller = new AbortController();
+    try {
+      const response = await fetch(OWNER_LIVE, {
+        headers: { accept: 'text/event-stream' },
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error('Live stream unavailable.');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!stopped) {
+        const { done, value } = await reader.read();
+        if (done) throw new Error('Live stream closed.');
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? '';
+        for (const frame of frames) {
+          const data = frame.split(/\r?\n/)
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trim())
+            .join('\n');
+          if (!data) continue;
+          const body = JSON.parse(data) as CallableBody<unknown>;
+          if (!body.result) continue;
+          listener(dashboard(body.result));
+          onState('live');
+        }
+      }
+    } catch {
+      if (stopped) return;
+      onState('offline');
+      retryTimer = setTimeout(() => { void connect(); }, 1_500);
+    }
+  };
+  void connect();
+  return () => {
+    stopped = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    controller?.abort();
+  };
 }
 
 export async function submitBetaFeedback(input: { finding: string; liked: string; improve: string }): Promise<void> {

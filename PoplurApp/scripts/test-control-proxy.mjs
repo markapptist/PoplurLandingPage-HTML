@@ -1,5 +1,13 @@
 import { createServer } from 'node:http';
 import { Buffer } from 'node:buffer';
+import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import {
+  aggregateRealtimePublicPosts,
+  applyRealtimeRadiusBaselines,
+  normalizeRealtimePublicSnapshot,
+} from './realtime-public-post-policy.mjs';
+import { createLiveDashboardState } from './test-control-live-state.mjs';
 
 const host = '127.0.0.1';
 const port = boundedPort(process.env.POPLUR_TEST_CONTROL_PORT, 8096);
@@ -11,6 +19,15 @@ const controlRoomOrigin = 'http://127.0.0.1:8084';
 const allowedActions = new Set(['dashboard', 'runner']);
 const actorPattern = '[a-zA-Z0-9._:-]+';
 const maxBodyBytes = 16 * 1024;
+const liveClients = new Set();
+const liveState = createLiveDashboardState();
+const liveRadiusBaselines = new Map();
+let liveWatchers = [];
+let liveWatchersStarted = false;
+let liveFirestore = null;
+let liveRefreshTimer = null;
+let liveRefreshInFlight = false;
+let liveRefreshAgain = false;
 
 if (!credential) {
   throw new Error('POPLUR_TEST_CONTROL_TOKEN is required. Keep it in the local machine keychain; never put it in the web bundle.');
@@ -39,6 +56,142 @@ function responseHeaders(origin = '', contentType = 'application/json; charset=u
 function sendJSON(response, status, origin, body) {
   response.writeHead(status, responseHeaders(origin));
   response.end(JSON.stringify(body));
+}
+
+function sendLiveEvent(response, body) {
+  response.write(`data: ${JSON.stringify(body)}\n\n`);
+}
+
+function closeLiveClients() {
+  for (const response of liveClients) response.end();
+  liveClients.clear();
+}
+
+function resetLiveWatchers() {
+  const watchers = liveWatchers;
+  liveWatchers = [];
+  liveWatchersStarted = false;
+  liveFirestore = null;
+  liveRadiusBaselines.clear();
+  liveState.reset();
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = null;
+  liveRefreshAgain = false;
+  for (const unsubscribe of watchers) {
+    try { unsubscribe(); } catch { /* already closed */ }
+  }
+  closeLiveClients();
+}
+
+function acceptPublicDocuments(documents) {
+  const normalized = normalizeRealtimePublicSnapshot(documents);
+  const posts = applyRealtimeRadiusBaselines(normalized.posts, liveRadiusBaselines);
+  liveState.acceptPublic({
+    posts,
+    cells: aggregateRealtimePublicPosts(posts),
+    feed: normalized.feed,
+  });
+}
+
+async function ensurePublicSnapshot() {
+  startLiveWatchers();
+  if (liveState.isPublicReady()) return;
+  if (!liveFirestore) throw new Error('The private Firestore stream is unavailable.');
+  const snapshot = await liveFirestore.collection('posts').orderBy('createdAt', 'desc').limit(160).get();
+  acceptPublicDocuments(snapshot.docs.map(document => ({ id: document.id, data: document.data() })));
+}
+
+function broadcastLiveDashboard(result) {
+  liveState.cache(result);
+  for (const response of [...liveClients]) {
+    if (response.destroyed || response.writableEnded) liveClients.delete(response);
+    else sendLiveEvent(response, { result });
+  }
+}
+
+async function refreshLiveDashboard() {
+  if (liveRefreshInFlight) {
+    liveRefreshAgain = true;
+    return;
+  }
+  liveRefreshInFlight = true;
+  try {
+    if (!liveState.isPublicReady()) return;
+    const combined = liveState.combine(await callCloudControl({ action: 'dashboard' }));
+    if (combined) broadcastLiveDashboard(combined);
+  } catch {
+    // A broken watcher/upstream clears both cache and registrations. The next
+    // reconnect must earn LIVE again from a fresh Firestore snapshot.
+    resetLiveWatchers();
+  } finally {
+    liveRefreshInFlight = false;
+    if (liveRefreshAgain) {
+      liveRefreshAgain = false;
+      scheduleLiveDashboardRefresh(40);
+    }
+  }
+}
+
+function scheduleLiveDashboardRefresh(delay = 100) {
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = setTimeout(() => {
+    liveRefreshTimer = null;
+    void refreshLiveDashboard();
+  }, delay);
+}
+
+function startLiveWatchers() {
+  if (liveWatchersStarted) return;
+  liveWatchersStarted = true;
+  try {
+    const app = getApps()[0] ?? initializeApp({
+      credential: applicationDefault(),
+      projectId: 'poplur2025',
+    });
+    const firestore = getFirestore(app);
+    liveFirestore = firestore;
+    const changed = () => scheduleLiveDashboardRefresh();
+    const failed = () => resetLiveWatchers();
+    const publicPostsChanged = snapshot => {
+      acceptPublicDocuments(snapshot.docs.map(document => ({ id: document.id, data: document.data() })));
+      scheduleLiveDashboardRefresh();
+    };
+    liveWatchers = [
+      firestore.collection('posts').orderBy('createdAt', 'desc').limit(160).onSnapshot(publicPostsChanged, failed),
+      firestore.collection('testActivity').limit(100).onSnapshot(changed, failed),
+      firestore.collection('testBetaPosts').limit(120).onSnapshot(changed, failed),
+      firestore.collection('testFeedback').limit(80).onSnapshot(changed, failed),
+      firestore.collection('testControl').doc('syntheticBrowserRunner').onSnapshot(changed, failed),
+      firestore.collection('testControl').doc('syntheticBrowserRuntime').onSnapshot(changed, failed),
+      firestore.collection('testControl').doc('simulation').onSnapshot(changed, failed),
+    ];
+    scheduleLiveDashboardRefresh(0);
+  } catch {
+    resetLiveWatchers();
+  }
+}
+
+function openLiveStream(request, response, origin) {
+  response.writeHead(200, {
+    ...responseHeaders(origin, 'text/event-stream; charset=utf-8'),
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  response.write('retry: 1500\n\n');
+  liveClients.add(response);
+  startLiveWatchers();
+  const cached = liveState.cached();
+  if (cached) sendLiveEvent(response, { result: cached });
+  else scheduleLiveDashboardRefresh(0);
+  const heartbeat = setInterval(() => {
+    if (!response.destroyed && !response.writableEnded) response.write(': keep-alive\n\n');
+  }, 20_000);
+  const close = () => {
+    clearInterval(heartbeat);
+    liveClients.delete(response);
+  };
+  request.once('close', close);
+  response.once('close', close);
 }
 
 function readBody(request) {
@@ -201,7 +354,13 @@ async function relayControl(body, response, origin) {
     return;
   }
   try {
-    const result = await callCloudControl(data);
+    let result = await callCloudControl(data);
+    if (data.action === 'dashboard') {
+      await ensurePublicSnapshot();
+      const combined = liveState.combine(result);
+      if (!combined) throw new Error('The realtime public snapshot is unavailable.');
+      result = combined;
+    }
     sendJSON(response, 200, origin, { result });
   } catch {
     sendJSON(response, 502, origin, { error: { message: 'The local beta desk could not reach Poplur.' } });
@@ -228,6 +387,10 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && requestURL.pathname === '/api/runner/state') {
     await relayRunnerGET('/state', response, origin, true);
+    return;
+  }
+  if (request.method === 'GET' && requestURL.pathname === '/api/live') {
+    openLiveStream(request, response, origin);
     return;
   }
   const framesMatch = requestURL.pathname.match(new RegExp(`^/api/runner/frames/(${actorPattern})$`));
@@ -269,3 +432,11 @@ server.on('error', error => {
   console.error('Poplur Test Control proxy failed:', error instanceof Error ? error.message : error);
   process.exitCode = 1;
 });
+
+function shutdown() {
+  resetLiveWatchers();
+  server.close();
+}
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);

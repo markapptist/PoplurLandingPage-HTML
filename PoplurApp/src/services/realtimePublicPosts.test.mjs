@@ -5,8 +5,10 @@ import {
   applyRealtimeRadiusBaselines,
   coarsePublicPostRegion,
   normalizeRealtimePublicPost,
+  normalizeRealtimeFeedPost,
   normalizeRealtimePublicSnapshot,
-} from './realtimePublicPostPolicy.ts';
+} from '../../scripts/realtime-public-post-policy.mjs';
+import { createLiveDashboardState } from '../../scripts/test-control-live-state.mjs';
 
 const NOW = Date.UTC(2026, 7, 29, 20);
 const publicPost = (overrides = {}) => ({
@@ -27,13 +29,15 @@ const publicPost = (overrides = {}) => ({
 });
 
 test('normalizes a published public approximate post without retaining coordinates', () => {
-  const post = normalizeRealtimePublicPost('post-1', publicPost(), NOW);
+  const post = normalizeRealtimePublicPost('post-1', publicPost({ channelId: 'Food', mediaType: 'video' }), NOW);
   assert.ok(post);
   assert.equal(post.place, 'Toronto region');
   assert.equal(post.label, '@noodlescout');
   assert.equal(post.radiusKm, 5);
   assert.equal(post.viralScore, 17);
   assert.equal(post.viralPerHour, 17);
+  assert.equal(post.channelId, 'food');
+  assert.equal(post.mediaType, 'video');
   assert.equal('latitude' in post, false);
   assert.equal('longitude' in post, false);
 });
@@ -57,6 +61,38 @@ test('fails closed for hidden, private, unpublished, malformed and ownerless pos
     audience: undefined,
     visibilityStatus: undefined,
   }), NOW));
+});
+
+test('keeps hidden-origin public posts in the Feed projection without location data', () => {
+  const post = normalizeRealtimeFeedPost('hidden-feed', publicPost({
+    privateAccount: true,
+    locationVisibility: 'hidden',
+    channelId: 'Beauty',
+    mediaType: 'photo',
+  }));
+  assert.ok(post);
+  assert.equal(post.channelId, 'beauty');
+  assert.equal(post.mediaType, 'photo');
+  assert.equal('place' in post, false);
+  assert.equal('latitude' in post, false);
+  assert.equal('longitude' in post, false);
+});
+
+test('the loopback projection never serializes raw post content or coordinates', () => {
+  const snapshot = normalizeRealtimePublicSnapshot([
+    { id: 'public', data: publicPost({ caption: 'private draft words', mediaURL: 'https://private.invalid/file.jpg' }) },
+    { id: 'hidden', data: publicPost({ privateAccount: true, locationVisibility: 'hidden', caption: 'hidden words' }) },
+  ], NOW);
+  const serialized = JSON.stringify(snapshot);
+  assert.equal(serialized.includes('private draft words'), false);
+  assert.equal(serialized.includes('hidden words'), false);
+  assert.equal(serialized.includes('private.invalid'), false);
+  assert.equal(serialized.includes('latitude'), false);
+  assert.equal(serialized.includes('longitude'), false);
+  assert.equal(serialized.includes('43.65'), false);
+  assert.equal(serialized.includes('-79.38'), false);
+  assert.equal(snapshot.posts.length, 1);
+  assert.equal(snapshot.feed.length, 2);
 });
 
 test('maps approximate points to broad deterministic regions', () => {
@@ -85,7 +121,7 @@ test('aggregates realtime replacements and immediately represents an empty colle
     ['Toronto region', 1],
   ]);
   assert.equal(cells.find(cell => cell.place === 'Paris region')?.syntheticEvents, 1);
-  assert.deepEqual(normalizeRealtimePublicSnapshot([], NOW), { posts: [], cells: [] });
+  assert.deepEqual(normalizeRealtimePublicSnapshot([], NOW), { posts: [], cells: [], feed: [] });
 });
 
 test('tracks radius changes only while a post remains in the bounded realtime window', () => {
@@ -102,4 +138,22 @@ test('tracks radius changes only while a post remains in the bounded realtime wi
 
   assert.deepEqual(applyRealtimeRadiusBaselines([], baselines), []);
   assert.equal(baselines.size, 0);
+});
+
+test('watcher failure clears the cached dashboard before a reconnect can be live', () => {
+  const state = createLiveDashboardState();
+  state.acceptPublic({ posts: [{ id: 'one' }], cells: [], feed: [] });
+  const combined = state.combine({ generatedAtMs: NOW });
+  assert.ok(combined);
+  state.cache(combined);
+  assert.equal(state.cached()?.publicPosts.length, 1);
+
+  state.reset();
+  assert.equal(state.cached(), null);
+  assert.equal(state.isPublicReady(), false);
+  assert.equal(state.combine({ generatedAtMs: NOW + 1 }), null);
+
+  state.acceptPublic({ posts: [], cells: [], feed: [] });
+  const recovered = state.combine({ generatedAtMs: NOW + 2 });
+  assert.deepEqual(recovered?.publicPosts, []);
 });

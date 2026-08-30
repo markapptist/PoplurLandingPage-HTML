@@ -1,50 +1,33 @@
-import type { DocumentData } from 'firebase/firestore';
-import type { BetaMapCell, BetaPostRow } from './testControl';
-
 const MAX_RADIUS_METERS = 40_075_000;
 
-export type RealtimePublicPost = BetaPostRow & {
-  source: 'firestore';
-  synthetic: boolean;
-};
-
-export type RealtimePublicPostSnapshot = {
-  posts: RealtimePublicPost[];
-  cells: BetaMapCell[];
-};
-
-const text = (value: unknown, maximum = 120): string => typeof value === 'string'
+const text = (value, maximum = 120) => typeof value === 'string'
   ? value.trim().replace(/\s+/g, ' ').slice(0, maximum)
   : '';
 
-const finite = (value: unknown): number | null => {
+const finite = value => {
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const metric = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): number => {
+const metric = (value, maximum = Number.MAX_SAFE_INTEGER) => {
   const parsed = finite(value);
   return parsed == null ? 0 : Math.max(0, Math.min(maximum, parsed));
 };
 
-const timestampMs = (value: unknown): number => {
-  if (value && typeof (value as { toMillis?: unknown }).toMillis === 'function') {
-    const parsed = Number((value as { toMillis: () => number }).toMillis());
+const timestampMs = value => {
+  if (value && typeof value.toMillis === 'function') {
+    const parsed = Number(value.toMillis());
     return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
   }
   if (value && typeof value === 'object') {
-    const source = value as { seconds?: unknown; _seconds?: unknown };
-    const seconds = finite(source.seconds ?? source._seconds);
+    const seconds = finite(value.seconds ?? value._seconds);
     return seconds == null ? 0 : Math.max(0, seconds * 1_000);
   }
   return metric(value);
 };
 
-/**
- * Inspect the public approximate point only long enough to choose one broad
- * bucket. No coordinate, cell number or hidden origin leaves this helper.
- */
-export function coarsePublicPostRegion(latitude: number, longitude: number): string | null {
+/** Inspect coordinates only inside the local owner proxy, then discard them. */
+export function coarsePublicPostRegion(latitude, longitude) {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
     || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
   if (latitude > 43.2 && latitude < 44.1 && longitude > -80.3 && longitude < -78.7) return 'Toronto region';
@@ -67,25 +50,45 @@ export function coarsePublicPostRegion(latitude: number, longitude: number): str
   return 'World region';
 }
 
-const isPublishedPublicPost = (row: DocumentData): boolean => {
+const isPublishedPublicPost = row => {
   const audience = text(row.audience, 24).toLowerCase();
   const status = text(row.visibilityStatus ?? row.status, 24).toLowerCase();
   return row.locationVisibility === 'approximate'
-    // Older native uploads omit these two fields; the real app Map treats
-    // absence as its legacy published/public contract while still rejecting
-    // every explicit non-public or unpublished value.
     && (!audience || audience === 'public')
     && (!status || status === 'published' || status === 'live')
     && row.privateAccount !== true
     && row.ghostMode !== true;
 };
 
-export function normalizeRealtimePublicPost(
-  id: string,
-  row: DocumentData,
-  nowMs = Date.now(),
-): RealtimePublicPost | null {
-  if (!id || !isPublishedPublicPost(row)) return null;
+const isPublishedFeedPost = row => {
+  const audience = text(row.audience, 24).toLowerCase();
+  const status = text(row.visibilityStatus ?? row.status, 24).toLowerCase();
+  return (!audience || audience === 'public')
+    && (!status || status === 'published' || status === 'live');
+};
+
+export function normalizeRealtimeFeedPost(id, row) {
+  if (!id || !row || typeof row !== 'object' || !isPublishedFeedPost(row)) return null;
+  const ownerId = text(row.userID ?? row.userId, 128);
+  const postedAtMs = timestampMs(row.createdAtMillis ?? row.createdAt);
+  if (!ownerId || !postedAtMs) return null;
+  const handle = text(row.username ?? row.handle ?? row.displayName, 48);
+  const declaredMediaType = text(row.mediaType, 16).toLowerCase();
+  return {
+    id,
+    label: handle ? (handle.startsWith('@') ? handle : `@${handle}`) : 'Public post',
+    channelId: text(row.channelId, 40).toLowerCase() || 'live',
+    mediaType: declaredMediaType === 'photo' || declaredMediaType === 'image'
+      ? 'photo'
+      : declaredMediaType === 'video' ? 'video' : 'unknown',
+    postedAtMs,
+    updatedAtMs: timestampMs(row.updatedAt) || postedAtMs,
+    synthetic: row.syntheticBeta === true || text(row.source, 40) === 'synthetic-browser',
+  };
+}
+
+export function normalizeRealtimePublicPost(id, row, nowMs = Date.now()) {
+  if (!id || !row || typeof row !== 'object' || !isPublishedPublicPost(row)) return null;
   const ownerId = text(row.userID ?? row.userId, 128);
   const latitude = finite(row.latitude);
   const longitude = finite(row.longitude);
@@ -93,15 +96,8 @@ export function normalizeRealtimePublicPost(
   const place = coarsePublicPostRegion(latitude, longitude);
   const postedAtMs = timestampMs(row.createdAtMillis ?? row.createdAt);
   if (!place || !postedAtMs) return null;
-
-  const currentRadiusMeters = metric(
-    row.radiusMeters ?? row.radius ?? row.organicRadiusMeters,
-    MAX_RADIUS_METERS,
-  );
-  const initialRadiusMeters = metric(
-    row.initialRadiusMeters ?? row.baseRadiusMeters ?? currentRadiusMeters,
-    MAX_RADIUS_METERS,
-  );
+  const currentRadiusMeters = metric(row.radiusMeters ?? row.radius ?? row.organicRadiusMeters, MAX_RADIUS_METERS);
+  const initialRadiusMeters = metric(row.initialRadiusMeters ?? row.baseRadiusMeters ?? currentRadiusMeters, MAX_RADIUS_METERS);
   const engagementScore = metric(row.viewCount, 1_000_000_000)
     + metric(row.repeatViewCount, 1_000_000_000)
     + metric(row.likeCount ?? row.upvoteCount, 1_000_000_000) * 2
@@ -109,10 +105,10 @@ export function normalizeRealtimePublicPost(
   const viralScore = metric(row.viralScore, 1_000_000_000) || engagementScore;
   const elapsedHours = Math.max((Math.max(nowMs, postedAtMs) - postedAtMs) / 3_600_000, 0.1);
   const handle = text(row.username ?? row.handle ?? row.displayName, 48);
+  const declaredMediaType = text(row.mediaType, 16).toLowerCase();
   const updatedAtMs = timestampMs(row.updatedAt) || postedAtMs;
   const radiusKm = currentRadiusMeters / 1_000;
   const initialRadiusKm = initialRadiusMeters / 1_000;
-
   return {
     id,
     label: handle ? (handle.startsWith('@') ? handle : `@${handle}`) : 'Public post',
@@ -126,68 +122,50 @@ export function normalizeRealtimePublicPost(
     viralPerHour: Math.round((viralScore / elapsedHours) * 10) / 10,
     source: 'firestore',
     synthetic: row.syntheticBeta === true || text(row.source, 40) === 'synthetic-browser',
+    channelId: text(row.channelId, 40).toLowerCase() || 'live',
+    mediaType: declaredMediaType === 'photo' || declaredMediaType === 'image'
+      ? 'photo'
+      : declaredMediaType === 'video' ? 'video' : 'unknown',
   };
 }
 
-export function aggregateRealtimePublicPosts(posts: RealtimePublicPost[]): BetaMapCell[] {
-  const cells = new Map<string, BetaMapCell>();
+export function aggregateRealtimePublicPosts(posts) {
+  const cells = new Map();
   for (const post of posts) {
     const existing = cells.get(post.place) ?? {
-      place: post.place,
-      events: 0,
-      realEvents: 0,
-      syntheticEvents: 0,
-      latestAtMs: 0,
-      peakRadiusKm: 0,
-      velocity: 0,
+      place: post.place, events: 0, realEvents: 0, syntheticEvents: 0,
+      latestAtMs: 0, peakRadiusKm: 0, velocity: 0,
     };
     existing.events += 1;
-    if (post.synthetic) existing.syntheticEvents = (existing.syntheticEvents ?? 0) + 1;
-    else existing.realEvents = (existing.realEvents ?? 0) + 1;
+    if (post.synthetic) existing.syntheticEvents += 1;
+    else existing.realEvents += 1;
     existing.latestAtMs = Math.max(existing.latestAtMs, post.updatedAtMs || post.postedAtMs);
     existing.peakRadiusKm = Math.max(existing.peakRadiusKm, post.radiusKm);
     existing.velocity = Math.max(existing.velocity, post.viralPerHour);
     cells.set(post.place, existing);
   }
-  return [...cells.values()]
-    .sort((left, right) => right.events - left.events
-      || right.latestAtMs - left.latestAtMs
-      || left.place.localeCompare(right.place));
+  return [...cells.values()].sort((left, right) => right.events - left.events
+    || right.latestAtMs - left.latestAtMs || left.place.localeCompare(right.place));
 }
 
-/**
- * Keep only a bounded, non-location baseline for each post currently inside
- * Firestore's 160-document query window. This lets the desk show radius
- * growth/decrease as live document changes arrive without retaining origins.
- */
-export function applyRealtimeRadiusBaselines(
-  posts: RealtimePublicPost[],
-  baselines: Map<string, number>,
-): RealtimePublicPost[] {
-  const activeIds = new Set<string>();
+export function applyRealtimeRadiusBaselines(posts, baselines) {
+  const activeIds = new Set();
   const normalized = posts.map(post => {
     activeIds.add(post.id);
     const baseline = baselines.get(post.id) ?? post.initialRadiusKm;
     baselines.set(post.id, baseline);
-    return {
-      ...post,
-      initialRadiusKm: baseline,
-      radiusDeltaKm: post.radiusKm - baseline,
-    };
+    return { ...post, initialRadiusKm: baseline, radiusDeltaKm: post.radiusKm - baseline };
   });
-  for (const id of baselines.keys()) {
-    if (!activeIds.has(id)) baselines.delete(id);
-  }
+  for (const id of baselines.keys()) if (!activeIds.has(id)) baselines.delete(id);
   return normalized;
 }
 
-export function normalizeRealtimePublicSnapshot(
-  documents: { id: string; data: DocumentData }[],
-  nowMs = Date.now(),
-): RealtimePublicPostSnapshot {
-  const posts = documents
-    .map(document => normalizeRealtimePublicPost(document.id, document.data, nowMs))
-    .filter((post): post is RealtimePublicPost => post !== null)
+export function normalizeRealtimePublicSnapshot(documents, nowMs = Date.now()) {
+  const posts = documents.map(document => normalizeRealtimePublicPost(document.id, document.data, nowMs))
+    .filter(Boolean)
     .sort((left, right) => right.postedAtMs - left.postedAtMs || left.id.localeCompare(right.id));
-  return { posts, cells: aggregateRealtimePublicPosts(posts) };
+  const feed = documents.map(document => normalizeRealtimeFeedPost(document.id, document.data))
+    .filter(Boolean)
+    .sort((left, right) => right.postedAtMs - left.postedAtMs || left.id.localeCompare(right.id));
+  return { posts, cells: aggregateRealtimePublicPosts(posts), feed };
 }

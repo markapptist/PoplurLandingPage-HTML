@@ -27,6 +27,8 @@ import {
   statusIngestRequest,
   validateCredentialDocument,
 } from './synthetic-runner-actions.mjs';
+import { createSyntheticOnboardingRunner } from './synthetic-onboarding-runner.mjs';
+import { validateOnboardingCommand } from './synthetic-onboarding-actions.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIR, '..');
@@ -75,6 +77,7 @@ const runtime = {
   cloudMonitorTimer: null,
   failureScheduled: false,
 };
+const onboardingRunner = createSyntheticOnboardingRunner({ chromium, chromePath: CHROME_PATH });
 let commandQueue = Promise.resolve();
 
 function boundedPort(value, fallback) {
@@ -117,10 +120,18 @@ function createActorRuntime(actor) {
 }
 
 function publicState() {
+  if (onboardingRunner.hasSnapshot()) return onboardingRunner.publicState();
   return {
     ok: true,
+    mode: 'five-actor-readonly',
     enabled: runtime.enabled,
     status: runtime.status,
+    completed: false,
+    startedAtMs: 0,
+    completedAtMs: 0,
+    runId: '',
+    identity: null,
+    error: '',
     actors: SYNTHETIC_ACTORS.map(descriptor => {
       const actor = actors.get(descriptor.actorId);
       return {
@@ -562,6 +573,8 @@ function markSelectedActor(actorId) {
 
 async function startRunner() {
   if (runtime.status === 'live' || runtime.status === 'starting') return publicState();
+  if (onboardingRunner.isActive()) throw new Error('The first-user runner is already active.');
+  if (onboardingRunner.hasSnapshot()) await onboardingRunner.stop({ clear: true });
   runtime.status = 'starting';
   runtime.enabled = false;
   runtime.failureScheduled = false;
@@ -686,7 +699,24 @@ function scheduleFailure(error) {
 function enqueueCommand(enabled) {
   const operation = commandQueue
     .catch(() => {})
-    .then(() => enabled ? startRunner() : pauseRunner());
+    .then(() => {
+      if (!enabled && onboardingRunner.hasSnapshot()) return onboardingRunner.stop({ clear: false });
+      return enabled ? startRunner() : pauseRunner();
+    });
+  commandQueue = operation.catch(() => {});
+  return operation;
+}
+
+function enqueueOnboarding(command) {
+  const operation = commandQueue
+    .catch(() => {})
+    .then(async () => {
+      validateOnboardingCommand(command);
+      if (runtime.status === 'live' || runtime.status === 'starting' || runtime.browser) {
+        throw new Error('The five-actor runner must be off before first-user onboarding.');
+      }
+      return onboardingRunner.start(command);
+    });
   commandQueue = operation.catch(() => {});
   return operation;
 }
@@ -731,7 +761,8 @@ function readSmallJSON(request) {
 const server = createServer(async (request, response) => {
   const requestURL = new URL(request.url || '/', `http://${HOST}:${PORT}`);
   if (request.method === 'GET' && requestURL.pathname === '/health') {
-    sendJSON(response, 200, { ok: true, status: runtime.status });
+    const state = publicState();
+    sendJSON(response, 200, { ok: true, status: state.status, mode: state.mode });
     return;
   }
   if (!internalCredentialMatches(request.headers['x-poplur-local-runner-token'])) {
@@ -745,7 +776,7 @@ const server = createServer(async (request, response) => {
   const framesMatch = requestURL.pathname.match(/^\/frames\/([a-zA-Z0-9._:-]+)$/);
   if (request.method === 'GET' && framesMatch) {
     const actorId = framesMatch[1];
-    const actor = actors.get(actorId);
+    const actor = onboardingRunner.getActor(actorId) ?? actors.get(actorId);
     if (!actor) { sendJSON(response, 404, { error: { message: 'Synthetic actor not found.' } }); return; }
     markSelectedActor(actorId);
     sendJSON(response, 200, {
@@ -759,7 +790,7 @@ const server = createServer(async (request, response) => {
   const frameMatch = requestURL.pathname.match(/^\/frame\/([a-zA-Z0-9._:-]+)$/);
   if (request.method === 'GET' && frameMatch) {
     const actorId = frameMatch[1];
-    const actor = actors.get(actorId);
+    const actor = onboardingRunner.getActor(actorId) ?? actors.get(actorId);
     if (!actor) { sendJSON(response, 404, { error: { message: 'Synthetic actor not found.' } }); return; }
     markSelectedActor(actorId);
     const requestedSequence = requestURL.searchParams.has('sequence')
@@ -796,6 +827,16 @@ const server = createServer(async (request, response) => {
     }
     return;
   }
+  if (request.method === 'POST' && requestURL.pathname === '/onboarding') {
+    try {
+      const body = await readSmallJSON(request);
+      validateOnboardingCommand(body);
+      sendJSON(response, 200, await enqueueOnboarding(body));
+    } catch (error) {
+      sendJSON(response, 409, { error: { message: error instanceof Error ? error.message : 'First-user onboarding could not start.' } });
+    }
+    return;
+  }
   sendJSON(response, 404, { error: { message: 'Local runner route not found.' } });
 });
 
@@ -808,6 +849,7 @@ server.on('error', error => {
 });
 
 async function shutdown(signal) {
+  await onboardingRunner.stop({ clear: false }).catch(() => {});
   await enqueueCommand(false).catch(() => {});
   server.close(() => process.exit(signal === 'SIGINT' ? 130 : 143));
 }

@@ -8,6 +8,7 @@ import {
   normalizeRealtimePublicSnapshot,
 } from './realtime-public-post-policy.mjs';
 import { createLiveDashboardState } from './test-control-live-state.mjs';
+import { isAuthorizedTestControlMutation, validateOnboardingCommand } from './synthetic-onboarding-actions.mjs';
 
 const host = '127.0.0.1';
 const port = boundedPort(process.env.POPLUR_TEST_CONTROL_PORT, 8096);
@@ -20,6 +21,8 @@ const allowedActions = new Set(['dashboard', 'runner']);
 const actorPattern = '[a-zA-Z0-9._:-]+';
 const maxBodyBytes = 16 * 1024;
 const liveClients = new Set();
+const productionRequests = new Map();
+const publicSnapshotWaiters = new Set();
 const liveState = createLiveDashboardState();
 const liveRadiusBaselines = new Map();
 let liveWatchers = [];
@@ -28,6 +31,8 @@ let liveFirestore = null;
 let liveRefreshTimer = null;
 let liveRefreshInFlight = false;
 let liveRefreshAgain = false;
+let onboardingQuarantine = false;
+let onboardingActive = false;
 
 if (!credential) {
   throw new Error('POPLUR_TEST_CONTROL_TOKEN is required. Keep it in the local machine keychain; never put it in the web bundle.');
@@ -77,6 +82,11 @@ function resetLiveWatchers() {
   if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
   liveRefreshTimer = null;
   liveRefreshAgain = false;
+  for (const waiter of publicSnapshotWaiters) {
+    clearTimeout(waiter.timeout);
+    waiter.reject(new Error('Production snapshot wait was cancelled.'));
+  }
+  publicSnapshotWaiters.clear();
   for (const unsubscribe of watchers) {
     try { unsubscribe(); } catch { /* already closed */ }
   }
@@ -84,6 +94,7 @@ function resetLiveWatchers() {
 }
 
 function acceptPublicDocuments(documents) {
+  if (onboardingQuarantine) return;
   const normalized = normalizeRealtimePublicSnapshot(documents);
   const posts = applyRealtimeRadiusBaselines(normalized.posts, liveRadiusBaselines);
   liveState.acceptPublic({
@@ -91,14 +102,40 @@ function acceptPublicDocuments(documents) {
     cells: aggregateRealtimePublicPosts(posts),
     feed: normalized.feed,
   });
+  for (const waiter of publicSnapshotWaiters) {
+    clearTimeout(waiter.timeout);
+    waiter.resolve();
+  }
+  publicSnapshotWaiters.clear();
 }
 
 async function ensurePublicSnapshot() {
+  if (onboardingQuarantine) throw new Error('Production dashboard is quarantined during first-user onboarding.');
   startLiveWatchers();
   if (liveState.isPublicReady()) return;
   if (!liveFirestore) throw new Error('The private Firestore stream is unavailable.');
-  const snapshot = await liveFirestore.collection('posts').orderBy('createdAt', 'desc').limit(160).get();
-  acceptPublicDocuments(snapshot.docs.map(document => ({ id: document.id, data: document.data() })));
+  await new Promise((resolve, reject) => {
+    const waiter = {
+      resolve,
+      reject,
+      timeout: setTimeout(() => {
+        publicSnapshotWaiters.delete(waiter);
+        reject(new Error('The initial production snapshot did not arrive in time.'));
+      }, 12_000),
+    };
+    publicSnapshotWaiters.add(waiter);
+    // The first listener event can settle between the readiness check above
+    // and waiter registration. Resolve that race without issuing a separate
+    // unary Firestore read that could outlive onboarding quarantine.
+    if (liveState.isPublicReady()) {
+      publicSnapshotWaiters.delete(waiter);
+      clearTimeout(waiter.timeout);
+      resolve();
+    }
+  });
+  if (onboardingQuarantine || !liveState.isPublicReady()) {
+    throw new Error('Production snapshot was cancelled before it became ready.');
+  }
 }
 
 function broadcastLiveDashboard(result) {
@@ -110,6 +147,7 @@ function broadcastLiveDashboard(result) {
 }
 
 async function refreshLiveDashboard() {
+  if (onboardingQuarantine) return;
   if (liveRefreshInFlight) {
     liveRefreshAgain = true;
     return;
@@ -118,7 +156,7 @@ async function refreshLiveDashboard() {
   try {
     if (!liveState.isPublicReady()) return;
     const combined = liveState.combine(await callCloudControl({ action: 'dashboard' }));
-    if (combined) broadcastLiveDashboard(combined);
+    if (!onboardingQuarantine && combined) broadcastLiveDashboard(combined);
   } catch {
     // A broken watcher/upstream clears both cache and registrations. The next
     // reconnect must earn LIVE again from a fresh Firestore snapshot.
@@ -133,6 +171,7 @@ async function refreshLiveDashboard() {
 }
 
 function scheduleLiveDashboardRefresh(delay = 100) {
+  if (onboardingQuarantine) return;
   if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
   liveRefreshTimer = setTimeout(() => {
     liveRefreshTimer = null;
@@ -141,7 +180,7 @@ function scheduleLiveDashboardRefresh(delay = 100) {
 }
 
 function startLiveWatchers() {
-  if (liveWatchersStarted) return;
+  if (onboardingQuarantine || liveWatchersStarted) return;
   liveWatchersStarted = true;
   try {
     const app = getApps()[0] ?? initializeApp({
@@ -153,6 +192,7 @@ function startLiveWatchers() {
     const changed = () => scheduleLiveDashboardRefresh();
     const failed = () => resetLiveWatchers();
     const publicPostsChanged = snapshot => {
+      if (onboardingQuarantine) return;
       acceptPublicDocuments(snapshot.docs.map(document => ({ id: document.id, data: document.data() })));
       scheduleLiveDashboardRefresh();
     };
@@ -179,7 +219,7 @@ function openLiveStream(request, response, origin) {
   });
   response.write('retry: 1500\n\n');
   liveClients.add(response);
-  startLiveWatchers();
+  if (!onboardingQuarantine) startLiveWatchers();
   const cached = liveState.cached();
   if (cached) sendLiveEvent(response, { result: cached });
   else scheduleLiveDashboardRefresh(0);
@@ -218,8 +258,29 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   finally { clearTimeout(timeout); }
 }
 
+async function fetchProductionWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let markSettled;
+  const settled = new Promise(resolve => { markSettled = resolve; });
+  productionRequests.set(controller, settled);
+  try { return await fetch(url, { ...options, signal: controller.signal }); }
+  finally {
+    clearTimeout(timeout);
+    productionRequests.delete(controller);
+    markSettled();
+  }
+}
+
+async function drainProductionRequests() {
+  const pending = [...productionRequests.entries()];
+  for (const [controller] of pending) controller.abort();
+  await Promise.all(pending.map(([, settled]) => settled));
+}
+
 async function callCloudControl(data) {
-  const upstream = await fetchWithTimeout(functionURL, {
+  if (onboardingQuarantine) throw new Error('Production control is quarantined during first-user onboarding.');
+  const upstream = await fetchProductionWithTimeout(functionURL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ data: { ...data, accessCode: credential } }),
@@ -247,6 +308,22 @@ async function callLocalRunnerCommand(enabled) {
   return body;
 }
 
+async function callLocalOnboardingCommand(command) {
+  const upstream = await fetchWithTimeout(`http://${host}:${runnerPort}/onboarding`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-poplur-local-runner-token': localRunnerCredential,
+    },
+    body: JSON.stringify(command),
+  }, 12 * 60_000);
+  const body = await upstream.json().catch(() => null);
+  if (!upstream.ok || !body || typeof body !== 'object') {
+    throw new Error('The local first-user journey did not apply the command.');
+  }
+  return body;
+}
+
 async function relayRunnerGET(localPath, response, origin, offlineState = false) {
   try {
     const upstream = await fetchWithTimeout(`http://${host}:${runnerPort}${localPath}`, {
@@ -269,10 +346,53 @@ async function relayRunnerGET(localPath, response, origin, offlineState = false)
         ok: true,
         enabled: false,
         status: 'offline',
+        mode: null,
+        completed: false,
         actors: [],
       });
     } else {
       sendJSON(response, 503, origin, { error: { message: 'The local real-app runner is offline.' } });
+    }
+  }
+}
+
+async function applyOnboardingCommand(body, response, origin) {
+  let command;
+  try {
+    command = validateOnboardingCommand(body);
+  } catch {
+    sendJSON(response, 400, origin, {
+      error: { message: 'First-user run requires the exact confirmation for its selected backend.' },
+    });
+    return;
+  }
+  if (onboardingActive) {
+    sendJSON(response, 409, origin, { error: { message: 'The first-user journey is already running.' } });
+    return;
+  }
+  const isolated = command.mode === 'first-user-v1';
+  onboardingActive = true;
+  if (isolated) {
+    onboardingQuarantine = true;
+    resetLiveWatchers();
+    await drainProductionRequests();
+  }
+  try {
+    // Isolated mode drains and quarantines every production watcher. Shared
+    // mode deliberately leaves the production realtime dashboard connected;
+    // its browser owns a separate, exact UID/post/path write ledger.
+    sendJSON(response, 200, origin, await callLocalOnboardingCommand(command));
+  } catch {
+    sendJSON(response, 502, origin, {
+      error: { message: isolated
+        ? 'The local first-user journey could not run; production was not contacted.'
+        : 'The shared tester journey could not complete its exact production ledger.' },
+    });
+  } finally {
+    onboardingActive = false;
+    if (isolated) {
+      onboardingQuarantine = false;
+      if (liveClients.size) startLiveWatchers();
     }
   }
 }
@@ -286,6 +406,10 @@ async function applyRunnerCommand(body, response, origin) {
   if (!body || typeof body !== 'object' || typeof body.enabled !== 'boolean'
     || Object.keys(body).some(key => key !== 'enabled')) {
     sendJSON(response, 400, origin, { error: { message: 'Runner command requires exact { enabled: boolean } JSON.' } });
+    return;
+  }
+  if (onboardingActive) {
+    sendJSON(response, 409, origin, { error: { message: 'Five-actor control is unavailable during first-user onboarding.' } });
     return;
   }
   if (body.enabled) {
@@ -349,6 +473,10 @@ async function relayControl(body, response, origin) {
     sendJSON(response, 400, origin, { error: { message: 'Unsupported local desk action.' } });
     return;
   }
+  if (onboardingQuarantine) {
+    sendJSON(response, 503, origin, { error: { message: 'Production dashboard is quarantined during first-user onboarding.' } });
+    return;
+  }
   if (data.action === 'runner' && 'enabled' in data) {
     sendJSON(response, 400, origin, { error: { message: 'Use the explicit real-app runner command to change runner state.' } });
     return;
@@ -384,6 +512,13 @@ const server = createServer(async (request, response) => {
     sendJSON(response, 403, origin, { error: { message: 'Local beta desk origin is not allowed.' } });
     return;
   }
+  if (request.method === 'POST' && !isAuthorizedTestControlMutation({
+    origin: request.headers.origin,
+    contentType: request.headers['content-type'],
+  })) {
+    sendJSON(response, 415, origin, { error: { message: 'Mutating local desk routes require exact application/json from the Test Center.' } });
+    return;
+  }
 
   if (request.method === 'GET' && requestURL.pathname === '/api/runner/state') {
     await relayRunnerGET('/state', response, origin, true);
@@ -409,13 +544,16 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (request.method !== 'POST' || (requestURL.pathname !== '/api/control' && requestURL.pathname !== '/api/runner/command')) {
+  if (request.method !== 'POST' || (requestURL.pathname !== '/api/control'
+    && requestURL.pathname !== '/api/runner/command'
+    && requestURL.pathname !== '/api/runner/onboarding')) {
     sendJSON(response, 404, origin, { error: { message: 'Local beta desk route not found.' } });
     return;
   }
   try {
     const body = await readBody(request);
     if (requestURL.pathname === '/api/runner/command') await applyRunnerCommand(body, response, origin);
+    else if (requestURL.pathname === '/api/runner/onboarding') await applyOnboardingCommand(body, response, origin);
     else await relayControl(body, response, origin);
   } catch (error) {
     const status = error instanceof BodyTooLargeError ? 413 : 400;

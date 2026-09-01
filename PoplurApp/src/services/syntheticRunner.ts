@@ -1,9 +1,10 @@
 const RUNNER_ORIGIN = 'http://127.0.0.1:8096';
 const REQUEST_TIMEOUT_MS = 4_000;
-const COMMAND_TIMEOUT_MS = 6 * 60 * 1_000;
+const COMMAND_TIMEOUT_MS = 12 * 60 * 1_000;
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
-export type SyntheticRunnerStatus = 'offline' | 'paused' | 'starting' | 'live' | 'error';
+export type SyntheticRunnerStatus = 'offline' | 'paused' | 'starting' | 'live' | 'completed' | 'error';
+export type SyntheticRunnerMode = 'five-actor-readonly' | 'first-user-v1' | 'first-user-shared-v1' | null;
 
 export type SyntheticRunnerActor = {
   actorId: string;
@@ -20,8 +21,23 @@ export type SyntheticRunnerActor = {
 
 export type SyntheticRunnerState = {
   ok: true;
+  mode: SyntheticRunnerMode;
   enabled: boolean;
   status: SyntheticRunnerStatus;
+  completed: boolean;
+  startedAtMs: number;
+  completedAtMs: number;
+  runId: string;
+  identity: { actorId: string; email: string; handle: string } | null;
+  result: {
+    postId: string;
+    radiusMeters: number;
+    mapVerified: boolean;
+    feedEligible: boolean;
+    feedVerified: boolean;
+    profileChecked: false;
+  } | null;
+  error: string;
   actors: SyntheticRunnerActor[];
 };
 
@@ -49,9 +65,25 @@ const integer = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): number => {
 
 const runnerStatus = (value: unknown): SyntheticRunnerStatus => {
   const status = text(value, 16);
-  return status === 'paused' || status === 'starting' || status === 'live' || status === 'error'
+  return status === 'paused' || status === 'starting' || status === 'live'
+    || status === 'completed' || status === 'error'
     ? status
     : 'offline';
+};
+
+const runnerMode = (value: unknown): SyntheticRunnerMode => {
+  const mode = text(value, 32);
+  return mode === 'five-actor-readonly' || mode === 'first-user-v1' || mode === 'first-user-shared-v1'
+    ? mode
+    : null;
+};
+
+const identity = (value: unknown): SyntheticRunnerState['identity'] => {
+  const row = record(value);
+  const actorId = text(row.actorId, 80);
+  const email = text(row.email, 180);
+  const handle = text(row.handle, 80);
+  return actorId && email && handle ? { actorId, email, handle } : null;
 };
 
 const actor = (value: unknown): SyntheticRunnerActor | null => {
@@ -127,13 +159,50 @@ async function runnerCommand(enabled: boolean): Promise<void> {
   }
 }
 
+async function onboardingCommand(mode: 'first-user-v1' | 'first-user-shared-v1'): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${RUNNER_ORIGIN}/api/runner/onboarding`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(mode === 'first-user-v1'
+        ? { mode, confirmCreateAccountAndPublicPost: true }
+        : { mode, confirmCreateProductionTestAccountAndPublicPost: true }),
+      signal: controller.signal,
+    });
+    const body = record(await response.json().catch(() => ({})));
+    if (!response.ok || body.ok !== true) throw new Error('First-user onboarding command was rejected.');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function readSyntheticRunnerState(): Promise<SyntheticRunnerState> {
   const row = record(await runnerGet('/api/runner/state'));
   if (row.ok !== true) throw new Error('Local runner state is unavailable.');
+  const resultRow = record(row.result);
+  const resultPostId = text(resultRow.postId, 128);
   return {
     ok: true,
+    mode: runnerMode(row.mode),
     enabled: row.enabled === true,
     status: runnerStatus(row.status),
+    completed: row.completed === true,
+    startedAtMs: integer(row.startedAtMs),
+    completedAtMs: integer(row.completedAtMs),
+    runId: text(row.runId, 120),
+    identity: identity(row.identity),
+    result: resultPostId ? {
+      postId: resultPostId,
+      radiusMeters: integer(resultRow.radiusMeters, 40_075_000),
+      mapVerified: resultRow.mapVerified === true,
+      feedEligible: resultRow.feedEligible === true,
+      feedVerified: resultRow.feedVerified === true,
+      profileChecked: false,
+    } : null,
+    error: text(row.error, 240),
     actors: Array.isArray(row.actors)
       ? row.actors.map(actor).filter((item): item is SyntheticRunnerActor => item !== null).slice(0, 5)
       : [],
@@ -175,5 +244,18 @@ export async function readSyntheticRunnerFrameImage(actorId: string, sequence: n
 /** Explicit user action only. Callers must never invoke this from a timer or mount effect. */
 export async function setSyntheticRunnerEnabled(enabled: boolean): Promise<SyntheticRunnerState> {
   await runnerCommand(enabled);
+  return readSyntheticRunnerState();
+}
+
+/** Explicit one-shot operator action. It can write only to loopback emulators. */
+export async function runFirstUserOnboarding(): Promise<SyntheticRunnerState> {
+  await onboardingCommand('first-user-v1');
+  return readSyntheticRunnerState();
+}
+
+/** Explicit one-shot operator action. It creates one tagged tester and post on
+ * Poplur production; both remain live and normal Map/Feed rules decide reach. */
+export async function runSharedFirstUserOnboarding(): Promise<SyntheticRunnerState> {
+  await onboardingCommand('first-user-shared-v1');
   return readSyntheticRunnerState();
 }

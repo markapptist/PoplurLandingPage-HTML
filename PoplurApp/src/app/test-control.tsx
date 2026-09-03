@@ -27,6 +27,7 @@ import { betaMapPoint } from '@/components/betaMapProjection';
 
 const REFRESH_MS = 15_000;
 const RUNNER_REFRESH_MS = 2_500;
+import RadiusLab from '@/components/radius-lab';
 const EMPTY_PUBLIC_POSTS: RealtimePublicPost[] = [];
 const EMPTY_FEED_POSTS: RealtimeFeedPost[] = [];
 const EMPTY_MAP_CELLS: BetaMapCell[] = [];
@@ -372,3 +373,4 @@ const styles = StyleSheet.create<Record<string, any>>({
   surfaceBoard: { gap: 12, padding: 18, borderRadius: 22, borderWidth: 2, borderColor: '#8fddff', backgroundColor: 'rgba(8,22,31,.9)', boxShadow: '0 16px 42px rgba(73,193,241,.12)' }, surfaceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, surfaceCard: { flexGrow: 1, flexBasis: 190, minHeight: 84, gap: 8, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: '#34687d', backgroundColor: 'rgba(8,31,43,.85)' }, surfaceName: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: .9 }, surfaceState: { fontSize: 9, fontWeight: '900', letterSpacing: .8 }, surfaceDetail: { color: '#b7dce9', fontSize: 10, lineHeight: 15 },
   notice: { color: '#ffe8f3', backgroundColor: '#59132f', borderRadius: 12, padding: 12, fontSize: 12 },
 });
+    <RadiusLab />

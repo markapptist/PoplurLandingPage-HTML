@@ -45,3 +45,4 @@ example
 
 # Radius Lab runtime residue (which pin is standing); the manifest is the record
 scripts/.radius-lab-state.json
+scripts/.radius-lab-cohort.json

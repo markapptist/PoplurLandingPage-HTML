@@ -38,8 +38,39 @@ const LAB_SOURCE = 'radius-lab';
 /** The browser preview's deterministic viewer fix (reach.ts HOME). A pin dropped
  *  here is in reach even at 0 m, so it always stands on the workbench map. */
 const VIEWER = Object.freeze({ latitude: 43.6487, longitude: -79.3811 });
-/** Half the equator: a cell this wide wraps the whole planet. */
-const MAX_RADIUS_METERS = 20_037_500;
+/** The top of the radius scale is the Earth's own radius: 6,371 km, the
+ *  ceiling every client surface counts "of". A post there has taken over the
+ *  world — the map and feed treat it as reaching everyone — so the lab never
+ *  writes a radius above it. (Half the equator, 20,037.5 km, was the old
+ *  ceiling here; the counter then read 24,901 mi over a 3,959 mi max.) */
+const MAX_RADIUS_METERS = 6_371_000;
+/** Cohort residue lives beside the pin state so a restart still knows what
+ *  it stood up and what it must be able to remove. */
+const cohortStatePath = new URL('./.radius-lab-cohort.json', import.meta.url).pathname;
+const COHORT_SOURCE = 'radius-lab-cohort';
+/**
+ * Five posters, one per chooseable pin colour (pinColors.ts), contesting the
+ * same ground. They read as people rather than as fixtures because that is
+ * the exercise: a board where strangers with different pins are taking the
+ * area over from each other, colour by colour.
+ */
+const COHORT_POSTERS = Object.freeze([
+  { pinColor: 'red',    ownerId: 'synthetic-conquer-red',    username: 'saucy.red' },
+  { pinColor: 'purple', ownerId: 'synthetic-conquer-purple', username: 'plum.pilot' },
+  { pinColor: 'blue',   ownerId: 'synthetic-conquer-blue',   username: 'bluejay.to' },
+  { pinColor: 'green',  ownerId: 'synthetic-conquer-green',  username: 'greenline.6ix' },
+  { pinColor: 'orange', ownerId: 'synthetic-conquer-orange', username: 'orange.peel' },
+]);
+/** Where each poster's two pops stand relative to the drop centre — bearing
+ *  (degrees), distance and radius (metres). Overlapping ON PURPOSE: contested
+ *  ground is what makes five colours read as a takeover rather than five dots. */
+const COHORT_LAYOUT = Object.freeze([
+  [{ bearing: 20,  distance: 900,   radius: 2_400 }, { bearing: 200, distance: 2_100, radius: 1_500 }],
+  [{ bearing: 95,  distance: 1_300, radius: 3_200 }, { bearing: 300, distance: 1_700, radius: 1_200 }],
+  [{ bearing: 160, distance: 800,   radius: 2_000 }, { bearing: 40,  distance: 2_600, radius: 2_800 }],
+  [{ bearing: 245, distance: 1_100, radius: 4_200 }, { bearing: 120, distance: 2_300, radius: 1_000 }],
+  [{ bearing: 330, distance: 700,   radius: 1_800 }, { bearing: 270, distance: 2_900, radius: 3_600 }],
+]);
 const maxBodyBytes = 16 * 1024;
 const statePath = new URL('./.radius-lab-state.json', import.meta.url).pathname;
 const manifestPath = new URL('./radius-lab-manifest.md', import.meta.url).pathname;
@@ -152,7 +183,171 @@ function summarize(postId, row) {
 }
 
 function statePayload() {
-  return { ok: true, pin: lastPin, viewer: VIEWER, maxRadiusMeters: MAX_RADIUS_METERS, at: Date.now() };
+  return { ok: true, pin: lastPin, cohort: lastCohort, viewer: VIEWER, maxRadiusMeters: MAX_RADIUS_METERS, at: Date.now() };
+}
+
+// ── The conquer cohort ──────────────────────────────────────────────────────
+let lastCohort = [];
+
+function readCohortState() {
+  try {
+    if (!existsSync(cohortStatePath)) return null;
+    const parsed = JSON.parse(readFileSync(cohortStatePath, 'utf8'));
+    return Array.isArray(parsed?.posts) && parsed.posts.length ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCohortState(state) {
+  if (!state) {
+    try { unlinkSync(cohortStatePath); } catch { /* already gone */ }
+    return;
+  }
+  writeFileSync(cohortStatePath, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+/** Destination point along a bearing — the spherical formula, so a 3 km
+ *  offset is 3 km whatever the latitude. */
+function offsetCoordinate(latitude, longitude, bearingDeg, distanceMeters) {
+  const R = 6_371_000;
+  const bearing = (bearingDeg * Math.PI) / 180;
+  const lat1 = (latitude * Math.PI) / 180;
+  const lon1 = (longitude * Math.PI) / 180;
+  const d = distanceMeters / R;
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(bearing));
+  const lon2 = lon1 + Math.atan2(Math.sin(bearing) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+  return {
+    latitude: Math.round(((lat2 * 180) / Math.PI) * 1e6) / 1e6,
+    longitude: Math.round(((((lon2 * 180) / Math.PI + 540) % 360) - 180) * 1e6) / 1e6,
+  };
+}
+
+function summarizeCohortPost(postId, row) {
+  const base = summarize(postId, row);
+  return base ? { ...base, ownerId: typeof row.userID === 'string' ? row.userID : '', channelId: typeof row.channelId === 'string' ? row.channelId : 'live' } : null;
+}
+
+async function readCohort() {
+  const state = readCohortState();
+  if (!state) { lastCohort = []; return lastCohort; }
+  const refs = state.posts.map(post => db().collection('posts').doc(post.postId));
+  const snapshots = await db().getAll(...refs);
+  const standing = [];
+  snapshots.forEach((snapshot, index) => {
+    if (snapshot.exists) standing.push(summarizeCohortPost(state.posts[index].postId, snapshot.data()));
+  });
+  if (standing.length === 0) {
+    writeCohortState(null);
+    manifest('observed every cohort post removed elsewhere; cohort state cleared.');
+  }
+  lastCohort = standing.filter(Boolean);
+  return lastCohort;
+}
+
+/**
+ * The cohort's creatives come from ONE approved pool: the official launch
+ * content (officialContent: true) — the licensed demo creatives the owner
+ * ships inside the app and seeded as real posts for App Review. Nothing is
+ * ever borrowed from "whatever post has media": if that pool is empty the
+ * drop is refused, exactly as the single pin's drop is.
+ */
+async function approvedCohortMedia() {
+  const snapshot = await db().collection('posts').where('officialContent', '==', true).get();
+  const usable = row => typeof row?.mediaURL === 'string' && row.mediaURL.startsWith('https://')
+    && typeof row.mediaType === 'string' && row.mediaType.trim() !== '';
+  const pool = [];
+  snapshot.forEach(doc => { const row = doc.data(); if (usable(row)) pool.push({ postId: doc.id, row }); });
+  // Photos first: a still reads instantly on a pin card and in the feed; the
+  // videos are the drive ads and follow once the photos run out.
+  pool.sort((a, b) => ((a.row.mediaType === 'photo' ? 0 : 1) - (b.row.mediaType === 'photo' ? 0 : 1)) || a.postId.localeCompare(b.postId));
+  return pool;
+}
+
+async function removeCohort(reason) {
+  const state = readCohortState();
+  if (!state) return false;
+  for (const post of state.posts) {
+    await db().recursiveDelete(db().collection('posts').doc(post.postId));
+    manifest(`REMOVED posts/${post.postId} and its subcollections (cohort ${reason}).`);
+  }
+  writeCohortState(null);
+  lastCohort = [];
+  return true;
+}
+
+async function dropCohort({ latitude, longitude, radiusScale }) {
+  const pool = await approvedCohortMedia();
+  if (pool.length === 0) {
+    throw new DeskError(409, 'No official launch content is available to lend the cohort its media, and a pop cannot be posted '
+      + 'without approved media. The lab never borrows media on its own.');
+  }
+  await removeCohort('replaced by a new drop');
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  const created = [];
+  let mediaIndex = 0;
+  COHORT_POSTERS.forEach((poster, posterIndex) => {
+    COHORT_LAYOUT[posterIndex].forEach((slot, slotIndex) => {
+      const pick = pool[mediaIndex % pool.length];
+      mediaIndex += 1;
+      const media = pick.row;
+      const at = offsetCoordinate(latitude, longitude, slot.bearing, slot.distance);
+      const radiusMeters = clampRadius(Math.round(slot.radius * radiusScale));
+      const stamp = now + posterIndex * 10 + slotIndex;
+      const postId = `post-radius-lab-cohort-${day}-${poster.pinColor}-${slotIndex + 1}-${Math.random().toString(36).slice(2, 6)}`;
+      const copy = key => (media[key] === undefined ? {} : { [key]: media[key] });
+      const fields = {
+        audience: 'public',
+        channelId: typeof media.channelId === 'string' ? media.channelId : 'live',
+        createdAt: Timestamp.fromMillis(stamp),
+        createdAtMillis: stamp,
+        updatedAt: Timestamp.fromMillis(stamp),
+        latitude: at.latitude,
+        longitude: at.longitude,
+        latitudeCell: Math.round(at.latitude * 1000),
+        longitudeCell: Math.round(at.longitude * 1000),
+        locationVisibility: 'approximate',
+        filterId: 'none',
+        ...copy('mediaType'),
+        ...copy('mediaURL'),
+        ...copy('posterURL'),
+        ...copy('mediaStoragePath'),
+        ...copy('rightsAttestationVersion'),
+        rightsAttestedAtMillis: stamp,
+        caption: `@${poster.username} is taking over this block — synthetic cohort pop from the Test Center.`,
+        radiusMeters,
+        radius: radiusMeters,
+        organicRadiusMeters: radiusMeters,
+        viewCount: 0,
+        likeCount: 0,
+        downvoteCount: 0,
+        commentCount: 0,
+        userID: poster.ownerId,
+        username: poster.username,
+        pinColor: poster.pinColor,
+        syntheticBeta: true,
+        syntheticSource: COHORT_SOURCE,
+      };
+      created.push({ postId, fields, mediaFrom: pick.postId, poster });
+    });
+  });
+  const batch = db().batch();
+  for (const { postId, fields } of created) batch.set(db().collection('posts').doc(postId), fields);
+  await batch.commit();
+  writeCohortState({
+    centre: { latitude, longitude },
+    createdAtMs: now,
+    posts: created.map(({ postId, poster }) => ({ postId, ownerId: poster.ownerId, pinColor: poster.pinColor })),
+  });
+  for (const { postId, fields, mediaFrom, poster } of created) {
+    manifest(`created posts/${postId} (owner ${poster.ownerId} @${poster.username}, pin ${poster.pinColor}, radius ${fields.radiusMeters} m, `
+      + `syntheticSource: ${COHORT_SOURCE}, at ${fields.latitude},${fields.longitude}, media approved from officialContent posts/${mediaFrom}); `
+      + `engagement adds posts/${postId}/{engagements,engagementActors} docs.`);
+  }
+  lastCohort = created.map(({ postId, fields }) => summarizeCohortPost(postId, fields)).filter(Boolean);
+  broadcast();
+  return lastCohort;
 }
 
 function broadcast() {
@@ -380,6 +575,20 @@ async function handleMutation(pathname, body) {
     await removePin('removed from the desk');
     return statePayload();
   }
+  if (pathname === '/api/radius-lab/cohort/drop') {
+    const latitude = finite(body?.latitude);
+    const longitude = finite(body?.longitude);
+    const radiusScale = Math.max(0.1, Math.min(10, finite(body?.radiusScale) ?? 1));
+    if (latitude == null || Math.abs(latitude) > 90) throw new DeskError(400, 'Latitude must be between -90 and 90.');
+    if (longitude == null || Math.abs(longitude) > 180) throw new DeskError(400, 'Longitude must be between -180 and 180.');
+    await dropCohort({ latitude, longitude, radiusScale });
+    return statePayload();
+  }
+  if (pathname === '/api/radius-lab/cohort/remove') {
+    await removeCohort('removed from the desk');
+    broadcast();
+    return statePayload();
+  }
   throw new DeskError(404, 'Radius lab route not found.');
 }
 
@@ -387,7 +596,7 @@ const server = createServer(async (request, response) => {
   const origin = request.headers.origin === deskOrigin ? deskOrigin : '';
   const requestURL = new URL(request.url || '/', `http://${host}:${port}`);
   if (request.method === 'GET' && requestURL.pathname === '/health') {
-    sendJSON(response, 200, '', { ok: true, pin: readState()?.postId ?? null });
+    sendJSON(response, 200, '', { ok: true, pin: readState()?.postId ?? null, cohort: readCohortState()?.posts.length ?? 0 });
     return;
   }
   if (request.method === 'OPTIONS') {
@@ -410,11 +619,13 @@ const server = createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && requestURL.pathname === '/api/radius-lab/state') {
       await readPin();
+      await readCohort();
       sendJSON(response, 200, origin, statePayload());
       return;
     }
     if (request.method === 'GET' && requestURL.pathname === '/api/radius-lab/live') {
       await readPin();
+      await readCohort();
       openLiveStream(request, response, origin);
       return;
     }

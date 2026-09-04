@@ -1,4 +1,5 @@
-const MAX_RADIUS_METERS = 40_075_000;
+/** The top of the radius scale: the Earth's radius (worldRadius.ts in the clay map). */
+const MAX_RADIUS_METERS = 6_371_000;
 
 const text = (value, maximum = 120) => typeof value === 'string'
   ? value.trim().replace(/\s+/g, ' ').slice(0, maximum)

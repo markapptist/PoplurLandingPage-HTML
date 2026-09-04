@@ -4,7 +4,17 @@ const COMMAND_TIMEOUT_MS = 12 * 60 * 1_000;
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
 export type SyntheticRunnerStatus = 'offline' | 'paused' | 'starting' | 'live' | 'completed' | 'error';
-export type SyntheticRunnerMode = 'five-actor-readonly' | 'first-user-v1' | 'first-user-shared-v1' | null;
+export type SyntheticCohortMode = 'five-actor-readonly' | 'five-actor-live';
+export type SyntheticRunnerMode = SyntheticCohortMode | 'first-user-v1' | 'first-user-shared-v1' | null;
+export type SyntheticActivityReport = 'cloud' | 'local' | 'production';
+
+/** One thing a synthetic user does, as the local runner describes it. */
+export type SyntheticActivity = {
+  id: string;
+  label: string;
+  detail: string;
+  reported: SyntheticActivityReport;
+};
 
 export type SyntheticRunnerActor = {
   actorId: string;
@@ -17,11 +27,58 @@ export type SyntheticRunnerActor = {
   lastFrameAtMs: number;
   frameSuppressed: boolean;
   frameCount: number;
+  handle: string;
+  persona: string;
+  place: string;
+  uid: string;
+  email: string;
+  signedInAtMs: number;
+  postsPublished: number;
+  lastPostId: string;
+  lastPostAtMs: number;
+  viewsGiven: number;
+  likesGiven: number;
+  dmsSent: number;
+  lastError: string;
+};
+
+/**
+ * Shown when the local runner is offline, so the Test Center can still say
+ * what each mode does. The runner's own `activities` list wins when present;
+ * keep this in step with scripts/synthetic-live-actions.mjs.
+ */
+export const SYNTHETIC_ACTIVITY_FALLBACK: Record<SyntheticCohortMode, SyntheticActivity[]> = {
+  'five-actor-readonly': [
+    { id: 'app-open', label: 'Open Poplur and sign in', detail: 'Fresh isolated browser, then email + password sign-in with the actor’s own beta account.', reported: 'cloud' },
+    { id: 'screen-view', label: 'Land on the Feed', detail: 'Watch the TV feed and whatever is currently intercepting the actor’s radius.', reported: 'cloud' },
+    { id: 'open-map', label: 'Open the Map', detail: 'Arrow the cube to the Map and look at the pins in reach.', reported: 'cloud' },
+    { id: 'open-profile', label: 'Open the Profile', detail: 'Arrow the cube to Profile and check their own posts and radius.', reported: 'cloud' },
+    { id: 'open-hold-menu', label: 'Hold the cube for the menu', detail: 'Long-press the cube, look at the hold menu, then Escape back.', reported: 'cloud' },
+    { id: 'idle', label: 'Pause between actions', detail: 'Human-paced dwell, then the cycle repeats.', reported: 'cloud' },
+  ],
+  'five-actor-live': [
+    { id: 'app-open', label: 'Open Poplur and sign in', detail: 'Fresh isolated browser, then email + password sign-in with the actor’s own beta account.', reported: 'cloud' },
+    { id: 'screen-view', label: 'Land on the Feed', detail: 'Watch the TV feed and whatever is currently intercepting the actor’s radius.', reported: 'cloud' },
+    { id: 'open-map', label: 'Open the Map', detail: 'Arrow the cube to the Map and look at the pins in reach.', reported: 'cloud' },
+    { id: 'open-profile', label: 'Open the Profile', detail: 'Arrow the cube to Profile and check their own posts and radius.', reported: 'cloud' },
+    { id: 'open-hold-menu', label: 'Hold the cube for the menu', detail: 'Long-press the cube, look at the hold menu, then Escape back.', reported: 'cloud' },
+    { id: 'open-camera', label: 'Open the Camera', detail: 'Arrow the cube to Camera; the browser supplies a fake camera device.', reported: 'local' },
+    { id: 'capture-photo', label: 'Capture a photo', detail: 'Press the cube to capture, then choose “Use original” in the Post composer.', reported: 'local' },
+    { id: 'choose-location', label: 'Pick the spot on the Map', detail: 'Tap “Use this spot” in the Map picker at the actor’s own managed city (Toronto, London or New York).', reported: 'local' },
+    { id: 'publish-post', label: 'Publish the post', detail: 'Confirm “I can share this”, press “Post to TV”, wait for the upload to finish. This creates a real public post tagged synthetic.', reported: 'production' },
+    { id: 'verify-post', label: 'Find the post on the Map', detail: 'Return to the Map and confirm their own pin is there.', reported: 'cloud' },
+    { id: 'view-post', label: 'Watch another tester’s post', detail: 'Dwell on an intercepting post in the Feed. A real view grows that post’s radius.', reported: 'production' },
+    { id: 'like-post', label: 'Like it', detail: 'Like the post once per account. A real like grows its radius by about a kilometre.', reported: 'production' },
+    { id: 'send-dm', label: 'Message the poster', detail: 'Hold the cube, open View Profile on the post they just liked, press Message and send one short note. One DM per poster, at most three per run; the thread is real and lands in that owner’s Mail.', reported: 'production' },
+    { id: 'idle', label: 'Pause between actions', detail: 'Human-paced dwell, then the cycle repeats. Each actor posts again every 20 minutes, up to four posts per run.', reported: 'cloud' },
+  ],
 };
 
 export type SyntheticRunnerState = {
   ok: true;
   mode: SyntheticRunnerMode;
+  cohortId: string;
+  activities: SyntheticActivity[];
   enabled: boolean;
   status: SyntheticRunnerStatus;
   completed: boolean;
@@ -73,9 +130,22 @@ const runnerStatus = (value: unknown): SyntheticRunnerStatus => {
 
 const runnerMode = (value: unknown): SyntheticRunnerMode => {
   const mode = text(value, 32);
-  return mode === 'five-actor-readonly' || mode === 'first-user-v1' || mode === 'first-user-shared-v1'
+  return mode === 'five-actor-readonly' || mode === 'five-actor-live'
+    || mode === 'first-user-v1' || mode === 'first-user-shared-v1'
     ? mode
     : null;
+};
+
+export const isCohortMode = (mode: SyntheticRunnerMode): mode is SyntheticCohortMode => mode === 'five-actor-readonly' || mode === 'five-actor-live';
+
+const activity = (value: unknown): SyntheticActivity | null => {
+  const row = record(value);
+  const id = text(row.id, 40);
+  const label = text(row.label, 80);
+  const detail = text(row.detail, 240);
+  const reported = text(row.reported, 16);
+  if (!id || !label || (reported !== 'cloud' && reported !== 'local' && reported !== 'production')) return null;
+  return { id, label, detail, reported };
 };
 
 const identity = (value: unknown): SyntheticRunnerState['identity'] => {
@@ -102,6 +172,19 @@ const actor = (value: unknown): SyntheticRunnerActor | null => {
     lastFrameAtMs: integer(row.lastFrameAtMs),
     frameSuppressed: row.frameSuppressed === true,
     frameCount: integer(row.frameCount, 120),
+    handle: text(row.handle, 80),
+    persona: text(row.persona, 80),
+    place: text(row.place, 80),
+    uid: text(row.uid, 128),
+    email: text(row.email, 180),
+    signedInAtMs: integer(row.signedInAtMs),
+    postsPublished: integer(row.postsPublished, 10_000),
+    lastPostId: text(row.lastPostId, 128),
+    lastPostAtMs: integer(row.lastPostAtMs),
+    viewsGiven: integer(row.viewsGiven, 100_000),
+    likesGiven: integer(row.likesGiven, 100_000),
+    dmsSent: integer(row.dmsSent, 1_000),
+    lastError: text(row.lastError, 200),
   };
 };
 
@@ -141,7 +224,7 @@ async function runnerGet(path: string): Promise<unknown> {
   }
 }
 
-async function runnerCommand(enabled: boolean): Promise<void> {
+async function runnerCommand(enabled: boolean, mode: SyntheticCohortMode): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
   try {
@@ -149,7 +232,7 @@ async function runnerCommand(enabled: boolean): Promise<void> {
       method: 'POST',
       cache: 'no-store',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(enabled ? { enabled, mode } : { enabled }),
       signal: controller.signal,
     });
     const body = record(await response.json().catch(() => ({})));
@@ -184,9 +267,14 @@ export async function readSyntheticRunnerState(): Promise<SyntheticRunnerState> 
   if (row.ok !== true) throw new Error('Local runner state is unavailable.');
   const resultRow = record(row.result);
   const resultPostId = text(resultRow.postId, 128);
+  const mode = runnerMode(row.mode);
   return {
     ok: true,
-    mode: runnerMode(row.mode),
+    mode,
+    cohortId: text(row.cohortId, 40),
+    activities: Array.isArray(row.activities)
+      ? row.activities.map(activity).filter((item): item is SyntheticActivity => item !== null).slice(0, 20)
+      : isCohortMode(mode) ? SYNTHETIC_ACTIVITY_FALLBACK[mode] : [],
     enabled: row.enabled === true,
     status: runnerStatus(row.status),
     completed: row.completed === true,
@@ -196,7 +284,8 @@ export async function readSyntheticRunnerState(): Promise<SyntheticRunnerState> 
     identity: identity(row.identity),
     result: resultPostId ? {
       postId: resultPostId,
-      radiusMeters: integer(resultRow.radiusMeters, 40_075_000),
+      // The radius scale tops out at the Earth's radius (worldRadius.ts in the clay map).
+      radiusMeters: integer(resultRow.radiusMeters, 6_371_000),
       mapVerified: resultRow.mapVerified === true,
       feedEligible: resultRow.feedEligible === true,
       feedVerified: resultRow.feedVerified === true,
@@ -242,8 +331,8 @@ export async function readSyntheticRunnerFrameImage(actorId: string, sequence: n
 }
 
 /** Explicit user action only. Callers must never invoke this from a timer or mount effect. */
-export async function setSyntheticRunnerEnabled(enabled: boolean): Promise<SyntheticRunnerState> {
-  await runnerCommand(enabled);
+export async function setSyntheticRunnerEnabled(enabled: boolean, mode: SyntheticCohortMode = 'five-actor-readonly'): Promise<SyntheticRunnerState> {
+  await runnerCommand(enabled, mode);
   return readSyntheticRunnerState();
 }
 

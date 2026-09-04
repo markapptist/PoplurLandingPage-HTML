@@ -3,12 +3,14 @@ import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-na
 import {
   coverageKm2,
   coverageShare,
+  dropRadiusLabCohort,
   dropRadiusLabPin,
   formatKm,
   formatKm2,
   RADIUS_LAB_MAX_METERS,
   RADIUS_LAB_VIEWER,
   readRadiusLabState,
+  removeRadiusLabCohort,
   removeRadiusLabPin,
   setRadiusLabRadius,
   subscribeRadiusLab,
@@ -41,8 +43,17 @@ const PRESETS: { label: string; meters: number }[] = [
   { label: '100 km', meters: 100 * KM },
   { label: '1,000 km', meters: 1_000 * KM },
   { label: '5,000 km', meters: 5_000 * KM },
-  { label: 'PLANET', meters: RADIUS_LAB_MAX_METERS },
+  { label: 'WORLD · 6,371 km', meters: RADIUS_LAB_MAX_METERS },
 ];
+
+/** The five posters' pin swatches (pinColors.ts in the clay map). */
+const COHORT_SWATCH: Record<string, string> = {
+  red: '#FF4B4B',
+  purple: '#A97BFF',
+  blue: '#5FB0FF',
+  green: '#4FD6B8',
+  orange: '#FF8A3D',
+};
 
 /** How far a radius has conquered, in the map's own terms. */
 const CONQUEST_LADDER: { label: string; meters: number; note: string }[] = [
@@ -52,7 +63,7 @@ const CONQUEST_LADDER: { label: string; meters: number; note: string }[] = [
   { label: 'Region', meters: 250 * KM, note: 'held ground reads from the sky' },
   { label: 'Country', meters: 1_500 * KM, note: 'a coloured patch on the globe' },
   { label: 'Continent', meters: 4_000 * KM, note: 'continents merge into one takeover' },
-  { label: 'Planet', meters: RADIUS_LAB_MAX_METERS, note: 'the whole world in one colour' },
+  { label: 'World', meters: RADIUS_LAB_MAX_METERS, note: "the Earth's radius: the whole world in one colour" },
 ];
 
 const PLACES: { label: string; latitude: number; longitude: number }[] = [
@@ -105,7 +116,7 @@ function Chip({ label, onPress, active = false, disabled = false, tone = 'plain'
 export default function RadiusLab() {
   const [state, setState] = useState<RadiusLabState | null>(null);
   const [link, setLink] = useState<RadiusLabLink>('connecting');
-  const [busy, setBusy] = useState<'drop' | 'radius' | 'remove' | null>(null);
+  const [busy, setBusy] = useState<'drop' | 'radius' | 'remove' | 'cohort' | 'cohort-remove' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [latitudeText, setLatitudeText] = useState(fixed(RADIUS_LAB_VIEWER.latitude));
   const [longitudeText, setLongitudeText] = useState(fixed(RADIUS_LAB_VIEWER.longitude));
@@ -121,6 +132,7 @@ export default function RadiusLab() {
   const seenPinRef = useRef<string | null>(null);
 
   const pin = state?.pin ?? null;
+  const cohort = state?.cohort ?? [];
   const liveMeters = pin?.radiusMeters ?? 0;
   const shownMeters = pendingMeters ?? liveMeters;
   const sliderValue = metersToSlider(shownMeters);
@@ -217,6 +229,34 @@ export default function RadiusLab() {
     }
   }, [absorb, setPending]);
 
+  const dropCohort = useCallback(async () => {
+    const latitude = Number(latitudeText);
+    const longitude = Number(longitudeText);
+    if (!Number.isFinite(latitude) || Math.abs(latitude) > 90 || !Number.isFinite(longitude) || Math.abs(longitude) > 180) {
+      setNotice('Latitude must be within ±90 and longitude within ±180.');
+      return;
+    }
+    setBusy('cohort');
+    try {
+      absorb(await dropRadiusLabCohort({ latitude, longitude }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The cohort could not be dropped.');
+    } finally {
+      setBusy(null);
+    }
+  }, [absorb, latitudeText, longitudeText]);
+
+  const removeCohort = useCallback(async () => {
+    setBusy('cohort-remove');
+    try {
+      absorb(await removeRadiusLabCohort());
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The cohort could not be removed.');
+    } finally {
+      setBusy(null);
+    }
+  }, [absorb]);
+
   const applyExact = useCallback(() => {
     const km = Number(exactKmText.replace(/,/g, ''));
     if (!Number.isFinite(km) || km < 0) { setNotice('Enter the radius in kilometres.'); return; }
@@ -264,6 +304,17 @@ export default function RadiusLab() {
         <View style={styles.stepRow}><Text style={styles.stepLabel}>JUMP</Text><View style={styles.chips}>{PRESETS.map(preset => <Chip key={preset.label} label={preset.label} active={Math.abs(shownMeters - preset.meters) < 1} disabled={controlsLocked} onPress={() => queueRadius(preset.meters)} />)}</View></View>
         <View style={styles.exactRow}><Text style={styles.stepLabel}>EXACT</Text><TextInput accessibilityLabel="Exact radius in kilometres" value={exactKmText} onChangeText={setExactKmText} onSubmitEditing={applyExact} placeholder="km" placeholderTextColor="#8f6a80" keyboardType="decimal-pad" inputMode="decimal" editable={!controlsLocked} style={[styles.input, styles.exactInput]} /><Chip label="SET" disabled={controlsLocked || !exactKmText.trim()} onPress={applyExact} /></View>
       </View>
+    </View>
+
+    <View style={[styles.panel, styles.cohortPanel]}>
+      <Text style={styles.panelKicker}>3 · THE COHORT · OTHER PEOPLE'S PINS</Text>
+      <Text style={styles.panelTitle}>{cohort.length ? `${cohort.length} cohort pops standing` : 'No cohort on the map'}</Text>
+      <Text style={styles.panelCopy}>Five synthetic posters, one per pin colour, each with two overlapping pops around the location in panel 1 (1–4 km radii). Their media is lent by the official launch content only. Watch the map colour up as their claims contest the same blocks; remove them when you are done.</Text>
+      <View style={styles.actions}>
+        <Pressable accessibilityRole="button" disabled={busy != null} onPress={() => { void dropCohort(); }} style={[styles.primary, busy != null && styles.chipDisabled]}><Text style={styles.primaryText}>{busy === 'cohort' ? 'DROPPING…' : cohort.length ? 'RE-DROP COHORT HERE' : 'DROP 5 POSTERS (10 POPS)'}</Text></Pressable>
+        {cohort.length > 0 && <Chip label={busy === 'cohort-remove' ? 'REMOVING…' : 'REMOVE COHORT'} tone="danger" disabled={busy != null} onPress={() => { void removeCohort(); }} />}
+      </View>
+      {cohort.length > 0 && <View style={styles.cohortList}>{cohort.map(post => <View key={post.postId} style={styles.cohortRow}><View style={[styles.cohortSwatch, { backgroundColor: COHORT_SWATCH[post.pinColor ?? ''] ?? '#f63b9a' }]} /><Text style={styles.cohortHandle}>@{post.username}</Text><Text style={styles.cohortMeta}>{formatKm(post.radiusMeters)} · {post.channelId.toUpperCase()} · {post.viewCount} views · {post.likeCount} likes</Text></View>)}</View>}
     </View>
 
     <View style={styles.ladder}>
@@ -324,6 +375,12 @@ const styles = StyleSheet.create({
   stepLabel: { width: 48, color: '#bf829f', fontSize: 8, fontWeight: '900', letterSpacing: .9 },
   exactRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   exactInput: { width: 120 },
+  cohortPanel: { borderColor: '#5fb0ff' },
+  cohortList: { gap: 6 },
+  cohortRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  cohortSwatch: { width: 12, height: 12, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,.5)' },
+  cohortHandle: { color: '#fff', fontSize: 11, fontWeight: '900' },
+  cohortMeta: { color: '#b98ca4', fontSize: 9 },
   ladder: { gap: 8, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#4b3148', backgroundColor: '#140b15' },
   rungs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   rung: { flexGrow: 1, flexBasis: 150, gap: 3, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#3a2334', backgroundColor: '#1d111b' },

@@ -9,6 +9,7 @@ import {
 } from './realtime-public-post-policy.mjs';
 import { createLiveDashboardState } from './test-control-live-state.mjs';
 import { isAuthorizedTestControlMutation, validateOnboardingCommand } from './synthetic-onboarding-actions.mjs';
+import { validateRunnerCommand } from './synthetic-live-actions.mjs';
 
 const host = '127.0.0.1';
 const port = boundedPort(process.env.POPLUR_TEST_CONTROL_PORT, 8096);
@@ -294,14 +295,14 @@ async function callCloudControl(data) {
   return result;
 }
 
-async function callLocalRunnerCommand(enabled) {
+async function callLocalRunnerCommand(enabled, mode = null) {
   const upstream = await fetchWithTimeout(`http://${host}:${runnerPort}/command`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-poplur-local-runner-token': localRunnerCredential,
     },
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify(enabled && mode ? { enabled, mode } : { enabled }),
   }, enabled ? 6 * 60_000 : 60_000);
   const body = await upstream.json().catch(() => null);
   if (!upstream.ok || !body || typeof body !== 'object') throw new Error('The local real-app runner did not apply the command.');
@@ -403,20 +404,22 @@ async function applyOnboardingCommand(body, response, origin) {
  * bootstrap fails; OFF closes local contexts first, then pauses production.
  */
 async function applyRunnerCommand(body, response, origin) {
-  if (!body || typeof body !== 'object' || typeof body.enabled !== 'boolean'
-    || Object.keys(body).some(key => key !== 'enabled')) {
-    sendJSON(response, 400, origin, { error: { message: 'Runner command requires exact { enabled: boolean } JSON.' } });
+  let command;
+  try {
+    command = validateRunnerCommand(body);
+  } catch (error) {
+    sendJSON(response, 400, origin, { error: { message: error instanceof Error ? error.message : 'Runner command is invalid.' } });
     return;
   }
   if (onboardingActive) {
     sendJSON(response, 409, origin, { error: { message: 'Five-actor control is unavailable during first-user onboarding.' } });
     return;
   }
-  if (body.enabled) {
+  if (command.enabled) {
     try {
       const cloud = await callCloudControl({ action: 'runner', enabled: true });
       if (cloud.enabled !== true) throw new Error('The production runner switch did not enable.');
-      const local = await callLocalRunnerCommand(true);
+      const local = await callLocalRunnerCommand(true, command.mode);
       if (local.status !== 'live' || local.enabled !== true) {
         await callLocalRunnerCommand(false).catch(() => {});
         await callCloudControl({ action: 'runner', enabled: false }).catch(() => {});

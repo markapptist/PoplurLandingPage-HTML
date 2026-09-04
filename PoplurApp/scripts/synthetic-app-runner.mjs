@@ -1,9 +1,11 @@
 import { createServer } from 'node:http';
 import { Buffer } from 'node:buffer';
 import { timingSafeEqual } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
+import { constants as fsConstants, existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { access, lstat, readFile, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
@@ -29,6 +31,15 @@ import {
 } from './synthetic-runner-actions.mjs';
 import { createSyntheticOnboardingRunner } from './synthetic-onboarding-runner.mjs';
 import { validateOnboardingCommand } from './synthetic-onboarding-actions.mjs';
+import { createSyntheticLiveRunner } from './synthetic-live-runner.mjs';
+import {
+  LIVE_MODE,
+  READONLY_MODE,
+  SYNTHETIC_COHORT_ID,
+  accountForActor,
+  activitiesForMode,
+  validateRunnerCommand,
+} from './synthetic-live-actions.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIR, '..');
@@ -42,10 +53,39 @@ const CONTROL_FUNCTION_URL = process.env.POPLUR_TEST_ACTIVITY_CONTROL_URL
   || 'https://us-central1-poplur2025.cloudfunctions.net/testActivityControl';
 const INGEST_FUNCTION_URL = process.env.POPLUR_TEST_SESSION_INGEST_URL
   || 'https://us-central1-poplur2025.cloudfunctions.net/testSessionIngest';
-const CREDENTIAL_FILE = process.env.POPLUR_SYNTHETIC_CREDENTIALS_FILE || '';
-const DESK_CREDENTIAL = process.env.POPLUR_TEST_CONTROL_TOKEN || '';
-const RUNNER_CREDENTIAL = process.env.POPLUR_RUNNER_TOKEN || '';
+// Secrets come from the environment first. When the launchd agent supplies
+// only the loopback token, fall back to the same owner keychain item the desk
+// proxy uses, the provisioning script's default credential path, and the
+// ingest token the provisioning session left beside it. Nothing is printed.
+const CREDENTIAL_FILE = process.env.POPLUR_SYNTHETIC_CREDENTIALS_FILE || defaultCredentialFile();
+const DESK_CREDENTIAL = process.env.POPLUR_TEST_CONTROL_TOKEN || ownerKeychainToken();
+const RUNNER_CREDENTIAL = process.env.POPLUR_RUNNER_TOKEN || fileToken(join(homedir(), '.poplur', 'synthetic-runner-ingest-token'));
 const LOCAL_CREDENTIAL = process.env.POPLUR_RUNNER_LOCAL_TOKEN || DESK_CREDENTIAL;
+
+function defaultCredentialFile() {
+  const candidate = join(homedir(), '.poplur', 'synthetic-beta-credentials.json');
+  return existsSync(candidate) ? candidate : '';
+}
+
+function ownerKeychainToken() {
+  try {
+    return execFileSync('/usr/bin/security', ['find-generic-password', '-s', 'Poplur Test Control', '-a', 'local-owner', '-w'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function fileToken(path) {
+  try {
+    return readFileSync(path, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
 
 const NETWORK_TIMEOUT_MS = 12_000;
 const APP_TIMEOUT_MS = 45_000;
@@ -78,6 +118,24 @@ const runtime = {
   failureScheduled: false,
 };
 const onboardingRunner = createSyntheticOnboardingRunner({ chromium, chromePath: CHROME_PATH });
+// Live cohort: the five accounts use the real web app shell (which owns the
+// post upload and engagement paths), with the clay page inside it.
+const LIVE_APP_ORIGIN = process.env.POPLUR_LIVE_APP_ORIGIN || 'http://127.0.0.1:8081';
+const LIVE_FIXTURE_PATH = process.env.POPLUR_LIVE_FIXTURE_PATH
+  || '/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/icon-1024x1024.png';
+if (new URL(LIVE_APP_ORIGIN).hostname !== '127.0.0.1') {
+  throw new Error('POPLUR_LIVE_APP_ORIGIN must stay on the loopback app shell.');
+}
+const liveRunner = createSyntheticLiveRunner({
+  chromium,
+  chromePath: CHROME_PATH,
+  appOrigin: LIVE_APP_ORIGIN,
+  clayOrigin: POPLUR_APP_ORIGIN,
+  fixturePath: LIVE_FIXTURE_PATH,
+  readCredentials: () => readCredentials(),
+  cloudRunnerEnabled: () => cloudRunnerEnabled(),
+  callIngest: (actor, payload) => callIngest(actor, payload),
+});
 let commandQueue = Promise.resolve();
 
 function boundedPort(value, fallback) {
@@ -121,9 +179,12 @@ function createActorRuntime(actor) {
 
 function publicState() {
   if (onboardingRunner.hasSnapshot()) return onboardingRunner.publicState();
+  if (liveRunner.hasSnapshot()) return liveRunner.publicState();
   return {
     ok: true,
-    mode: 'five-actor-readonly',
+    mode: READONLY_MODE,
+    cohortId: SYNTHETIC_COHORT_ID,
+    activities: activitiesForMode(READONLY_MODE),
     enabled: runtime.enabled,
     status: runtime.status,
     completed: false,
@@ -134,9 +195,21 @@ function publicState() {
     error: '',
     actors: SYNTHETIC_ACTORS.map(descriptor => {
       const actor = actors.get(descriptor.actorId);
+      const account = accountForActor(descriptor.actorId);
       return {
         actorId: actor.actorId,
         actor: actor.actor,
+        handle: descriptor.handle,
+        persona: descriptor.persona,
+        place: descriptor.place,
+        uid: account.uid,
+        email: account.email,
+        signedInAtMs: actor.signedInAtMs || 0,
+        postsPublished: 0,
+        lastPostId: '',
+        lastPostAtMs: 0,
+        viewsGiven: 0,
+        likesGiven: 0,
         status: actor.status,
         sessionId: actor.sessionId,
         currentScreen: actor.currentScreen,
@@ -254,6 +327,7 @@ function resetActorForStart(actor) {
   actor.context = null;
   actor.page = null;
   actor.auth = null;
+  actor.signedInAtMs = 0;
 }
 
 async function installBrowserSafety(context, page) {
@@ -357,6 +431,7 @@ async function signInActor(actor, credential) {
     await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor({ state: 'visible' });
     await page.locator('input[type="password"]').waitFor({ state: 'detached' });
     await readValidatedPoplurScreen(page, 'feed', APP_TIMEOUT_MS);
+    actor.signedInAtMs = Date.now();
     actor.auth = {
       idToken: authBody.idToken,
       refreshToken: authBody.refreshToken,
@@ -569,12 +644,15 @@ function markSelectedActor(actorId) {
   if (!actors.has(actorId)) return;
   runtime.selectedActorId = actorId;
   runtime.selectedUntilMs = Date.now() + LIVE_SELECTION_LEASE_MS;
+  liveRunner.markSelected(actorId);
 }
 
 async function startRunner() {
   if (runtime.status === 'live' || runtime.status === 'starting') return publicState();
   if (onboardingRunner.isActive()) throw new Error('The first-user runner is already active.');
+  if (liveRunner.isActive()) throw new Error('The live cohort runner is already active.');
   if (onboardingRunner.hasSnapshot()) await onboardingRunner.stop({ clear: true });
+  if (liveRunner.hasSnapshot()) await liveRunner.stop({ clear: true });
   runtime.status = 'starting';
   runtime.enabled = false;
   runtime.failureScheduled = false;
@@ -696,12 +774,22 @@ function scheduleFailure(error) {
     .then(() => stopRunnerInternal(isCloudPause ? 'paused' : 'error', isCloudPause ? 'cloud-paused' : 'runner-error'));
 }
 
-function enqueueCommand(enabled) {
+function enqueueCommand(command) {
   const operation = commandQueue
     .catch(() => {})
-    .then(() => {
-      if (!enabled && onboardingRunner.hasSnapshot()) return onboardingRunner.stop({ clear: false });
-      return enabled ? startRunner() : pauseRunner();
+    .then(async () => {
+      if (!command.enabled) {
+        if (onboardingRunner.hasSnapshot()) return onboardingRunner.stop({ clear: false });
+        if (liveRunner.hasSnapshot()) return liveRunner.stop({ clear: false });
+        return pauseRunner();
+      }
+      if (command.mode === LIVE_MODE) {
+        if (onboardingRunner.isActive()) throw new Error('The first-user runner is already active.');
+        if (runtime.status === 'live' || runtime.status === 'starting' || runtime.browser) await pauseRunner();
+        if (onboardingRunner.hasSnapshot()) await onboardingRunner.stop({ clear: true });
+        return liveRunner.start();
+      }
+      return startRunner();
     });
   commandQueue = operation.catch(() => {});
   return operation;
@@ -715,6 +803,8 @@ function enqueueOnboarding(command) {
       if (runtime.status === 'live' || runtime.status === 'starting' || runtime.browser) {
         throw new Error('The five-actor runner must be off before first-user onboarding.');
       }
+      if (liveRunner.isActive()) throw new Error('The live cohort runner must be off before first-user onboarding.');
+      if (liveRunner.hasSnapshot()) await liveRunner.stop({ clear: true });
       return onboardingRunner.start(command);
     });
   commandQueue = operation.catch(() => {});
@@ -776,7 +866,7 @@ const server = createServer(async (request, response) => {
   const framesMatch = requestURL.pathname.match(/^\/frames\/([a-zA-Z0-9._:-]+)$/);
   if (request.method === 'GET' && framesMatch) {
     const actorId = framesMatch[1];
-    const actor = onboardingRunner.getActor(actorId) ?? actors.get(actorId);
+    const actor = onboardingRunner.getActor(actorId) ?? liveRunner.getActor(actorId) ?? actors.get(actorId);
     if (!actor) { sendJSON(response, 404, { error: { message: 'Synthetic actor not found.' } }); return; }
     markSelectedActor(actorId);
     sendJSON(response, 200, {
@@ -790,7 +880,7 @@ const server = createServer(async (request, response) => {
   const frameMatch = requestURL.pathname.match(/^\/frame\/([a-zA-Z0-9._:-]+)$/);
   if (request.method === 'GET' && frameMatch) {
     const actorId = frameMatch[1];
-    const actor = onboardingRunner.getActor(actorId) ?? actors.get(actorId);
+    const actor = onboardingRunner.getActor(actorId) ?? liveRunner.getActor(actorId) ?? actors.get(actorId);
     if (!actor) { sendJSON(response, 404, { error: { message: 'Synthetic actor not found.' } }); return; }
     markSelectedActor(actorId);
     const requestedSequence = requestURL.searchParams.has('sequence')
@@ -816,14 +906,16 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && requestURL.pathname === '/command') {
     try {
       const body = await readSmallJSON(request);
-      if (!body || typeof body !== 'object' || typeof body.enabled !== 'boolean'
-        || Object.keys(body).some(key => key !== 'enabled')) {
-        sendJSON(response, 400, { error: { message: 'Runner command requires an explicit enabled state.' } });
+      let command;
+      try {
+        command = validateRunnerCommand(body);
+      } catch (error) {
+        sendJSON(response, 400, { error: { message: error instanceof Error ? error.message : 'Runner command is invalid.' } });
         return;
       }
-      sendJSON(response, 200, await enqueueCommand(body.enabled));
-    } catch {
-      sendJSON(response, 400, { error: { message: 'Runner command could not be applied.' } });
+      sendJSON(response, 200, await enqueueCommand(command));
+    } catch (error) {
+      sendJSON(response, 400, { error: { message: error instanceof Error ? error.message.slice(0, 240) : 'Runner command could not be applied.' } });
     }
     return;
   }
@@ -850,7 +942,8 @@ server.on('error', error => {
 
 async function shutdown(signal) {
   await onboardingRunner.stop({ clear: false }).catch(() => {});
-  await enqueueCommand(false).catch(() => {});
+  await liveRunner.stop({ clear: false }).catch(() => {});
+  await enqueueCommand({ enabled: false }).catch(() => {});
   server.close(() => process.exit(signal === 'SIGINT' ? 130 : 143));
 }
 process.once('SIGINT', () => { void shutdown('SIGINT'); });

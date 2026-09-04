@@ -710,6 +710,7 @@ function isExactSharedFirestoreUpdate(write, state, identity, runId) {
   if (state.postId && path === `posts/${state.postId}`) {
     const allowedFields = new Set([
       'userID', 'username', 'mediaURL', 'mediaType', 'viewCount', 'radius',
+      'seedRadiusMeters', 'organicRadiusMeters',
       'createdAtMillis', 'syntheticBeta', 'syntheticActorId', 'syntheticJourney',
       'syntheticSource', 'syntheticRunId', 'mediaStoragePath', 'audience',
       'locationVisibility', 'latitude', 'longitude', 'latitudeCell', 'longitudeCell',
@@ -1132,3 +1133,31 @@ export function isOnboardingWebSocketURL(value) {
     return false;
   }
 }
+
+/**
+ * The exact-match predicates the shared production policy is built from,
+ * shared with the five-actor live cohort policy so both journeys prove the
+ * same project, bucket, document and upload-session facts the same way.
+ */
+export const sharedPolicyPrimitives = Object.freeze({
+  WRITE_METHODS,
+  POST_ID,
+  exactJSON,
+  isLocalAppTarget,
+  isProductionFirebaseTarget,
+  exactSharedAuthTarget,
+  exactSharedFirestoreTarget,
+  isSharedFirestoreRead,
+  isSharedFirestoreWriteChannelHandshake,
+  firestoreWriteOperations,
+  firestoreField,
+  near,
+  exactFieldSet,
+  exactUpdateMask,
+  exactCreatedAtTransform,
+  isSharedStorageTarget,
+  sharedStorageObjectName,
+  isBoundSharedStorageURL,
+  isBoundSharedUploadSession,
+  hasBoundFirebaseAuthorization,
+});

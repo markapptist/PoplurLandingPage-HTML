@@ -28,9 +28,17 @@ export type RadiusLabPin = {
   caption: string;
 };
 
+/** One pop of the conquer cohort: five synthetic posters, one per pin colour,
+ *  each holding two overlapping claims around the drop centre. */
+export type RadiusLabCohortPost = RadiusLabPin & {
+  ownerId: string;
+  channelId: string;
+};
+
 export type RadiusLabState = {
   ok: true;
   pin: RadiusLabPin | null;
+  cohort: RadiusLabCohortPost[];
   viewer: { latitude: number; longitude: number };
   maxRadiusMeters: number;
   at: number;
@@ -40,7 +48,9 @@ export type RadiusLabLink = 'connecting' | 'live' | 'offline';
 
 /** reach.ts HOME — the browser preview's deterministic viewer fix. */
 export const RADIUS_LAB_VIEWER = Object.freeze({ latitude: 43.6487, longitude: -79.3811 });
-export const RADIUS_LAB_MAX_METERS = 20_037_500;
+/** The top of the radius scale: the Earth's radius, 6,371 km (worldRadius.ts
+ *  in the clay map). A post there has taken over the world. */
+export const RADIUS_LAB_MAX_METERS = 6_371_000;
 
 const number = (value: unknown, fallback = 0): number => {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -80,6 +90,14 @@ export function normalizeRadiusLabState(value: unknown): RadiusLabState {
   return {
     ok: true,
     pin: normalizePin(row.pin),
+    cohort: Array.isArray(row.cohort)
+      ? row.cohort.flatMap(entry => {
+        const pin = normalizePin(entry);
+        if (!pin) return [];
+        const raw = entry as Record<string, unknown>;
+        return [{ ...pin, ownerId: text(raw.ownerId, 128), channelId: text(raw.channelId, 40) || 'live' }];
+      })
+      : [],
     viewer: {
       latitude: number(viewer.latitude, RADIUS_LAB_VIEWER.latitude),
       longitude: number(viewer.longitude, RADIUS_LAB_VIEWER.longitude),
@@ -136,6 +154,21 @@ export function setRadiusLabRadius(radiusMeters: number): Promise<RadiusLabState
 
 export function removeRadiusLabPin(): Promise<RadiusLabState> {
   return mutate('/api/radius-lab/remove', {});
+}
+
+/** Stand the conquer cohort around a centre: five posters, one per pin
+ *  colour, two overlapping pops each, media lent by the official launch
+ *  content and nothing else. */
+export function dropRadiusLabCohort(input: { latitude: number; longitude: number; radiusScale?: number }): Promise<RadiusLabState> {
+  return mutate('/api/radius-lab/cohort/drop', {
+    latitude: input.latitude,
+    longitude: input.longitude,
+    ...(input.radiusScale ? { radiusScale: input.radiusScale } : {}),
+  });
+}
+
+export function removeRadiusLabCohort(): Promise<RadiusLabState> {
+  return mutate('/api/radius-lab/cohort/remove', {});
 }
 
 /**

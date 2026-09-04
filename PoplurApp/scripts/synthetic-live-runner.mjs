@@ -962,16 +962,23 @@ export function createSyntheticLiveRunner({
     // The app answers with a brief flash — sent, refused, or "unavailable" —
     // and it expires long before a 30 s wait ends. Catch it as it appears, or
     // the only evidence of what the app decided is gone by the time we look.
+    // "Sending…" is the composer waiting on the shell, not an answer. Keep
+    // watching for the terminal word, and record that the dispatch happened
+    // even when nothing follows it — silence there means the shell never
+    // answered, which is a different fault from a refusal.
+    let dispatched = false;
     let flashed = '';
-    for (let tick = 0; tick < 24 && !flashed; tick += 1) {
-      flashed = await profile.evaluate(() => {
-        const match = document.body.innerText.replace(/\s+/g, ' ')
-          .match(/(Sent to [^.]{0,60}|Could not [^.]{0,80}|Messaging [^.]{0,80}|Sending…)/);
-        return match ? match[0] : '';
-      }).catch(() => '');
+    for (let tick = 0; tick < 60 && !flashed; tick += 1) {
+      const seen = await profile.evaluate(() => {
+        const text = document.body.innerText.replace(/\s+/g, ' ');
+        const terminal = text.match(/(Sent to [^.]{0,60}|Could not [^.]{0,80}|Messaging [^.]{0,80})/);
+        return { terminal: terminal ? terminal[0] : '', sending: text.includes('Sending…') };
+      }).catch(() => ({ terminal: '', sending: false }));
+      if (seen.sending) dispatched = true;
+      flashed = seen.terminal;
       if (!flashed) await sleep(250);
     }
-    if (flashed) log(`${actor.actorId} the app answered: ${flashed.slice(0, 100)}`);
+    log(`${actor.actorId} the app answered: ${flashed || (dispatched ? 'Sending… then nothing' : '(nothing)')}`);
 
     // Wait on the note OR on the write the guard actually observed: the toast
     // is brief, and missing it is not evidence the message failed.

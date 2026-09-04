@@ -848,30 +848,35 @@ export function createSyntheticLiveRunner({
       return;
     }
     await activateControl(clay.getByRole('button', { name: 'Open VIEW PROFILE subscreen' }), 'View profile');
-    await waitForScreen(clay, 'profile', 20_000);
+    // Opening the poster's profile swaps the mounted tab and can rebuild the
+    // frame. A handle taken back on the Feed then answers "nothing on screen"
+    // instead of failing, which reads exactly like a missing control — so take
+    // a fresh one and use it for the whole profile half of this journey.
+    const profile = await clayFrame(actor);
+    await waitForScreen(profile, 'profile', 20_000);
     actor.currentScreen = 'profile';
     actor.action = 'open-poster-profile';
 
     // VIEW PROFILE lands on the poster's profile with a subscreen pushed over
     // it; the Message control belongs to the profile itself, so step back out
     // of any page still covering it before giving up.
-    const messageButton = clay.getByRole('button', { name: /^Message / }).first();
+    const messageButton = profile.getByRole('button', { name: /^Message / }).first();
     let messageReady = false;
     for (let attempt = 0; attempt < 3 && !messageReady; attempt += 1) {
-      await answerPermissionCards(clay);
+      await answerPermissionCards(profile);
       messageReady = await messageButton.isVisible({ timeout: 8_000 }).catch(() => false);
       if (messageReady) break;
       await actor.page.keyboard.press('Escape');
       await sleep(1_200);
     }
     if (!messageReady) {
-      const names = await clay.getByRole('button').all()
+      const names = await profile.getByRole('button').all()
         .then(list => Promise.all(list.slice(0, 25).map(item => item.getAttribute('aria-label').catch(() => null))))
         .then(list => list.filter(Boolean).join(' / '))
         .catch(() => '(unreadable)');
       actor.action = 'dm-blocked-no-message-control';
       actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-      log(`${actor.actorId} reached ${owner}'s profile but found no Message control; screen=${await visibleClayScreen(clay)} buttons=${names}`);
+      log(`${actor.actorId} reached ${owner}'s profile but found no Message control; screen=${await visibleClayScreen(profile)} buttons=${names}`);
       return;
     }
     const messageLabel = (await messageButton.getAttribute('aria-label').catch(() => '')) || '';
@@ -883,28 +888,28 @@ export function createSyntheticLiveRunner({
     // an unscoped role query can match more than one node; take the first and
     // treat the composer input as the real readiness signal. Never re-click
     // blindly — a second click lands on the dismiss scrim and closes it.
-    const dialog = clay.getByRole('dialog', { name: /^Message / }).first();
-    const messageInput = clay.getByPlaceholder('Say something…').first();
+    const dialog = profile.getByRole('dialog', { name: /^Message / }).first();
+    const messageInput = profile.getByPlaceholder('Say something…').first();
     let dialogOpen = await messageInput.isVisible({ timeout: 10_000 })
       .catch(async error => {
         log(`${actor.actorId} dm dialog probe error: ${String(error?.message || error).slice(0, 120)}`);
         return dialog.isVisible({ timeout: 4_000 }).catch(() => false);
       });
     if (!dialogOpen) {
-      await answerPermissionCards(clay);
+      await answerPermissionCards(profile);
       dialogOpen = await messageInput.isVisible({ timeout: 6_000 }).catch(() => false);
     }
     if (!dialogOpen) {
-      const dialogs = await clay.locator('[role="dialog"]').all()
+      const dialogs = await profile.locator('[role="dialog"]').all()
         .then(list => Promise.all(list.map(async item => `${await item.getAttribute('aria-label').catch(() => '?')}${await item.isVisible().catch(() => false) ? '' : ' (hidden)'}`)))
         .then(list => list.join(' / '))
         .catch(() => '(unreadable)');
       actor.action = 'dm-blocked-no-dialog';
       actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-      log(`${actor.actorId} clicked "${messageLabel}" but no message dialog opened; screen=${await visibleClayScreen(clay)} dialogs=${dialogs}`);
+      log(`${actor.actorId} clicked "${messageLabel}" but no message dialog opened; screen=${await visibleClayScreen(profile)} dialogs=${dialogs}`);
       log(`${actor.actorId} dm console=${actor.consoleTail.slice(-4).join(' ¶ ') || '(none)'}`);
       await queueCapture(actor, 'dm-no-dialog', 'mail', { validate: false });
-      const inside = await clay.evaluate(() => ({
+      const inside = await profile.evaluate(() => ({
         scrims: document.querySelectorAll('[class*="scrim"]').length,
         dialogRoles: [...document.querySelectorAll('[role="dialog"]')].map(node => node.getAttribute('aria-label')).join(','),
         saysSomething: document.body.innerText.includes('Say something'),
@@ -927,16 +932,26 @@ export function createSyntheticLiveRunner({
     // away from the dialog's dismiss scrim.
     await messageInput.press('Enter');
     // The app flashes its own acknowledgement once the shell reports the write.
-    await clay.getByText(/^Sent to /).waitFor({ state: 'visible', timeout: 30_000 });
+    // Wait on the note OR on the write the guard actually observed: the toast
+    // is brief, and missing it is not evidence the message failed.
+    const acknowledged = await profile.getByText(/^Sent to /)
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .then(() => true)
+      .catch(() => false);
     if (!actor.policy.state.dmSentTo.has(owner)) {
-      throw new Error('The app reported a sent DM but no bound thread write was observed.');
+      const failure = await profile.getByText(/^Could not send to |^Messaging /).first()
+        .textContent({ timeout: 2_000 }).catch(() => '');
+      throw new Error(failure
+        ? `The app refused the message: ${failure.trim().slice(0, 90)}`
+        : 'The app reported no sent DM and no bound thread write was observed.');
     }
+    if (!acknowledged) log(`${actor.actorId} sent a DM without catching the app's note`);
     actor.dmsSent = actor.policy.state.dmsSent;
     actor.lastDMTo = owner;
     actor.lastDMPostId = postId;
     actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
     log(`${actor.actorId} messaged ${owner} about ${postId || 'a post'}`);
-    await moveCubeTo(clay, 'feed');
+    await moveCubeTo(await clayFrame(actor), 'feed');
     actor.currentScreen = 'feed';
   };
 

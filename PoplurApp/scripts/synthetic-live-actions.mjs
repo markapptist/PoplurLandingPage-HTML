@@ -113,13 +113,52 @@ export function postSpotsForActor(actorId) {
 }
 
 /**
+ * How often a pop lands on ground another actor is standing on, rather than
+ * somewhere else in the world.
+ *
+ * A post reaches whoever is inside its radius, so a cohort scattered across
+ * twenty-five cities never intercepts itself: every feed stays empty, nobody
+ * can view or like anyone, and nothing earns. Sending a share of pops to
+ * another actor's own city is what lets the cohort behave like people in the
+ * same place — which is the only way views, likes and messages happen at all.
+ */
+export const NEIGHBOUR_POST_SHARE = 0.5;
+
+/**
+ * The home ground of every OTHER actor. Their jitter is about a kilometre, well
+ * inside a new post's five kilometre seed, so a pop dropped here is genuinely
+ * in reach of whoever lives there.
+ */
+export function neighbourSpotsForActor(actorId) {
+  const home = ACTOR_LOCATIONS[actorId];
+  if (!home) throw new Error(`Unknown synthetic actor: ${cleanText(actorId)}`);
+  // Three actors share Toronto, so "another actor's home" is not the same as
+  // "not my home". A pop still never lands on the poster's own ground.
+  return ACTOR_IDS
+    .filter(id => id !== actorId)
+    .map(id => ACTOR_LOCATIONS[id])
+    .filter(spot => spot.place !== home.place
+      && (Math.abs(spot.latitude - home.latitude) > HOME_EXCLUSION_DEG
+        || Math.abs(spot.longitude - home.longitude) > HOME_EXCLUSION_DEG));
+}
+
+/**
  * A fresh spot for one post. `random` is injectable so a test can pin it.
- * Never the actor's own home city, and never the same spot twice in a row for
- * one actor, so even a two-post run shows movement.
+ * Half the time this is another actor's ground, so the cohort can actually
+ * reach each other; otherwise it is somewhere else in the world, never the
+ * actor's own home city, and never the same spot twice in a row.
  */
 export function randomPostLocation(actorId, previous = null, random = Math.random) {
-  const spots = postSpotsForActor(actorId);
-  let spot = spots[Math.floor(random() * spots.length)];
+  const neighbours = neighbourSpotsForActor(actorId);
+  // Alternate rather than roll: a pop that just travelled the world comes back
+  // to ground somebody lives on, and the next one leaves again. Deciding from
+  // the previous spot costs no draw, so a caller pinning `random` sees exactly
+  // the sequence it always did.
+  const previousWasNeighbour = Boolean(previous)
+    && neighbours.some(spot => spot.place === previous.place);
+  const towardNeighbour = neighbours.length > 0 && Boolean(previous) && !previousWasNeighbour;
+  const spots = towardNeighbour ? neighbours : postSpotsForActor(actorId);
+  let spot = spots[Math.min(spots.length - 1, Math.max(0, Math.floor(random() * spots.length)))];
   if (previous && spots.length > 1 && spot.place === previous.place) {
     spot = spots[(spots.indexOf(spot) + 1) % spots.length];
   }

@@ -927,11 +927,52 @@ export function createSyntheticLiveRunner({
     actor.action = 'send-dm';
     await queueCapture(actor, 'send-dm', 'mail', { validate: false });
     const text = LIVE_DM_MESSAGES[ACTOR_IDS.indexOf(actor.actorId) % LIVE_DM_MESSAGES.length];
-    await messageInput.fill(text);
-    // Enter in the composer is the app's own submit path and keeps the pointer
-    // away from the dialog's dismiss scrim.
-    await messageInput.press('Enter');
-    // The app flashes its own acknowledgement once the shell reports the write.
+    // Type it rather than setting the value: the composer only sends when its
+    // own state holds the text, and the send is silent when that state is
+    // empty — the dialog just sits there with the words visibly in the field.
+    await messageInput.click({ timeout: 10_000 }).catch(() => {});
+    await messageInput.fill('');
+    await messageInput.pressSequentially(text, { delay: 15 });
+    await sleep(400);
+    // The composer is a controlled field: it sends what its own state holds,
+    // not what the DOM shows, and typed keystrokes were leaving that state
+    // empty — so the send returned silently with the words still on screen.
+    // Hand the text to the field's own change handler, then confirm it took.
+    const stateHolds = await messageInput.evaluate((element, value) => {
+      const key = Object.keys(element).find(name => name.startsWith('__reactProps$'));
+      const props = key ? element[key] : null;
+      if (typeof props?.onChange === 'function') {
+        props.onChange({ target: { value }, currentTarget: { value } });
+      }
+      const after = Object.keys(element).find(name => name.startsWith('__reactProps$'));
+      return after ? String(element[after]?.value ?? '') : '(no react props)';
+    }, text).catch(error => `(unreadable: ${String(error?.message || error).slice(0, 50)})`);
+    await sleep(300);
+    if (!String(stateHolds).startsWith(text.slice(0, 12))) {
+      log(`${actor.actorId} composer state after typing: "${String(stateHolds).slice(0, 40)}"`);
+    }
+    // Press the app's own Send control, and keep Enter as the fallback the
+    // composer also offers.
+    const sendButton = profile.getByRole('button', { name: 'Send message' }).first();
+    if (await sendButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await activateControl(sendButton, 'Send message');
+    } else {
+      await messageInput.press('Enter');
+    }
+    // The app answers with a brief flash — sent, refused, or "unavailable" —
+    // and it expires long before a 30 s wait ends. Catch it as it appears, or
+    // the only evidence of what the app decided is gone by the time we look.
+    let flashed = '';
+    for (let tick = 0; tick < 24 && !flashed; tick += 1) {
+      flashed = await profile.evaluate(() => {
+        const match = document.body.innerText.replace(/\s+/g, ' ')
+          .match(/(Sent to [^.]{0,60}|Could not [^.]{0,80}|Messaging [^.]{0,80}|Sending…)/);
+        return match ? match[0] : '';
+      }).catch(() => '');
+      if (!flashed) await sleep(250);
+    }
+    if (flashed) log(`${actor.actorId} the app answered: ${flashed.slice(0, 100)}`);
+
     // Wait on the note OR on the write the guard actually observed: the toast
     // is brief, and missing it is not evidence the message failed.
     const acknowledged = await profile.getByText(/^Sent to /)
@@ -939,11 +980,24 @@ export function createSyntheticLiveRunner({
       .then(() => true)
       .catch(() => false);
     if (!actor.policy.state.dmSentTo.has(owner)) {
-      const failure = await profile.getByText(/^Could not send to |^Messaging /).first()
-        .textContent({ timeout: 2_000 }).catch(() => '');
-      throw new Error(failure
-        ? `The app refused the message: ${failure.trim().slice(0, 90)}`
-        : 'The app reported no sent DM and no bound thread write was observed.');
+      // Read the app's own words rather than guessing: it says exactly why it
+      // would not send — an unloaded recipient, no bridge, or a failed write.
+      const said = await profile.evaluate(() => {
+        const text = document.body.innerText.replace(/\s+/g, ' ');
+        const note = text.match(/(Sent to [^.]{0,60}|Could not [^.]{0,80}|Messaging [^.]{0,80}|Sending…)/);
+        const input = document.querySelector('input[placeholder="Say something…"]');
+        return {
+          note: note ? note[0] : '(no note)',
+          typed: input instanceof HTMLInputElement ? input.value.slice(0, 40) : '(input gone)',
+          disabled: input instanceof HTMLInputElement ? input.disabled : null,
+          dialogStillOpen: Boolean(input),
+        };
+      }).catch(error => ({ note: `(unreadable: ${String(error?.message || error).slice(0, 60)})` }));
+      log(`${actor.actorId} dm send outcome=${JSON.stringify(said)}`);
+      await queueCapture(actor, 'dm-send-failed', 'mail', { validate: false });
+      throw new Error(/Could not|Messaging /.test(said.note)
+        ? `The app refused the message: ${said.note.slice(0, 90)}`
+        : `No thread write was observed; the app said ${said.note}`);
     }
     if (!acknowledged) log(`${actor.actorId} sent a DM without catching the app's note`);
     actor.dmsSent = actor.policy.state.dmsSent;

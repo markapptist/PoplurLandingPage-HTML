@@ -434,3 +434,44 @@ test('a created post may carry a seed but never earned radius', () => {
   // The seed can never exceed the reach the post actually claims.
   assert.equal(policy.inspect(write({ radius: int(1000), seedRadiusMeters: int(5000), organicRadiusMeters: int(0) })).allow, false, 'seed larger than the post itself');
 });
+
+import { NEIGHBOUR_POST_SHARE, neighbourSpotsForActor, ACTOR_LOCATIONS as HOMES } from './synthetic-live-actions.mjs';
+
+const isNeighbourOf = (actorId, spot) => neighbourSpotsForActor(actorId)
+  .some(candidate => candidate.place === spot.place);
+
+test('a pop alternates between the world and ground another actor stands on', () => {
+  // A pop nobody is near reaches nobody, so the cohort has to come back to
+  // each other or no view, like or message can ever happen.
+  const away = randomPostLocation('sim-food-001', null, () => 0);
+  assert.equal(isNeighbourOf('sim-food-001', away), false, 'the first pop keeps the world spread');
+
+  const home = randomPostLocation('sim-food-001', away, () => 0);
+  assert.equal(isNeighbourOf('sim-food-001', home), true, 'the next lands where another actor is');
+
+  const againAway = randomPostLocation('sim-food-001', home, () => 0);
+  assert.equal(isNeighbourOf('sim-food-001', againAway), false, 'and then it travels again');
+
+  for (const spot of [away, home, againAway]) {
+    assert.notEqual(spot.place, HOMES['sim-food-001'].place, 'never the actor’s own city');
+  }
+  assert.ok(NEIGHBOUR_POST_SHARE > 0 && NEIGHBOUR_POST_SHARE <= 1);
+});
+
+test('every actor can reach the ground it returns to', () => {
+  const km = (a, b) => {
+    const north = (a.latitude - b.latitude) * 111.32;
+    const east = (a.longitude - b.longitude) * 111.32 * Math.cos(a.latitude * Math.PI / 180);
+    return Math.sqrt(north * north + east * east);
+  };
+  for (const actorId of ACTOR_IDS) {
+    // Somewhere none of the cohort stands, so the next pop must come back.
+    const away = { place: 'Tokyo' };
+    const spot = randomPostLocation(actorId, away, () => 0);
+    const host = neighbourSpotsForActor(actorId).find(candidate => candidate.place === spot.place);
+    assert.ok(host, `${actorId} never returns to another actor's ground`);
+    // A new post carries a 5 km seed, so the jitter must stay well inside it
+    // or the pop lands out of reach of the very actor it was aimed at.
+    assert.ok(km(spot, host) < 3, `${actorId} landed ${km(spot, host).toFixed(1)} km from ${host.place}`);
+  }
+});

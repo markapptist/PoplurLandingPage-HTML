@@ -40,6 +40,37 @@ export const SYNTHETIC_ACTORS = Object.freeze([
     persona: 'News explorer',
     place: 'New York',
   }),
+  // Business testers: same runner, same plans, but each is a LISTED business
+  // (users/{uid}.accountType "business" + a public businesses/{uid}), which is
+  // how the app tells their byline from a person's. `kind` is what the live
+  // write guard reads when the shell writes a first-run profile.
+  Object.freeze({
+    actorId: 'sim-biz-food-006',
+    actor: 'RUNNER · @nightmarket',
+    handle: '@nightmarket',
+    persona: 'Restaurant',
+    place: 'Toronto',
+    kind: 'business',
+    businessName: 'Night Market Eats',
+  }),
+  Object.freeze({
+    actorId: 'sim-biz-shop-007',
+    actor: 'RUNNER · @hauls.to',
+    handle: '@hauls.to',
+    persona: 'Retail',
+    place: 'Toronto',
+    kind: 'business',
+    businessName: 'Hauls Outlet',
+  }),
+  Object.freeze({
+    actorId: 'sim-biz-fashion-008',
+    actor: 'RUNNER · @fitcheck.nyc',
+    handle: '@fitcheck.nyc',
+    persona: 'Boutique',
+    place: 'New York',
+    kind: 'business',
+    businessName: 'Fit Check Daily',
+  }),
 ]);
 
 export const ACTOR_IDS = Object.freeze(SYNTHETIC_ACTORS.map(actor => actor.actorId));
@@ -91,6 +122,30 @@ const SAFE_PLANS = Object.freeze({
     Object.freeze({ screen: 'profile', action: 'open-profile', method: 'left' }),
     Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
     Object.freeze({ screen: 'profile', action: 'open-profile', method: 'right' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+  ]),
+  // A business checks its own storefront (profile) and the ground it trades
+  // on (map) more than it browses.
+  'sim-biz-food-006': Object.freeze([
+    Object.freeze({ screen: 'feed', action: 'screen-view', method: 'current' }),
+    Object.freeze({ screen: 'profile', action: 'open-profile', method: 'right' }),
+    Object.freeze({ screen: 'map', action: 'open-map', method: 'right' }),
+    Object.freeze({ screen: 'profile', action: 'open-profile', method: 'left' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+  ]),
+  'sim-biz-shop-007': Object.freeze([
+    Object.freeze({ screen: 'feed', action: 'screen-view', method: 'current' }),
+    Object.freeze({ screen: 'map', action: 'open-map', method: 'right' }),
+    Object.freeze({ screen: 'profile', action: 'open-profile', method: 'left' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+    Object.freeze({ screen: 'hold-menu', action: 'open-hold-menu', method: 'hold' }),
+    Object.freeze({ screen: 'feed', action: 'back', method: 'escape' }),
+  ]),
+  'sim-biz-fashion-008': Object.freeze([
+    Object.freeze({ screen: 'feed', action: 'screen-view', method: 'current' }),
+    Object.freeze({ screen: 'profile', action: 'open-profile', method: 'right' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+    Object.freeze({ screen: 'map', action: 'open-map', method: 'right' }),
     Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
   ]),
 });

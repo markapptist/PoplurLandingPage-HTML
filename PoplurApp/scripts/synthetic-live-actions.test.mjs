@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { actorForId } from './synthetic-runner-actions.mjs';
 import {
   ACTOR_ACCOUNTS,
   LIVE_ACTIVITIES,
@@ -17,6 +18,7 @@ import {
   validateRunnerCommand,
   randomPostLocation,
   postSpotsForActor, WORLD_POST_SPOTS,
+  expectedAccountTypeForActor,
 } from './synthetic-live-actions.mjs';
 import { ACTOR_IDS, SAFE_ACTIONS, SAFE_EVENT_SCREENS, isAllowedEvent, eventTypeForAction } from './synthetic-runner-actions.mjs';
 
@@ -37,7 +39,7 @@ test('every actor has a pinned production account and a live plan', () => {
   for (const actorId of ACTOR_IDS) {
     const identity = accountForActor(actorId);
     assert.equal(identity.uid, actorId);
-    assert.match(identity.email, /^beta-sim-[a-z]+-\d{3}@poplur\.test$/);
+    assert.match(identity.email, /^beta-sim-[a-z]+(?:-[a-z]+)?-\d{3}@poplur\.test$/);
     const plan = livePlanForActor(actorId);
     assert.ok(plan.length >= 5);
     assert.equal(plan[0].method, 'current');
@@ -316,15 +318,26 @@ test('live policy admits one short DM per bound poster and blocks everything els
   assert.throws(() => policy.bindDMRecipient('one-recipient-too-many'), /DM limit/);
 });
 
-test('every live plan messages a poster right after liking one', () => {
+test('every PERSON messages a poster right after liking one; a BUSINESS never messages anyone', () => {
   for (const actorId of ACTOR_IDS) {
     const plan = livePlanForActor(actorId);
     const engage = plan.findIndex(step => step.method === 'engage');
-    assert.ok(engage >= 0);
+    assert.ok(engage >= 0, `${actorId} never engages`);
+    if (actorForId(actorId)?.kind === 'business') {
+      // A shop writing to strangers is what the block list exists for.
+      assert.ok(!plan.some(step => step.method === 'dm'), `${actorId} is a business and must not DM`);
+      continue;
+    }
     assert.equal(plan[engage + 1]?.method, 'dm', `${actorId} DM follows the like`);
     assert.deepEqual(cloudEventForLiveStep(plan[engage + 1]), { screen: 'feed', action: 'screen-view' });
   }
   assert.ok(LIVE_ACTIVITIES.some(activity => activity.id === 'send-dm' && activity.reported === 'production'));
+});
+
+test('a first-run profile may claim "business" only for a business tester', () => {
+  assert.equal(expectedAccountTypeForActor('sim-food-001'), 'personal');
+  assert.equal(expectedAccountTypeForActor('sim-biz-food-006'), 'business');
+  assert.equal(expectedAccountTypeForActor('sim-unknown-009'), 'personal');
 });
 
 

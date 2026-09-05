@@ -25,6 +25,9 @@ export const ACTOR_ACCOUNTS = Object.freeze({
   'sim-music-003': 'beta-sim-music-003@poplur.test',
   'sim-tech-004': 'beta-sim-tech-004@poplur.test',
   'sim-news-005': 'beta-sim-news-005@poplur.test',
+  'sim-biz-food-006': 'beta-sim-biz-food-006@poplur.test',
+  'sim-biz-shop-007': 'beta-sim-biz-shop-007@poplur.test',
+  'sim-biz-fashion-008': 'beta-sim-biz-fashion-008@poplur.test',
 });
 
 /**
@@ -38,6 +41,12 @@ export const ACTOR_LOCATIONS = Object.freeze({
   'sim-music-003': Object.freeze({ place: 'Toronto', latitude: 43.6471, longitude: -79.3951 }),
   'sim-tech-004': Object.freeze({ place: 'World beta region', latitude: 43.6611, longitude: -79.3802 }),
   'sim-news-005': Object.freeze({ place: 'New York', latitude: 40.7128, longitude: -74.006 }),
+  // Business testers stand where they trade (Kensington Market, the Eaton
+  // Centre, SoHo) — the same seats functions/src/syntheticBrowserRunner.ts
+  // gives their cloud-path posts.
+  'sim-biz-food-006': Object.freeze({ place: 'Toronto', latitude: 43.6545, longitude: -79.4005 }),
+  'sim-biz-shop-007': Object.freeze({ place: 'Toronto', latitude: 43.6544, longitude: -79.3807 }),
+  'sim-biz-fashion-008': Object.freeze({ place: 'New York', latitude: 40.7233, longitude: -74.003 }),
 });
 
 /**
@@ -295,6 +304,34 @@ const LIVE_PLANS = Object.freeze({
     Object.freeze({ screen: 'feed', action: 'like-post', method: 'engage' }),
     Object.freeze({ screen: 'feed', action: 'send-dm', method: 'dm' }),
   ]),
+  // Businesses post and engage but never DM: a shop writing to strangers is
+  // the behaviour the block list exists for, not a journey to rehearse.
+  'sim-biz-food-006': Object.freeze([
+    Object.freeze({ screen: 'feed', action: 'screen-view', method: 'current' }),
+    Object.freeze({ screen: 'map', action: 'publish-post', method: 'post' }),
+    Object.freeze({ screen: 'profile', action: 'open-profile', method: 'left' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+    Object.freeze({ screen: 'feed', action: 'like-post', method: 'engage' }),
+    Object.freeze({ screen: 'map', action: 'open-map', method: 'right' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+  ]),
+  'sim-biz-shop-007': Object.freeze([
+    Object.freeze({ screen: 'feed', action: 'screen-view', method: 'current' }),
+    Object.freeze({ screen: 'map', action: 'open-map', method: 'right' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+    Object.freeze({ screen: 'feed', action: 'like-post', method: 'engage' }),
+    Object.freeze({ screen: 'map', action: 'publish-post', method: 'post' }),
+    Object.freeze({ screen: 'profile', action: 'open-profile', method: 'left' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+  ]),
+  'sim-biz-fashion-008': Object.freeze([
+    Object.freeze({ screen: 'feed', action: 'screen-view', method: 'current' }),
+    Object.freeze({ screen: 'profile', action: 'open-profile', method: 'right' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+    Object.freeze({ screen: 'map', action: 'publish-post', method: 'post' }),
+    Object.freeze({ screen: 'feed', action: 'open-feed', method: 'left' }),
+    Object.freeze({ screen: 'feed', action: 'like-post', method: 'engage' }),
+  ]),
 });
 
 export function livePlanForActor(actorId) {
@@ -319,6 +356,16 @@ export function cloudEventForLiveStep(step) {
   if (step.method === 'post') return { screen: 'map', action: 'screen-view' };
   if (step.method === 'engage' || step.method === 'dm') return { screen: 'feed', action: 'screen-view' };
   return { screen: step.screen, action: step.action };
+}
+
+/**
+ * The account type a first-run profile write may claim: "business" only for
+ * a business tester, "personal" for everyone else. Provisioning writes the
+ * business profile itself, so the shell should never need to — but if it
+ * does, it must not demote a business to a person or promote a person.
+ */
+export function expectedAccountTypeForActor(actorId) {
+  return actorForId(actorId)?.kind === 'business' ? 'business' : 'personal';
 }
 
 export function accountForActor(actorId) {
@@ -535,7 +582,8 @@ function isExactLiveWrite(write, state, identity, runId) {
       && !('updateTransforms' in write)
       && firestoreField(fields, 'uid') === state.uid
       && firestoreField(fields, 'email') === identity.email
-      && (firestoreField(fields, 'accountType') == null || firestoreField(fields, 'accountType') === 'personal');
+      && (firestoreField(fields, 'accountType') == null
+        || firestoreField(fields, 'accountType') === expectedAccountTypeForActor(identity.actorId));
     if (ok) state.profileWrites += 1;
     return ok;
   }

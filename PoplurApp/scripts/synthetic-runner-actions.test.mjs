@@ -23,16 +23,25 @@ import {
   validateCredentialDocument,
 } from './synthetic-runner-actions.mjs';
 
-test('cohort contains exactly the five real-browser actors', () => {
-  assert.equal(SYNTHETIC_ACTORS.length, 5);
-  assert.equal(new Set(ACTOR_IDS).size, 5);
+test('cohort contains exactly the eight real-browser actors: five people, three businesses', () => {
+  assert.equal(SYNTHETIC_ACTORS.length, 8);
+  assert.equal(new Set(ACTOR_IDS).size, 8);
   assert.deepEqual(ACTOR_IDS, [
     'sim-food-001',
     'sim-sports-002',
     'sim-music-003',
     'sim-tech-004',
     'sim-news-005',
+    'sim-biz-food-006',
+    'sim-biz-shop-007',
+    'sim-biz-fashion-008',
   ]);
+  const businesses = SYNTHETIC_ACTORS.filter(actor => actor.kind === 'business');
+  assert.deepEqual(businesses.map(actor => actor.actorId), ['sim-biz-food-006', 'sim-biz-shop-007', 'sim-biz-fashion-008']);
+  for (const business of businesses) assert.ok(business.businessName, `${business.actorId} has no trading name`);
+  for (const person of SYNTHETIC_ACTORS.filter(actor => actor.kind !== 'business')) {
+    assert.equal(person.businessName, undefined);
+  }
 });
 
 test('every planned action is read-only and remains on a validated top-level screen', () => {
@@ -73,8 +82,8 @@ test('credentials require one distinct account for every actor', () => {
     password: `secret-${index}`,
     uid: actorId,
   }));
-  assert.equal(validateCredentialDocument({ actors }).length, 5);
-  assert.throws(() => validateCredentialDocument({ actors: actors.slice(0, 4) }), /exactly 5/);
+  assert.equal(validateCredentialDocument({ actors }).length, 8);
+  assert.throws(() => validateCredentialDocument({ actors: actors.slice(0, 7) }), /exactly 8/);
   assert.throws(() => validateCredentialDocument({ actors: actors.map((row, index) => ({
     ...row,
     email: index === 4 ? actors[0].email : row.email,

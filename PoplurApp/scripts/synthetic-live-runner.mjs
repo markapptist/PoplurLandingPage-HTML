@@ -1,3 +1,5 @@
+import { installSyntheticCallMedia } from './synthetic-call-media.mjs';
+import { LIVE_OWNER_UID, LIVE_CALL_INTERVAL_MS, LIVE_MAX_CALLS_PER_ACTOR, LIVE_CALL_RING_MS, LIVE_CALL_CONNECTED_MS } from './synthetic-social-contract.mjs';
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import {
@@ -235,10 +237,19 @@ async function moveCubeTo(frame, expected, direction = 'right') {
   const marker = SCREEN_MARKERS[expected] ?? expected;
   const cube = await cubeLocator(frame);
   if (await visibleClayScreen(frame) === marker) return;
+  // Mail/Phone replace the tab DOM. The persistent cube is their actual Back
+  // control; Escape is not wired to those screens.
+  for (let depth = 0; depth < 4; depth += 1) {
+    const screen = await visibleClayScreen(frame);
+    if (['feed', 'profile', 'map', 'camera'].includes(screen)) break;
+    await cube.press('Enter');
+    await sleep(500);
+  }
   const key = direction === 'left' ? 'ArrowLeft' : 'ArrowRight';
   for (let count = 0; count < 8; count += 1) {
     await cube.press(key);
-    const deadline = Date.now() + 5_000;
+    const label = await cube.getAttribute('aria-label');
+    const deadline = Date.now() + (label?.toLowerCase().startsWith(expected) ? 20_000 : 5_000);
     while (Date.now() < deadline) {
       if (await visibleClayScreen(frame) === marker) return;
       await sleep(100);
@@ -248,7 +259,7 @@ async function moveCubeTo(frame, expected, direction = 'right') {
 }
 
 /**
- * The five provisioned beta accounts using the real web app shell. Creates
+ * The eight provisioned beta accounts using the real web app shell. Creates
  * nothing outside each actor's own bound ledger: its posts, its post
  * locations, its first-run profile, and view/like engagement calls.
  */
@@ -309,6 +320,7 @@ export function createSyntheticLiveRunner({
         sessionId: actor.sessionId,
         currentScreen: actor.currentScreen,
         action: actor.action,
+        journeyIndex: actor.journeyIndex, transitioning: actor.transitioning,
         lastFrameSequence: actor.frameSequence || null,
         lastFrameAtMs: actor.lastFrameAtMs || 0,
         frameSuppressed: actor.frameSuppressed,
@@ -317,9 +329,11 @@ export function createSyntheticLiveRunner({
         postsPublished: actor.postsPublished,
         lastPostId: actor.lastPostId,
         lastPostAtMs: actor.lastPostAtMs,
-        viewsGiven: actor.policy?.state.viewsGiven ?? 0,
-        likesGiven: actor.policy?.state.likesGiven ?? 0,
-        dmsSent: actor.policy?.state.dmsSent ?? 0,
+        viewsGiven: actor.viewsApplied || 0,
+        likesGiven: actor.likesApplied || 0,
+        engagementAttempts: actor.policy?.state.engagementEvents.size || 0,
+        dmsSent: actor.dmsSent,
+        callsPlaced: actor.callsPlaced || 0, callsConnected: actor.callsConnected || 0,
         lastDMTo: actor.lastDMTo,
         lastError: actor.lastError,
       };
@@ -333,7 +347,7 @@ export function createSyntheticLiveRunner({
       frameSuppressed: true, captureQueue: Promise.resolve(null), transitioning: false, context: null,
       page: null, auth: null, policy: null, signedInAtMs: 0, postsPublished: 0, lastPostId: '', lastPostSpot: null,
       lastPostAtMs: 0, nextPostAtMs: 0, nextEngageAtMs: 0, nextDMAtMs: 0, dmsSent: 0,
-      lastDMTo: '', lastDMPostId: '', consecutiveFailures: 0, lastError: '',
+      lastDMTo: '', lastDMPostId: '', ownerVisitIndex: 0, likedPostIds: new Set(), callsPlaced: 0, callsConnected: 0, viewsApplied: 0, likesApplied: 0, appliedEngagementIds: new Set(), consecutiveFailures: 0, lastError: '',
     });
     actor.consoleTail.length = 0;
     actor.frames.splice(0);
@@ -355,6 +369,7 @@ export function createSyntheticLiveRunner({
       const candidates = [];
       for (const frame of actor.page.frames()) {
         try {
+          if (!isMapFrame(frame.url()) && await frame.getByRole('button', { name: CUBE_NAME }).isVisible()) return frame;
           if (await frame.locator('[data-poplur-screen]').first().isVisible()) candidates.push(frame);
         } catch { /* a transitioning iframe can detach between discovery and probe */ }
       }
@@ -410,7 +425,7 @@ export function createSyntheticLiveRunner({
 
   const installRoutes = async (actor, context, page) => {
     await context.clearPermissions();
-    await context.grantPermissions(['camera'], { origin: clayOrigin });
+    await context.grantPermissions(['camera', 'microphone'], { origin: clayOrigin });
     await context.routeWebSocket(/.*/, async socket => {
       let host = '';
       try { host = new URL(socket.url()).host; } catch { /* fall through to close */ }
@@ -458,6 +473,19 @@ export function createSyntheticLiveRunner({
           if (refreshed?.id_token && refreshed?.refresh_token && refreshed.user_id === actor.uid) {
             actor.policy.bindAuth({ uid: refreshed.user_id, idToken: refreshed.id_token, refreshToken: refreshed.refresh_token });
           }
+        }
+        await route.fulfill({ response: upstream });
+        return;
+      }
+      if (verdict.kind === 'live-engagement') {
+        const upstream = await route.fetch({ maxRedirects: 0 });
+        const body = await upstream.json().catch(() => null);
+        const result = body?.result;
+        if (upstream.ok() && result?.applied && !actor.appliedEngagementIds.has(result.eventId)) {
+          actor.appliedEngagementIds.add(result.eventId);
+          if (result.kind === 'view') actor.viewsApplied += 1;
+          if (result.kind === 'like') actor.likesApplied += 1;
+          log(`${actor.actorId} server applied ${result.kind} to ${result.postId}; radius=${result.counters?.radiusMeters}`);
         }
         await route.fulfill({ response: upstream });
         return;
@@ -698,6 +726,9 @@ export function createSyntheticLiveRunner({
       if (await allow.isVisible().catch(() => false)) await allow.click();
       const cube = await cubeLocator(frame);
       await cube.press('Enter');
+      const captureReview = frame.getByRole('dialog', { name: 'Review your capture' });
+      await captureReview.waitFor({ state: 'visible', timeout: APP_TIMEOUT_MS });
+      await captureReview.getByRole('button', { name: /Use this/ }).click();
       await frame.getByRole('dialog', { name: 'Post composer' }).waitFor({ state: 'visible', timeout: APP_TIMEOUT_MS });
     });
     actor.currentScreen = 'composer';
@@ -764,279 +795,170 @@ export function createSyntheticLiveRunner({
   };
 
   /**
-   * The app's own route from a post to its owner: hold the cube on Feed, open
-   * VIEW PROFILE, press the Message button on the visited profile, type, Send,
-   * and confirm the app's own "Sent to …" acknowledgement. Nothing is
-   * fabricated — the shell's real sendDM performs the write.
+   * The owner-authorized social journey uses the Feed mailbox and the real
+   * message/call transport. Server acknowledgements are the completion signal.
    */
-  const runDMFlow = async actor => {
-    const clay = await clayFrame(actor);
+  // Visit the public location of an owner post, then find it through the
+  // normal Feed controls. Reading this index never changes reach or counters.
+  const findOwnerPost = async actor => {
+    const response = await fetch('https://firestore.googleapis.com/v1/projects/poplur2025/databases/(default)/documents:runQuery', {
+      method: 'POST', signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${actor.policy.state.idToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'posts' }],
+        where: { fieldFilter: { field: { fieldPath: 'userID' }, op: 'EQUAL', value: { stringValue: LIVE_OWNER_UID } } }, limit: 64 } }),
+    });
+    if (!response.ok) throw new Error(`Owner post lookup failed (HTTP ${response.status}).`);
+    const rows = await response.json();
+    const value = field => field?.stringValue ?? field?.doubleValue ?? field?.integerValue;
+    const posts = rows.flatMap(row => {
+      const fields = row.document?.fields;
+      if (!fields || value(fields.status) === 'deleted' || value(fields.audience) === 'private'
+        || value(fields.locationVisibility) === 'hidden') return [];
+      const latitude = Number(value(fields.latitude)), longitude = Number(value(fields.longitude));
+      return Number.isFinite(latitude) && Number.isFinite(longitude)
+        ? [{ id: row.document.name.split('/').pop(), latitude, longitude, channel: value(fields.channelId) || 'live' }] : [];
+    });
+    if (!posts.length) return null;
+    const target = posts[(actor.ownerVisitIndex++ || 0) % posts.length];
+    await setHostSyntheticLocation(actor, { ...target, place: 'Visiting an owner post' });
+    let clay = await clayFrame(actor);
+    await stampFrameLocation(clay, target);
     await moveCubeTo(clay, 'feed');
-    actor.currentScreen = 'feed';
-    // The feed mixes demo cards (no owner) with real posts, and the actor's
-    // own posts cannot be messaged. Step through a bounded number of posts
-    // with the app's own Next control until a messageable one is showing.
-    // Read from the element that actually carries the post id: more than one
-    // node claims data-poplur-screen="feed", and the outer one has no post.
-    const feed = clay.locator('[data-feed-post-id]').first();
-    // Posts arrive from the shell after the Feed mounts, so give the first one
-    // time to land before deciding the feed is empty.
-    for (let wait = 0; wait < 12; wait += 1) {
-      if (await feed.count().catch(() => 0)) break;
-      await answerPermissionCards(clay);
-      await sleep(1_800);
+    // The TV's numbered stepper changes the channel immediately. The wheel
+    // animates its selected option and may suspend paints in a background tab.
+    const channelNumbers = { food: 101, live: 116, beauty: 103, sports: 104, modelling: 105, fashion: 106, music: 107, tech: 108, news: 109, french: 110, spanish: 111, shopping: 112, cartoon: 113, kids: 114, comedy: 115 };
+    const controls = clay.getByRole('group', { name: 'Channel and post controls', exact: true });
+    const readChannel = () => controls.evaluate(element => Array.from(element.children).find(child => child.tagName === 'SPAN')?.textContent?.trim());
+    let selected = await readChannel();
+    for (let index = 0; index < 16 && selected !== String(channelNumbers[target.channel]); index += 1) {
+      await activateControl(controls.getByRole('button', { name: 'Channel up', exact: true }), 'Channel up');
+      await sleep(700);
+      selected = await readChannel();
     }
-    let owner = '';
-    let postId = '';
-    const seen = [];
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await answerPermissionCards(clay);
-      const candidateOwner = (await feed.getAttribute('data-feed-post-owner').catch(() => '') || '').trim();
-      const candidateId = (await feed.getAttribute('data-feed-post-id').catch(() => '') || '').trim();
-      seen.push(`${candidateId || 'no-id'}:${candidateOwner || 'no-owner'}`);
-      if (candidateOwner && candidateOwner !== actor.uid && !actor.policy.state.dmSentTo.has(candidateOwner)) {
-        owner = candidateOwner;
-        postId = candidateId;
-        break;
-      }
-      // Within a channel, step to the next post; an empty channel has no post
-      // to advance to, so change channel the way a viewer would.
-      const next = clay.getByRole('button', { name: 'Next post' }).first();
-      const advanced = !candidateId
-        ? false
-        : await next.isVisible({ timeout: 2_500 }).catch(() => false)
-          && await next.click({ timeout: 6_000 }).then(() => true).catch(() => false);
-      if (!advanced) {
-        const channel = clay.getByRole('button', { name: 'Channel up' }).first();
-        if (!await channel.isVisible({ timeout: 2_500 }).catch(() => false)) break;
-        if (!await channel.click({ timeout: 6_000 }).then(() => true).catch(() => false)) break;
-        await sleep(2_200);
-        continue;
-      }
-      await sleep(1_500);
+    if (selected !== String(channelNumbers[target.channel])) throw new Error(`Could not tune owner channel ${target.channel}; saw ${selected}.`);
+    await sleep(2_000);
+    const seen = new Set();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const post = clay.locator('[data-feed-post-id]').first();
+      const id = await post.getAttribute('data-feed-post-id').catch(() => '');
+      const owner = await post.getAttribute('data-feed-post-owner').catch(() => '');
+      if (owner === LIVE_OWNER_UID) return { clay, id };
+      if (id && seen.has(id)) break;
+      if (id) seen.add(id);
+      const next = clay.getByRole('button', { name: 'Next post', exact: true }).first();
+      if (!await next.isVisible().catch(() => false)) break;
+      await activateControl(next, 'Next post');
+      await sleep(500);
     }
-    if (!owner) {
-      actor.action = 'dm-skipped-no-messageable-post';
-      actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-      log(`${actor.actorId} found no messageable post; saw ${seen.join(', ')}`);
-      const feedShape = await clay.evaluate(() => ({
-        screens: [...document.querySelectorAll('[data-poplur-screen]')].map(node => node.getAttribute('data-poplur-screen')).join(','),
-        postNodes: document.querySelectorAll('[data-feed-post-id]').length,
-        buttons: [...document.querySelectorAll('button')]
-          .filter(node => node.offsetParent !== null)
-          .map(node => node.getAttribute('aria-label') || node.textContent?.trim().slice(0, 18))
-          .filter(Boolean).slice(0, 14).join(' | '),
-        text: document.body.innerText.replace(/\s+/g, ' ').slice(0, 160),
-      })).catch(error => ({ error: String(error?.message || error).slice(0, 100) }));
-      log(`${actor.actorId} feed shape=${JSON.stringify(feedShape)}`);
-      await queueCapture(actor, 'dm-empty-feed', 'feed', { validate: false });
-      return;
-    }
-    try {
-      actor.policy.bindDMRecipient(owner);
-    } catch (error) {
-      actor.action = 'dm-capped';
-      actor.lastError = error.message;
-      actor.nextDMAtMs = Date.now() + LIVE_POST_INTERVAL_MS;
-      return;
-    }
+    return null;
+  };
 
-    if (!await holdCube(actor.page, clay)) {
-      actor.action = 'dm-blocked-hold-menu';
-      actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-      log(`${actor.actorId} could not open the hold menu to reach ${owner}'s profile`);
-      return;
-    }
-    await activateControl(clay.getByRole('button', { name: 'Open VIEW PROFILE subscreen' }), 'View profile');
-    // Opening the poster's profile swaps the mounted tab and can rebuild the
-    // frame. A handle taken back on the Feed then answers "nothing on screen"
-    // instead of failing, which reads exactly like a missing control — so take
-    // a fresh one and use it for the whole profile half of this journey.
-    const profile = await clayFrame(actor);
-    await waitForScreen(profile, 'profile', 20_000);
-    actor.currentScreen = 'profile';
-    actor.action = 'open-poster-profile';
+  const openOwnerChat = async actor => {
+    const post = await findOwnerPost(actor);
+    if (!post) throw new Error('The owner post is not available in the live Feed.');
+    actor.policy.bindDMRecipient(LIVE_OWNER_UID);
+    await activateControl(post.clay.getByRole('button', { name: 'Message the poster', exact: true }), 'Message the poster');
+    const clay = await clayFrame(actor);
+    await clay.locator('input[name="message"]').waitFor({ state: 'visible', timeout: 20_000 });
+    return { clay, id: post.id };
+  };
 
-    // VIEW PROFILE lands on the poster's profile with a subscreen pushed over
-    // it; the Message control belongs to the profile itself, so step back out
-    // of any page still covering it before giving up.
-    const messageButton = profile.getByRole('button', { name: /^Message / }).first();
-    let messageReady = false;
-    for (let attempt = 0; attempt < 3 && !messageReady; attempt += 1) {
-      await answerPermissionCards(profile);
-      messageReady = await messageButton.isVisible({ timeout: 8_000 }).catch(() => false);
-      if (messageReady) break;
-      await actor.page.keyboard.press('Escape');
-      await sleep(1_200);
-    }
-    if (!messageReady) {
-      const names = await profile.getByRole('button').all()
-        .then(list => Promise.all(list.slice(0, 25).map(item => item.getAttribute('aria-label').catch(() => null))))
-        .then(list => list.filter(Boolean).join(' / '))
-        .catch(() => '(unreadable)');
-      actor.action = 'dm-blocked-no-message-control';
-      actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-      log(`${actor.actorId} reached ${owner}'s profile but found no Message control; screen=${await visibleClayScreen(profile)} buttons=${names}`);
-      return;
-    }
-    const messageLabel = (await messageButton.getAttribute('aria-label').catch(() => '')) || '';
-    // Clay's corner buttons treat a detail-0 click as keyboard/assistive
-    // activation and act exactly once, which is also the only activation that
-    // survives this rail reliably; a pointer click here does not open it.
-    await activateControl(messageButton, messageLabel || 'Message');
-    // Both the dialog and its heading carry the same "Message <name>" text, so
-    // an unscoped role query can match more than one node; take the first and
-    // treat the composer input as the real readiness signal. Never re-click
-    // blindly — a second click lands on the dismiss scrim and closes it.
-    const dialog = profile.getByRole('dialog', { name: /^Message / }).first();
-    const messageInput = profile.getByPlaceholder('Say something…').first();
-    let dialogOpen = await messageInput.isVisible({ timeout: 10_000 })
-      .catch(async error => {
-        log(`${actor.actorId} dm dialog probe error: ${String(error?.message || error).slice(0, 120)}`);
-        return dialog.isVisible({ timeout: 4_000 }).catch(() => false);
-      });
-    if (!dialogOpen) {
-      await answerPermissionCards(profile);
-      dialogOpen = await messageInput.isVisible({ timeout: 6_000 }).catch(() => false);
-    }
-    if (!dialogOpen) {
-      const dialogs = await profile.locator('[role="dialog"]').all()
-        .then(list => Promise.all(list.map(async item => `${await item.getAttribute('aria-label').catch(() => '?')}${await item.isVisible().catch(() => false) ? '' : ' (hidden)'}`)))
-        .then(list => list.join(' / '))
-        .catch(() => '(unreadable)');
-      actor.action = 'dm-blocked-no-dialog';
-      actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-      log(`${actor.actorId} clicked "${messageLabel}" but no message dialog opened; screen=${await visibleClayScreen(profile)} dialogs=${dialogs}`);
-      log(`${actor.actorId} dm console=${actor.consoleTail.slice(-4).join(' ¶ ') || '(none)'}`);
-      await queueCapture(actor, 'dm-no-dialog', 'mail', { validate: false });
-      const inside = await profile.evaluate(() => ({
-        scrims: document.querySelectorAll('[class*="scrim"]').length,
-        dialogRoles: [...document.querySelectorAll('[role="dialog"]')].map(node => node.getAttribute('aria-label')).join(','),
-        saysSomething: document.body.innerText.includes('Say something'),
-        mailButtons: [...document.querySelectorAll('button')]
-          .filter(node => (node.getAttribute('aria-label') || '').startsWith('Message '))
-          .map(node => {
-            const box = node.getBoundingClientRect();
-            const centre = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
-            return `${node.getAttribute('aria-label')}@${Math.round(box.x)},${Math.round(box.y)} ${Math.round(box.width)}x${Math.round(box.height)} top=${centre?.tagName}${centre === node ? '(self)' : `.${String(centre?.className || '').slice(0, 24)}`}`;
-          }).join(' ;; '),
-      })).catch(error => ({ error: String(error?.message || error).slice(0, 120) }));
-      log(`${actor.actorId} dm page state=${JSON.stringify(inside)}`);
-      return;
-    }
+  const runDMFlow = async actor => {
+    if (actor.policy.state.dmSentTo.has(LIVE_OWNER_UID)) return;
+    const { clay, id } = await openOwnerChat(actor);
     actor.action = 'send-dm';
-    await queueCapture(actor, 'send-dm', 'mail', { validate: false });
-    const text = LIVE_DM_MESSAGES[ACTOR_IDS.indexOf(actor.actorId) % LIVE_DM_MESSAGES.length];
-    // Type it rather than setting the value: the composer only sends when its
-    // own state holds the text, and the send is silent when that state is
-    // empty — the dialog just sits there with the words visibly in the field.
-    await messageInput.click({ timeout: 10_000 }).catch(() => {});
-    await messageInput.fill('');
-    await messageInput.pressSequentially(text, { delay: 15 });
-    await sleep(400);
-    // The composer is a controlled field: it sends what its own state holds,
-    // not what the DOM shows, and typed keystrokes were leaving that state
-    // empty — so the send returned silently with the words still on screen.
-    // Hand the text to the field's own change handler, then confirm it took.
-    const stateHolds = await messageInput.evaluate((element, value) => {
-      const key = Object.keys(element).find(name => name.startsWith('__reactProps$'));
-      const props = key ? element[key] : null;
-      if (typeof props?.onChange === 'function') {
-        props.onChange({ target: { value }, currentTarget: { value } });
-      }
-      const after = Object.keys(element).find(name => name.startsWith('__reactProps$'));
-      return after ? String(element[after]?.value ?? '') : '(no react props)';
-    }, text).catch(error => `(unreadable: ${String(error?.message || error).slice(0, 50)})`);
-    await sleep(300);
-    if (!String(stateHolds).startsWith(text.slice(0, 12))) {
-      log(`${actor.actorId} composer state after typing: "${String(stateHolds).slice(0, 40)}"`);
-    }
-    // Press the app's own Send control, and keep Enter as the fallback the
-    // composer also offers.
-    const sendButton = profile.getByRole('button', { name: 'Send message' }).first();
-    if (await sendButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
-      await activateControl(sendButton, 'Send message');
-    } else {
-      await messageInput.press('Enter');
-    }
-    // The app answers with a brief flash — sent, refused, or "unavailable" —
-    // and it expires long before a 30 s wait ends. Catch it as it appears, or
-    // the only evidence of what the app decided is gone by the time we look.
-    // "Sending…" is the composer waiting on the shell, not an answer. Keep
-    // watching for the terminal word, and record that the dispatch happened
-    // even when nothing follows it — silence there means the shell never
-    // answered, which is a different fault from a refusal.
-    let dispatched = false;
-    let flashed = '';
-    for (let tick = 0; tick < 60 && !flashed; tick += 1) {
-      const seen = await profile.evaluate(() => {
-        const text = document.body.innerText.replace(/\s+/g, ' ');
-        const terminal = text.match(/(Sent to [^.]{0,60}|Could not [^.]{0,80}|Messaging [^.]{0,80})/);
-        return { terminal: terminal ? terminal[0] : '', sending: text.includes('Sending…') };
-      }).catch(() => ({ terminal: '', sending: false }));
-      if (seen.sending) dispatched = true;
-      flashed = seen.terminal;
-      if (!flashed) await sleep(250);
-    }
-    log(`${actor.actorId} the app answered: ${flashed || (dispatched ? 'Sending… then nothing' : '(nothing)')}`);
+    const text = `Hey Mark, ${actor.handle} here — one of your Poplur testers. ${LIVE_DM_MESSAGES[ACTOR_IDS.indexOf(actor.actorId) % LIVE_DM_MESSAGES.length]}`.slice(0, 240);
+    await clay.evaluate(() => {
+      window.__poplurSyntheticDMSent = null;
+      const listener = event => {
+        if (event.detail?.type === 'poplurDMSent' || event.detail?.type === 'poplurDMSendFailed') {
+          window.__poplurSyntheticDMSent = event.detail.type;
+          window.removeEventListener('poplur-dm-result', listener);
+        }
+      };
+      window.addEventListener('poplur-dm-result', listener);
+    });
+    await clay.locator('input[name="message"]').fill(text);
+    await clay.getByRole('button', { name: 'Send', exact: true }).click();
+    await clay.waitForFunction(() => window.__poplurSyntheticDMSent, null, { timeout: 30_000 });
+    if (await clay.evaluate(() => window.__poplurSyntheticDMSent) !== 'poplurDMSent') throw new Error('The server refused the tester message.');
+    actor.dmsSent += 1;
+    actor.lastDMTo = LIVE_OWNER_UID;
+    actor.lastDMPostId = id;
+    log(`${actor.actorId} delivered a message to the owner about ${id}`);
+    await (await cubeLocator(clay)).press('Enter');
+    await moveCubeTo(await clayFrame(actor), 'feed');
+    actor.currentScreen = 'feed';
+  };
 
-    // Wait on the note OR on the write the guard actually observed: the toast
-    // is brief, and missing it is not evidence the message failed.
-    const acknowledged = await profile.getByText(/^Sent to /)
-      .waitFor({ state: 'visible', timeout: 30_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!actor.policy.state.dmSentTo.has(owner)) {
-      // Read the app's own words rather than guessing: it says exactly why it
-      // would not send — an unloaded recipient, no bridge, or a failed write.
-      const said = await profile.evaluate(() => {
-        const text = document.body.innerText.replace(/\s+/g, ' ');
-        const note = text.match(/(Sent to [^.]{0,60}|Could not [^.]{0,80}|Messaging [^.]{0,80}|Sending…)/);
-        const input = document.querySelector('input[placeholder="Say something…"]');
-        return {
-          note: note ? note[0] : '(no note)',
-          typed: input instanceof HTMLInputElement ? input.value.slice(0, 40) : '(input gone)',
-          disabled: input instanceof HTMLInputElement ? input.disabled : null,
-          dialogStillOpen: Boolean(input),
-        };
-      }).catch(error => ({ note: `(unreadable: ${String(error?.message || error).slice(0, 60)})` }));
-      log(`${actor.actorId} dm send outcome=${JSON.stringify(said)}`);
-      await queueCapture(actor, 'dm-send-failed', 'mail', { validate: false });
-      throw new Error(/Could not|Messaging /.test(said.note)
-        ? `The app refused the message: ${said.note.slice(0, 90)}`
-        : `No thread write was observed; the app said ${said.note}`);
+  let nextOwnerCallAtMs = 0;
+  let nextOwnerCallVideo = true;
+  const runCallFlow = async actor => {
+    if (Date.now() < nextOwnerCallAtMs || actor.callsPlaced >= LIVE_MAX_CALLS_PER_ACTOR) return;
+    // Reserve before awaiting UI: eight independent journeys share one owner.
+    nextOwnerCallAtMs = Date.now() + LIVE_CALL_INTERVAL_MS;
+    const { clay } = await openOwnerChat(actor);
+    actor.policy.bindCallRecipient(LIVE_OWNER_UID);
+    const video = nextOwnerCallVideo;
+    await installSyntheticCallMedia(clay, actor);
+    try {
+      const before = new Set(actor.policy.state.callIds);
+      actor.action = video ? 'video-call-owner' : 'voice-call-owner';
+      await clay.getByRole('button', { name: video ? /^FaceTime / : /^Call / }).first().click({ timeout: 10_000 });
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline && actor.policy.state.callIds.size === before.size) await sleep(250);
+      const id = [...actor.policy.state.callIds].find(id => !before.has(id));
+      if (!id) throw new Error('The app did not create the owner call.');
+      // This is the shared call engine's actual state, not a timer that pretends
+      // the receiver answered. Only an accepted WebRTC connection is connected.
+      let connectedAt = 0;
+      const started = Date.now();
+      await clay.waitForFunction(async expected => (await import('/src/webCall.ts')).callState().callId === expected, id, { timeout: 15_000 });
+      actor.callsPlaced += 1;
+      nextOwnerCallVideo = !video;
+      log(`${actor.actorId} placed ${video ? 'video' : 'voice'} call ${id} to the owner`);
+      while (runtime.status === 'live') {
+        const state = await clay.evaluate(async () => (await import('/src/webCall.ts')).callState());
+        if (state.phase === 'connected' && !connectedAt) { connectedAt = Date.now(); actor.callsConnected += 1; }
+        if (state.phase === 'ended' || state.phase === 'idle') break;
+        if (connectedAt ? Date.now() - connectedAt > LIVE_CALL_CONNECTED_MS : Date.now() - started > LIVE_CALL_RING_MS) break;
+        await sleep(1_000);
+      }
+      // Hangup through the shared engine also covers a receiver declining while
+      // Phone is still finishing its boot animation.
+    } finally {
+      await clay.evaluate(async () => {
+        (await import('/src/webCall.ts')).hangup();
+        window.__poplurRestoreSyntheticCallMedia?.();
+      }).catch(() => {});
     }
-    if (!acknowledged) log(`${actor.actorId} sent a DM without catching the app's note`);
-    actor.dmsSent = actor.policy.state.dmsSent;
-    actor.lastDMTo = owner;
-    actor.lastDMPostId = postId;
-    actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-    log(`${actor.actorId} messaged ${owner} about ${postId || 'a post'}`);
+    await (await cubeLocator(clay)).press('Enter');
     await moveCubeTo(await clayFrame(actor), 'feed');
     actor.currentScreen = 'feed';
   };
 
   const runEngageFlow = async actor => {
-    const clay = await clayFrame(actor);
-    await moveCubeTo(clay, 'feed');
+    let post = await findOwnerPost(actor);
+    if (!post) { actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS; return; }
     actor.currentScreen = 'feed';
     actor.action = 'view-post';
-    // Dwelling on a live post is itself a production view; the shell records
-    // it once per 30 s. Give the feed time to settle and mark the view.
+    // A view requires the real image/video to be ready. Failed media is never
+    // converted into an artificial view just to make the counter move.
     await sleep(ENGAGE_DWELL_MS);
-    const livePost = clay.locator('[data-feed-post-id]').first();
-    if (!await livePost.isVisible().catch(() => false)) {
-      actor.action = 'feed-empty';
-      actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-      return;
+    if (await post.clay.locator('[data-feed-post-id]').first().getAttribute('data-feed-post-id') !== post.id) {
+      post = await findOwnerPost(actor);
+      if (!post) return;
     }
-    if (actor.policy.state.likesGiven < LIVE_MAX_LIKES_PER_ACTOR) {
-      const like = clay.getByRole('button', { name: /Increase this post.s radius by one/i }).first();
-      if (await like.isVisible().catch(() => false)) {
-        actor.action = 'like-post';
-        await like.click();
-        await sleep(1_500);
-      }
+    if (!actor.likedPostIds.has(post.id) && actor.policy.state.likesGiven < LIVE_MAX_LIKES_PER_ACTOR) {
+      const like = post.clay.getByRole('button', { name: /Increase this post.s radius by one/i }).first();
+      const response = actor.page.waitForResponse(response => response.url().includes('/recordPostEngagement')
+        && response.request().postDataJSON()?.data?.kind === 'like'
+        && response.request().postDataJSON()?.data?.postId === post.id.replace(/^firestore:/, ''), { timeout: 20_000 });
+      await activateControl(like, 'Increase post radius');
+      const result = await response;
+      const body = await result.json();
+      if (!result.ok() || body.error) throw new Error(body.error?.message || 'The server refused the tester like.');
+      actor.likedPostIds.add(post.id);
+      log(`${actor.actorId} owner engagement applied=${body.result?.applied} radius=${body.result?.counters?.radiusMeters}`);
     }
     actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
   };
@@ -1054,8 +976,8 @@ export function createSyntheticLiveRunner({
       if (!await holdCube(page, clay)) throw new Error('The cube did not open its hold menu.');
       await waitForScreen(clay, step.screen, 15_000);
     } else if (step.method === 'escape') {
-      await page.keyboard.press('Escape');
-      // Escape returns to whichever tab was behind the menu; steer from there
+      await (await cubeLocator(clay)).press('Enter');
+      // Back returns to whichever tab was behind the menu; steer from there
       // rather than assuming which one that is.
       await moveCubeTo(clay, step.screen);
     } else if (step.method === 'current') {
@@ -1064,6 +986,8 @@ export function createSyntheticLiveRunner({
       await runPostFlow(actor);
     } else if (step.method === 'engage') {
       await runEngageFlow(actor);
+    } else if (step.method === 'call') {
+      await runCallFlow(actor);
     } else if (step.method === 'dm') {
       await runDMFlow(actor);
     } else {
@@ -1074,7 +998,9 @@ export function createSyntheticLiveRunner({
   const stepIsDue = (actor, step) => {
     if (step.method === 'post') return Date.now() >= actor.nextPostAtMs && actor.postsPublished < LIVE_MAX_POSTS_PER_ACTOR;
     if (step.method === 'engage') return Date.now() >= actor.nextEngageAtMs;
+    if (step.method === 'call') return Date.now() >= nextOwnerCallAtMs && actor.callsPlaced < LIVE_MAX_CALLS_PER_ACTOR;
     if (step.method === 'dm') {
+      if (actor.policy?.state.dmSentTo.has(LIVE_OWNER_UID)) return false;
       return Date.now() >= actor.nextDMAtMs
         && (actor.policy?.state.dmRecipients.size ?? LIVE_MAX_DMS_PER_ACTOR) < LIVE_MAX_DMS_PER_ACTOR;
     }
@@ -1101,6 +1027,7 @@ export function createSyntheticLiveRunner({
       actor.transitioning = true;
       try {
         await actor.captureQueue.catch(() => null);
+        log(`${actor.actorId} starting ${step.action}`);
         await executeStep(actor, step);
         const frame = await queueCapture(actor, step.action, step.method === 'post' ? 'map' : step.screen);
         await sendEvent(actor, step, frame, priorScreen, Date.now() - actor.lastEventAtMs);
@@ -1131,7 +1058,7 @@ export function createSyntheticLiveRunner({
         actor.transitioning = false;
       }
     }
-    if ([...actors.values()].every(candidate => candidate.status !== 'live') && runtime.status === 'live') {
+    if ([...actors.values()].every(candidate => candidate.status !== 'live' && candidate.status !== 'starting') && runtime.status === 'live') {
       throw new Error('Every live cohort actor stopped.');
     }
   };
@@ -1234,16 +1161,28 @@ export function createSyntheticLiveRunner({
         args: [
           '--disable-background-networking', '--disable-component-update', '--disable-default-apps',
           '--disable-features=MediaRouter', '--disable-sync', '--no-first-run',
-          '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
+          '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required',
         ],
       });
       runtime.enabled = true;
+      nextOwnerCallAtMs = Date.now() + 60_000;
       try {
         for (const credential of credentials) {
           if (runtime.epoch !== epoch) throw new LiveStoppedError();
           const actor = actors.get(credential.actorId);
           try {
             await signInActor(actor, credential, epoch);
+            await startCloudSession(actor);
+            const now = Date.now();
+            actor.nextPostAtMs = now + 5 * 60_000 + ACTOR_IDS.indexOf(actor.actorId) * LIVE_POST_STAGGER_MS;
+            actor.nextEngageAtMs = now;
+            actor.nextDMAtMs = now;
+            if (runtime.status === 'starting') {
+              runtime.status = 'live';
+              beginLiveFrameCapture();
+              beginCloudMonitor(failRun);
+            }
+            void runActorLoop(actor, epoch).catch(error => { if (!(error instanceof LiveStoppedError)) failRun(error); });
           } catch (error) {
             if (error instanceof LiveStoppedError) throw error;
             actor.status = 'error';
@@ -1261,21 +1200,7 @@ export function createSyntheticLiveRunner({
       }
       const signedIn = [...actors.values()].filter(actor => actor.auth?.idToken && actor.page);
       if (!signedIn.length) throw new Error('No live cohort account could sign in to the real app.');
-      for (const actor of signedIn) await startCloudSession(actor);
       if (runtime.epoch !== epoch) throw new LiveStoppedError();
-      const now = Date.now();
-      signedIn.forEach((actor, index) => {
-        actor.nextPostAtMs = now + index * LIVE_POST_STAGGER_MS;
-        actor.nextEngageAtMs = now + 45_000 + index * 20_000;
-        // Messaging waits until posts from the cohort exist to reply to.
-        actor.nextDMAtMs = now + 4 * 60_000 + index * 30_000;
-      });
-      runtime.status = 'live';
-      beginLiveFrameCapture();
-      beginCloudMonitor(failRun);
-      for (const actor of signedIn) {
-        void runActorLoop(actor, epoch).catch(error => { if (!(error instanceof LiveStoppedError)) failRun(error); });
-      }
       return publicState();
     } catch (error) {
       if (error instanceof LiveStoppedError) return publicState();

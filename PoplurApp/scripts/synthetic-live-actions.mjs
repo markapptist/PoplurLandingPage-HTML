@@ -1,3 +1,4 @@
+import { LIVE_OWNER_UID, inspectSocialCallWrite, isSocialThreadStateWrite } from './synthetic-social-contract.mjs';
 import {
   ACTOR_IDS,
   SYNTHETIC_ACTORS,
@@ -212,7 +213,8 @@ export const LIVE_ACTIVITIES = Object.freeze([
   Object.freeze({ id: 'verify-post', label: 'Find the post on the Map', detail: 'Return to the Map and confirm their own pin is there.', reported: 'cloud' }),
   Object.freeze({ id: 'view-post', label: 'Watch another tester’s post', detail: 'Dwell on an intercepting post in the Feed. A real view grows that post’s radius.', reported: 'production' }),
   Object.freeze({ id: 'like-post', label: 'Like it', detail: 'Like the post once per account. A real like grows its radius by about a kilometre.', reported: 'production' }),
-  Object.freeze({ id: 'send-dm', label: 'Message the poster', detail: 'Hold the cube, open View Profile on the post they just liked, press Message and send one short note. One DM per poster, at most three per run; the thread is real and lands in that owner’s Mail.', reported: 'production' }),
+  Object.freeze({ id: 'send-dm', label: 'Message the poster', detail: 'Open the Feed mailbox on the owner’s post and send a short note through Poplur Mail. One DM per poster, at most three per run; the thread is real and lands in that owner’s Mail.', reported: 'production' }),
+  Object.freeze({ id: 'call-owner', label: 'Call the owner', detail: 'A paced voice or video call through Poplur Mail to the consenting owner; real WebRTC with a synthetic camera and microphone.', reported: 'production' }),
   Object.freeze({ id: 'idle', label: 'Pause between actions', detail: 'Human-paced dwell, then the cycle repeats. Each actor posts again every 20 minutes, up to four posts per run.', reported: 'cloud' }),
 ]);
 
@@ -249,7 +251,7 @@ export function validateRunnerCommand(value) {
  * `engage` steps are gated by the pacing constants above at run time, so a
  * plan cycle without a due post simply skips them.
  */
-export const LIVE_STEP_METHODS = new Set(['current', 'right', 'left', 'hold', 'escape', 'post', 'engage', 'dm']);
+export const LIVE_STEP_METHODS = new Set(['current', 'right', 'left', 'hold', 'escape', 'post', 'engage', 'dm', 'call']);
 
 const LIVE_PLANS = Object.freeze({
   'sim-food-001': Object.freeze([
@@ -304,8 +306,7 @@ const LIVE_PLANS = Object.freeze({
     Object.freeze({ screen: 'feed', action: 'like-post', method: 'engage' }),
     Object.freeze({ screen: 'feed', action: 'send-dm', method: 'dm' }),
   ]),
-  // Businesses post and engage but never DM: a shop writing to strangers is
-  // the behaviour the block list exists for, not a journey to rehearse.
+  // Business journeys also join the owner-authorized social steps above.
   'sim-biz-food-006': Object.freeze([
     Object.freeze({ screen: 'feed', action: 'screen-view', method: 'current' }),
     Object.freeze({ screen: 'map', action: 'publish-post', method: 'post' }),
@@ -337,7 +338,11 @@ const LIVE_PLANS = Object.freeze({
 export function livePlanForActor(actorId) {
   const plan = LIVE_PLANS[actorId];
   if (!plan) throw new Error(`Unknown synthetic actor: ${cleanText(actorId)}`);
-  return plan;
+  return [plan[0],
+    { screen: 'feed', action: 'like-post', method: 'engage' },
+    { screen: 'feed', action: 'send-dm', method: 'dm' },
+    { screen: 'feed', action: 'call-owner', method: 'call' },
+    ...plan.slice(1)];
 }
 
 /** Frames the live runner may record. Sign-in is deliberately absent. */
@@ -354,7 +359,7 @@ export const LIVE_FRAME_STAGES = Object.freeze([
 export function cloudEventForLiveStep(step) {
   if (!step) return null;
   if (step.method === 'post') return { screen: 'map', action: 'screen-view' };
-  if (step.method === 'engage' || step.method === 'dm') return { screen: 'feed', action: 'screen-view' };
+  if (step.method === 'engage' || step.method === 'dm' || step.method === 'call') return { screen: 'feed', action: 'screen-view' };
   return { screen: step.screen, action: step.action };
 }
 
@@ -500,6 +505,8 @@ function seedAndEarnedAreHonest(fields) {
 }
 
 function isExactLiveWrite(write, state, identity, runId) {
+  const call = inspectSocialCallWrite(write, state);
+  if (call !== null) return call;
   const shape = writeShape(write);
   if (!shape) return false;
   const { path, fields } = shape;
@@ -653,6 +660,7 @@ function isExactLiveDMWrite(write, state, path, fields) {
     return ok;
   }
 
+  if (!('participants' in fields)) return isSocialThreadStateWrite(write, state, fields);
   const participants = arrayStrings(fields.participants);
   const unread = fields.unreadBy?.mapValue?.fields;
   const unreadKeys = unread && typeof unread === 'object' ? Object.keys(unread) : null;
@@ -720,6 +728,8 @@ export function createLiveCohortNetworkPolicy(identity, runId) {
     dmMessageIds: new Set(),
     dmSentTo: new Set(),
     dmsSent: 0,
+    callIds: new Set(),
+    callRecipient: null,
   };
 
   /** The runner binds a recipient only after the app itself showed that poster. */
@@ -819,7 +829,7 @@ export function createLiveCohortNetworkPolicy(identity, runId) {
           .join(', ').slice(0, 200);
         return { allow: false, kind: 'live-firestore-blocked', reason: `Firestore write fields are not the exact live cohort ledger: ${where}` };
       }
-      return { allow: true, kind: 'live-firestore-write', documentNames: operations.map(write => write.update.name.split('/documents/')[1]) };
+      return { allow: true, kind: 'live-firestore-write', documentNames: operations.map(write => (write.update?.name || write.delete).split('/documents/')[1]) };
     }
 
     if (isSharedStorageTarget(url)) {
@@ -876,6 +886,11 @@ export function createLiveCohortNetworkPolicy(identity, runId) {
       return { allow: true, kind: 'live-engagement', engagement: kind, postId: data.postId };
     }
 
+    // Public release artwork is read-only and shared by every app surface.
+    if (['GET', 'HEAD'].includes(method) && /^https:\/\/storage\.googleapis\.com\/poplur2025-assets\/asset-packs\//.test(url)) {
+      return { allow: true, kind: 'read' };
+    }
+
     if (isProductionFirebaseTarget(url)) {
       return { allow: false, kind: 'live-production-blocked', reason: 'Production request is outside the live cohort ledger.' };
     }
@@ -890,6 +905,10 @@ export function createLiveCohortNetworkPolicy(identity, runId) {
     bindAuth,
     bindPostId,
     bindDMRecipient,
+    bindCallRecipient(otherUid) {
+      if (otherUid !== LIVE_OWNER_UID) throw new Error('Calls require the consenting owner.');
+      state.callRecipient = otherUid;
+    },
     bindUploadSession(value, objectPath) {
       const session = String(value || '').slice(0, 1_024);
       if (!isBoundSharedUploadSession(session, objectPath)) {

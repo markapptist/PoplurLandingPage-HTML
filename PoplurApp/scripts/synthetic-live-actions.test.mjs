@@ -325,7 +325,7 @@ test('every PERSON messages a poster right after liking one; a BUSINESS never me
     assert.ok(engage >= 0, `${actorId} never engages`);
     if (actorForId(actorId)?.kind === 'business') {
       // A shop writing to strangers is what the block list exists for.
-      assert.ok(!plan.some(step => step.method === 'dm'), `${actorId} is a business and must not DM`);
+      assert.ok(plan.some(step => step.method === 'dm'), `${actorId} can message the consenting owner`);
       continue;
     }
     assert.equal(plan[engage + 1]?.method, 'dm', `${actorId} DM follows the like`);
@@ -487,4 +487,37 @@ test('every actor can reach the ground it returns to', () => {
     // or the pop lands out of reach of the very actor it was aimed at.
     assert.ok(km(spot, host) < 3, `${actorId} landed ${km(spot, host).toFixed(1)} km from ${host.place}`);
   }
+});
+
+import { LIVE_OWNER_UID } from './synthetic-social-contract.mjs';
+test('outgoing calls are bound to the owner, with exact signalling and cleanup', () => {
+  const policy = bound();
+  const call = (id = 'test-call-00001', overrides = {}) => ({ update: { name: `${DOC}/calls/${id}`, fields: {
+    participants: { arrayValue: { values: [str(LIVE_OWNER_UID), str(identity().uid)] } },
+    callerId: str(identity().uid), callerName: str('Synthetic food tester'), calleeId: str(LIVE_OWNER_UID),
+    status: str('ringing'), provider: str('webrtc'), video: bool(true), ...overrides,
+  } }, updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }] });
+  assert.equal(policy.inspect(commit([call()])).allow, false);
+  assert.throws(() => policy.bindCallRecipient('unrelated-person'), /consenting owner/);
+  policy.bindCallRecipient(LIVE_OWNER_UID);
+  assert.equal(policy.inspect(commit([call('forged-call-0001', { callerId: str(LIVE_OWNER_UID) })])).allow, false);
+  assert.equal(policy.inspect(commit([call()])).allow, true);
+  const offer = id => ({ update: { name: `${DOC}/calls/${id}`, fields: { offer: { mapValue: { fields: { type: str('offer'), sdp: str('v=0\r\n') } } } } }, updateMask: { fieldPaths: ['offer.type', 'offer.sdp'] } });
+  assert.equal(policy.inspect(commit([offer('test-call-00001')])).allow, true);
+  assert.equal(policy.inspect(commit([offer('foreign-call-001')])).allow, false);
+  const candidate = sender => ({ update: { name: `${DOC}/calls/test-call-00001/candidates/test-candidate-01`, fields: { senderId: str(sender), candidate: str('candidate:...'), sdpMid: str('0'), sdpMLineIndex: int(0) } }, updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }] });
+  assert.equal(policy.inspect(commit([candidate(identity().uid)])).allow, true);
+  assert.equal(policy.inspect(commit([candidate(LIVE_OWNER_UID)])).allow, false);
+  assert.equal(policy.inspect(commit([{ delete: `${DOC}/calls/test-call-00001` }])).allow, true);
+  assert.equal(policy.inspect(commit([{ delete: `${DOC}/calls/foreign-call-001` }])).allow, false);
+  assert.equal(policy.inspect(commit([call('test-call-00002')])).allow, true);
+  assert.equal(policy.inspect(commit([call('test-call-00003')])).allow, false);
+});
+
+test('bound chat permits own typing and read receipts, never the owner’s state', () => {
+  const policy = bound(); policy.bindDMRecipient(LIVE_OWNER_UID);
+  const id = [identity().uid, LIVE_OWNER_UID].sort().join('_');
+  const typing = uid => ({ update: { name: `${DOC}/dmThreads/${id}`, fields: {} }, updateMask: { fieldPaths: [] }, updateTransforms: [{ fieldPath: `typingBy.\`${uid}\``, setToServerValue: 'REQUEST_TIME' }] });
+  assert.equal(policy.inspect(commit([typing(identity().uid)])).allow, true);
+  assert.equal(policy.inspect(commit([typing(LIVE_OWNER_UID)])).allow, false);
 });

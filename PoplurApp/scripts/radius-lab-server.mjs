@@ -333,7 +333,14 @@ async function dropCohort({ latitude, longitude, radiusScale }) {
     });
   });
   const batch = db().batch();
-  for (const { postId, fields } of created) batch.set(db().collection('posts').doc(postId), fields);
+  for (const { postId, fields } of created) {
+    const postRef = db().collection('posts').doc(postId);
+    batch.set(postRef, fields);
+    batch.set(radiusHistoryRef(postRef, 'create'), radiusHistoryDoc({
+      atMillis: fields.createdAtMillis, cause: 'create', previous: null,
+      next: { radiusMeters: fields.radiusMeters, organicRadiusMeters: fields.organicRadiusMeters },
+    }));
+  }
   await batch.commit();
   writeCohortState({
     centre: { latitude, longitude },
@@ -482,7 +489,14 @@ async function dropPin({ latitude, longitude, radiusMeters, pinColor }) {
     syntheticSource: LAB_SOURCE,
     ...(pinColor ? { pinColor } : {}),
   };
-  await db().collection('posts').doc(postId).set(fields);
+  const postRef = db().collection('posts').doc(postId);
+  const createBatch = db().batch();
+  createBatch.set(postRef, fields);
+  createBatch.set(radiusHistoryRef(postRef, 'create'), radiusHistoryDoc({
+    atMillis: now, cause: 'create', previous: null,
+    next: { radiusMeters, organicRadiusMeters: radiusMeters },
+  }));
+  await createBatch.commit();
   writeState({ postId, latitude, longitude, createdAtMs: now });
   manifest(`created posts/${postId} (owner ${OWNER_UID}, radius ${radiusMeters} m, syntheticSource: ${LAB_SOURCE}, at ${latitude},${longitude}, `
     + `media approved from ${media.approvedFrom}); engagement adds posts/${postId}/{engagements,engagementActors} docs + owner notifications.`);
@@ -496,16 +510,55 @@ async function setRadius(radiusMeters) {
   const state = readState();
   if (!state) throw new DeskError(409, 'Drop a pin first.');
   const ref = db().collection('posts').doc(state.postId);
-  await ref.update({
+  const now = Date.now();
+  const before = (await ref.get()).data() ?? {};
+  const previous = {
+    radiusMeters: Number(before.radiusMeters ?? before.radius) || 0,
+    organicRadiusMeters: Number(before.organicRadiusMeters) || 0,
+  };
+  const batch = db().batch();
+  batch.update(ref, {
     radiusMeters,
     radius: radiusMeters,
     organicRadiusMeters: radiusMeters,
-    updatedAt: Timestamp.fromMillis(Date.now()),
+    updatedAt: Timestamp.fromMillis(now),
   });
+  if (previous.radiusMeters !== radiusMeters) {
+    batch.set(radiusHistoryRef(ref, `lab_${now}`), radiusHistoryDoc({
+      atMillis: now, cause: 'lab', previous,
+      next: { radiusMeters, organicRadiusMeters: radiusMeters },
+    }));
+  }
+  await batch.commit();
   if (lastPin?.postId === state.postId) {
     lastPin = { ...lastPin, radiusMeters, organicRadiusMeters: radiusMeters, updatedAtMs: Date.now() };
   }
   return lastPin;
+}
+
+/**
+ * The pop's history, mirrored from functions/src/postEngagementPolicy.ts
+ * buildRadiusHistoryEntry: one posts/{id}/radiusHistory entry per change to a
+ * pop's reach, written in the same batch as the change. The lab's pops are
+ * synthetic, but a synthetic pop with no history would be the one pop whose
+ * curve the Test Center could not show.
+ */
+function radiusHistoryDoc({ atMillis, cause, previous, next, seed = 0, boost = 0 }) {
+  return {
+    atMillis,
+    at: Timestamp.fromMillis(atMillis),
+    cause,
+    radiusMeters: next.radiusMeters,
+    organicRadiusMeters: next.organicRadiusMeters,
+    seedRadiusMeters: seed,
+    boostedRadiusMeters: boost,
+    delta: previous ? next.radiusMeters - previous.radiusMeters : 0,
+    organicDelta: previous ? next.organicRadiusMeters - previous.organicRadiusMeters : 0,
+    writer: 'radius-lab',
+  };
+}
+function radiusHistoryRef(postRef, entryId) {
+  return postRef.collection('radiusHistory').doc(entryId);
 }
 
 class DeskError extends Error {

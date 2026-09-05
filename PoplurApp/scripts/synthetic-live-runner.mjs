@@ -5,6 +5,8 @@ import { constants as fsConstants } from 'node:fs';
 import {
   LIVE_ACTIVITIES,
   LIVE_DM_MESSAGES,
+  LIVE_REPLY_CHECK_INTERVAL_MS,
+  replyForOwnerMessage,
   LIVE_ENGAGEMENT_INTERVAL_MS,
   LIVE_MAX_DMS_PER_ACTOR,
   LIVE_MAX_LIKES_PER_ACTOR,
@@ -92,6 +94,9 @@ function createActorRuntime(descriptor) {
     nextPostAtMs: 0,
     nextEngageAtMs: 0,
     nextDMAtMs: 0,
+    nextReplyAtMs: 0,
+    repliesSent: 0,
+    lastRepliedMessageId: '',
     dmsSent: 0,
     lastDMTo: '',
     lastDMPostId: '',
@@ -347,6 +352,7 @@ export function createSyntheticLiveRunner({
       frameSuppressed: true, captureQueue: Promise.resolve(null), transitioning: false, context: null,
       page: null, auth: null, policy: null, signedInAtMs: 0, postsPublished: 0, lastPostId: '', lastPostSpot: null,
       lastPostAtMs: 0, nextPostAtMs: 0, nextEngageAtMs: 0, nextDMAtMs: 0, dmsSent: 0,
+      nextReplyAtMs: 0, repliesSent: 0, lastRepliedMessageId: '',
       lastDMTo: '', lastDMPostId: '', ownerVisitIndex: 0, likedPostIds: new Set(), callsPlaced: 0, callsConnected: 0, viewsApplied: 0, likesApplied: 0, appliedEngagementIds: new Set(), consecutiveFailures: 0, lastError: '',
     });
     actor.consoleTail.length = 0;
@@ -892,6 +898,61 @@ export function createSyntheticLiveRunner({
 
   let nextOwnerCallAtMs = 0;
   let nextOwnerCallVideo = true;
+  /**
+   * A tester answers what the owner writes back. The thread is read off the
+   * screen the way a person reads it — every bubble says who wrote it
+   * (data-dm-message-from) — and only an owner message newer than the
+   * actor's own last message, and not yet answered, gets a reply. The reply
+   * goes out through the same input and Send as the opener, so the write
+   * guard sees exactly the shell's own message shape. Nothing is read from
+   * Firestore directly and nothing is written outside the app's own path.
+   */
+  const runReplyFlow = async actor => {
+    actor.nextReplyAtMs = Date.now() + LIVE_REPLY_CHECK_INTERVAL_MS;
+    if (!actor.policy.state.dmSentTo.has(LIVE_OWNER_UID)) return;
+    const { clay } = await openOwnerChat(actor);
+    actor.action = 'reply-dm';
+    const thread = await clay.evaluate(() => Array.from(document.querySelectorAll('[data-dm-message-from]'))
+      .map(element => ({
+        from: element.getAttribute('data-dm-message-from') || '',
+        id: element.getAttribute('data-dm-message-id') || '',
+        text: (element.textContent || '').trim().slice(0, 240),
+      })));
+    const lastMine = thread.map(message => message.from).lastIndexOf('me');
+    const unanswered = thread.slice(lastMine + 1).filter(message => message.from === 'them');
+    const latest = unanswered[unanswered.length - 1];
+    const leave = async () => {
+      await (await cubeLocator(clay)).press('Enter');
+      await moveCubeTo(await clayFrame(actor), 'feed');
+      actor.currentScreen = 'feed';
+    };
+    if (!latest || latest.id === actor.lastRepliedMessageId) {
+      log(`${actor.actorId} found nothing new from the owner to answer`);
+      await leave();
+      return;
+    }
+    const text = replyForOwnerMessage(actor.actorId, latest.text, actor.repliesSent);
+    await clay.evaluate(() => {
+      window.__poplurSyntheticDMSent = null;
+      const listener = event => {
+        if (event.detail?.type === 'poplurDMSent' || event.detail?.type === 'poplurDMSendFailed') {
+          window.__poplurSyntheticDMSent = event.detail.type;
+          window.removeEventListener('poplur-dm-result', listener);
+        }
+      };
+      window.addEventListener('poplur-dm-result', listener);
+    });
+    await clay.locator('input[name="message"]').fill(text);
+    await clay.getByRole('button', { name: 'Send', exact: true }).click();
+    await clay.waitForFunction(() => window.__poplurSyntheticDMSent, null, { timeout: 30_000 });
+    if (await clay.evaluate(() => window.__poplurSyntheticDMSent) !== 'poplurDMSent') throw new Error('The server refused the tester reply.');
+    actor.lastRepliedMessageId = latest.id;
+    actor.repliesSent += 1;
+    actor.dmsSent += 1;
+    log(`${actor.actorId} answered the owner's message ${latest.id || '(unnamed)'}`);
+    await leave();
+  };
+
   const runCallFlow = async actor => {
     if (Date.now() < nextOwnerCallAtMs || actor.callsPlaced >= LIVE_MAX_CALLS_PER_ACTOR) return;
     // Reserve before awaiting UI: eight independent journeys share one owner.
@@ -990,6 +1051,8 @@ export function createSyntheticLiveRunner({
       await runCallFlow(actor);
     } else if (step.method === 'dm') {
       await runDMFlow(actor);
+    } else if (step.method === 'reply') {
+      await runReplyFlow(actor);
     } else {
       throw new Error(`Unknown live runner method for ${actor.actorId}.`);
     }
@@ -999,6 +1062,9 @@ export function createSyntheticLiveRunner({
     if (step.method === 'post') return Date.now() >= actor.nextPostAtMs && actor.postsPublished < LIVE_MAX_POSTS_PER_ACTOR;
     if (step.method === 'engage') return Date.now() >= actor.nextEngageAtMs;
     if (step.method === 'call') return Date.now() >= nextOwnerCallAtMs && actor.callsPlaced < LIVE_MAX_CALLS_PER_ACTOR;
+    if (step.method === 'reply') {
+      return Boolean(actor.policy?.state.dmSentTo.has(LIVE_OWNER_UID)) && Date.now() >= actor.nextReplyAtMs;
+    }
     if (step.method === 'dm') {
       if (actor.policy?.state.dmSentTo.has(LIVE_OWNER_UID)) return false;
       return Date.now() >= actor.nextDMAtMs
@@ -1048,6 +1114,7 @@ export function createSyntheticLiveRunner({
         }
         if (step.method === 'engage') actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
         if (step.method === 'dm') actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
+        if (step.method === 'reply') actor.nextReplyAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
         if (actor.consecutiveFailures >= MAX_CONSECUTIVE_STEP_FAILURES) {
           actor.status = 'error';
           actor.action = 'actor-error';

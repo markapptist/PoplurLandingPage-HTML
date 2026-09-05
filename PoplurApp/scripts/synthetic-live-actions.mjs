@@ -64,32 +64,103 @@ export const WORLD_POST_SPOTS = Object.freeze([
   Object.freeze({ place: 'Toronto', latitude: 43.6532, longitude: -79.3832 }),
   Object.freeze({ place: 'Vancouver', latitude: 49.2827, longitude: -123.1207 }),
   Object.freeze({ place: 'Montreal', latitude: 45.5017, longitude: -73.5673 }),
+  Object.freeze({ place: 'Calgary', latitude: 51.0447, longitude: -114.0719 }),
+  Object.freeze({ place: 'Halifax', latitude: 44.6488, longitude: -63.5752 }),
   Object.freeze({ place: 'New York', latitude: 40.7128, longitude: -74.006 }),
   Object.freeze({ place: 'Los Angeles', latitude: 34.0522, longitude: -118.2437 }),
   Object.freeze({ place: 'Chicago', latitude: 41.8781, longitude: -87.6298 }),
   Object.freeze({ place: 'Miami', latitude: 25.7617, longitude: -80.1918 }),
+  Object.freeze({ place: 'Seattle', latitude: 47.6062, longitude: -122.3321 }),
+  Object.freeze({ place: 'Denver', latitude: 39.7392, longitude: -104.9903 }),
+  Object.freeze({ place: 'Austin', latitude: 30.2672, longitude: -97.7431 }),
+  Object.freeze({ place: 'Atlanta', latitude: 33.749, longitude: -84.388 }),
+  Object.freeze({ place: 'Honolulu', latitude: 21.3069, longitude: -157.8583 }),
+  Object.freeze({ place: 'Anchorage', latitude: 61.2181, longitude: -149.9003 }),
   Object.freeze({ place: 'Mexico City', latitude: 19.4326, longitude: -99.1332 }),
+  Object.freeze({ place: 'Guadalajara', latitude: 20.6597, longitude: -103.3496 }),
+  Object.freeze({ place: 'Havana', latitude: 23.1136, longitude: -82.3666 }),
+  Object.freeze({ place: 'Panama City', latitude: 8.9824, longitude: -79.5199 }),
+  Object.freeze({ place: 'Bogotá', latitude: 4.711, longitude: -74.0721 }),
+  Object.freeze({ place: 'Lima', latitude: -12.0464, longitude: -77.0428 }),
+  Object.freeze({ place: 'Santiago', latitude: -33.4489, longitude: -70.6693 }),
   Object.freeze({ place: 'São Paulo', latitude: -23.5505, longitude: -46.6333 }),
+  Object.freeze({ place: 'Rio de Janeiro', latitude: -22.9068, longitude: -43.1729 }),
   Object.freeze({ place: 'Buenos Aires', latitude: -34.6037, longitude: -58.3816 }),
+  Object.freeze({ place: 'Reykjavik', latitude: 64.1466, longitude: -21.9426 }),
+  Object.freeze({ place: 'Dublin', latitude: 53.3498, longitude: -6.2603 }),
   Object.freeze({ place: 'London', latitude: 51.5074, longitude: -0.1278 }),
-  Object.freeze({ place: 'Paris', latitude: 48.8566, longitude: 2.3522 }),
-  Object.freeze({ place: 'Berlin', latitude: 52.52, longitude: 13.405 }),
+  Object.freeze({ place: 'Edinburgh', latitude: 55.9533, longitude: -3.1883 }),
+  Object.freeze({ place: 'Lisbon', latitude: 38.7223, longitude: -9.1393 }),
   Object.freeze({ place: 'Madrid', latitude: 40.4168, longitude: -3.7038 }),
-  Object.freeze({ place: 'Rome', latitude: 41.9028, longitude: 12.4964 }),
+  Object.freeze({ place: 'Barcelona', latitude: 41.3874, longitude: 2.1686 }),
+  Object.freeze({ place: 'Paris', latitude: 48.8566, longitude: 2.3522 }),
   Object.freeze({ place: 'Amsterdam', latitude: 52.3676, longitude: 4.9041 }),
-  Object.freeze({ place: 'Lagos', latitude: 6.5244, longitude: 3.3792 }),
+  Object.freeze({ place: 'Brussels', latitude: 50.8503, longitude: 4.3517 }),
+  Object.freeze({ place: 'Berlin', latitude: 52.52, longitude: 13.405 }),
+  Object.freeze({ place: 'Munich', latitude: 48.1351, longitude: 11.582 }),
+  Object.freeze({ place: 'Zurich', latitude: 47.3769, longitude: 8.5417 }),
+  Object.freeze({ place: 'Milan', latitude: 45.4642, longitude: 9.19 }),
+  Object.freeze({ place: 'Rome', latitude: 41.9028, longitude: 12.4964 }),
+  Object.freeze({ place: 'Vienna', latitude: 48.2082, longitude: 16.3738 }),
+  Object.freeze({ place: 'Prague', latitude: 50.0755, longitude: 14.4378 }),
+  Object.freeze({ place: 'Warsaw', latitude: 52.2297, longitude: 21.0122 }),
+  Object.freeze({ place: 'Copenhagen', latitude: 55.6761, longitude: 12.5683 }),
+  Object.freeze({ place: 'Stockholm', latitude: 59.3293, longitude: 18.0686 }),
+  Object.freeze({ place: 'Oslo', latitude: 59.9139, longitude: 10.7522 }),
+  Object.freeze({ place: 'Helsinki', latitude: 60.1699, longitude: 24.9384 }),
+  Object.freeze({ place: 'Athens', latitude: 37.9838, longitude: 23.7275 }),
+  Object.freeze({ place: 'Istanbul', latitude: 41.0082, longitude: 28.9784 }),
+  Object.freeze({ place: 'Tel Aviv', latitude: 32.0853, longitude: 34.7818 }),
   Object.freeze({ place: 'Cairo', latitude: 30.0444, longitude: 31.2357 }),
+  Object.freeze({ place: 'Marrakesh', latitude: 31.6295, longitude: -7.9811 }),
+  Object.freeze({ place: 'Dakar', latitude: 14.7167, longitude: -17.4677 }),
+  Object.freeze({ place: 'Accra', latitude: 5.6037, longitude: -0.187 }),
+  Object.freeze({ place: 'Lagos', latitude: 6.5244, longitude: 3.3792 }),
+  Object.freeze({ place: 'Addis Ababa', latitude: 9.03, longitude: 38.74 }),
   Object.freeze({ place: 'Nairobi', latitude: -1.2921, longitude: 36.8219 }),
+  Object.freeze({ place: 'Kigali', latitude: -1.9441, longitude: 30.0619 }),
+  Object.freeze({ place: 'Johannesburg', latitude: -26.2041, longitude: 28.0473 }),
+  Object.freeze({ place: 'Cape Town', latitude: -33.9249, longitude: 18.4241 }),
   Object.freeze({ place: 'Dubai', latitude: 25.2048, longitude: 55.2708 }),
+  Object.freeze({ place: 'Doha', latitude: 25.2854, longitude: 51.531 }),
+  Object.freeze({ place: 'Riyadh', latitude: 24.7136, longitude: 46.6753 }),
+  Object.freeze({ place: 'Tehran', latitude: 35.6892, longitude: 51.389 }),
+  Object.freeze({ place: 'Karachi', latitude: 24.8607, longitude: 67.0011 }),
   Object.freeze({ place: 'Mumbai', latitude: 19.076, longitude: 72.8777 }),
+  Object.freeze({ place: 'Delhi', latitude: 28.6139, longitude: 77.209 }),
+  Object.freeze({ place: 'Bengaluru', latitude: 12.9716, longitude: 77.5946 }),
+  Object.freeze({ place: 'Colombo', latitude: 6.9271, longitude: 79.8612 }),
+  Object.freeze({ place: 'Dhaka', latitude: 23.8103, longitude: 90.4125 }),
+  Object.freeze({ place: 'Kathmandu', latitude: 27.7172, longitude: 85.324 }),
+  Object.freeze({ place: 'Bangkok', latitude: 13.7563, longitude: 100.5018 }),
+  Object.freeze({ place: 'Hanoi', latitude: 21.0278, longitude: 105.8342 }),
+  Object.freeze({ place: 'Kuala Lumpur', latitude: 3.139, longitude: 101.6869 }),
   Object.freeze({ place: 'Singapore', latitude: 1.3521, longitude: 103.8198 }),
-  Object.freeze({ place: 'Tokyo', latitude: 35.6762, longitude: 139.6503 }),
+  Object.freeze({ place: 'Jakarta', latitude: -6.2088, longitude: 106.8456 }),
+  Object.freeze({ place: 'Manila', latitude: 14.5995, longitude: 120.9842 }),
+  Object.freeze({ place: 'Hong Kong', latitude: 22.3193, longitude: 114.1694 }),
+  Object.freeze({ place: 'Taipei', latitude: 25.033, longitude: 121.5654 }),
+  Object.freeze({ place: 'Shanghai', latitude: 31.2304, longitude: 121.4737 }),
+  Object.freeze({ place: 'Beijing', latitude: 39.9042, longitude: 116.4074 }),
   Object.freeze({ place: 'Seoul', latitude: 37.5665, longitude: 126.978 }),
+  Object.freeze({ place: 'Tokyo', latitude: 35.6762, longitude: 139.6503 }),
+  Object.freeze({ place: 'Osaka', latitude: 34.6937, longitude: 135.5023 }),
+  Object.freeze({ place: 'Sapporo', latitude: 43.0618, longitude: 141.3545 }),
+  Object.freeze({ place: 'Perth', latitude: -31.9505, longitude: 115.8605 }),
+  Object.freeze({ place: 'Melbourne', latitude: -37.8136, longitude: 144.9631 }),
   Object.freeze({ place: 'Sydney', latitude: -33.8688, longitude: 151.2093 }),
+  Object.freeze({ place: 'Brisbane', latitude: -27.4698, longitude: 153.0251 }),
+  Object.freeze({ place: 'Auckland', latitude: -36.8509, longitude: 174.7645 }),
+  Object.freeze({ place: 'Wellington', latitude: -41.2865, longitude: 174.7762 }),
+  Object.freeze({ place: 'Suva', latitude: -18.1416, longitude: 178.4419 }),
 ]);
 
-/** ~±1.1 km of wobble, so two pops in one city are two pins, not one. */
-const POST_SPOT_JITTER_DEG = 0.01;
+/**
+ * ~±13 km of wobble around the named place, so a cohort's pops land across a
+ * city's whole area — its neighbourhoods, suburbs and shore — rather than on
+ * one downtown pixel. Exported so the tests pin the exact figure.
+ */
+export const POST_SPOT_JITTER_DEG = 0.12;
 
 // Mirror the app's publicCoordinate(): posts are written with 3-decimal public
 // coordinates (and cells = round(x * 1000)), and the guard binds a post only
@@ -123,27 +194,22 @@ export function postSpotsForActor(actorId) {
 }
 
 /**
- * How often a pop lands on ground another actor is standing on, rather than
- * somewhere else in the world.
- *
- * A post reaches whoever is inside its radius, so a cohort scattered across
- * twenty-five cities never intercepts itself: every feed stays empty, nobody
- * can view or like anyone, and nothing earns. Sending a share of pops to
- * another actor's own city is what lets the cohort behave like people in the
- * same place — which is the only way views, likes and messages happen at all.
+ * The share of pops that used to be sent back to another actor's own city so
+ * the cohort could intercept itself. Zero now (user-ordered 5 Sep): every
+ * pop lands somewhere in the world. The cohort still meets — it walks to the
+ * OWNER's posts to view, like, message and call (findOwnerPost), which is the
+ * reach that matters; stacking its own pops on three downtowns only made the
+ * board read as five people standing still.
  */
-export const NEIGHBOUR_POST_SHARE = 0.5;
+export const NEIGHBOUR_POST_SHARE = 0;
 
 /**
- * The home ground of every OTHER actor. Their jitter is about a kilometre, well
- * inside a new post's five kilometre seed, so a pop dropped here is genuinely
- * in reach of whoever lives there.
+ * The home ground of every OTHER actor. Kept for the contract's readers; no
+ * pop is aimed here any more.
  */
 export function neighbourSpotsForActor(actorId) {
   const home = ACTOR_LOCATIONS[actorId];
   if (!home) throw new Error(`Unknown synthetic actor: ${cleanText(actorId)}`);
-  // Three actors share Toronto, so "another actor's home" is not the same as
-  // "not my home". A pop still never lands on the poster's own ground.
   return ACTOR_IDS
     .filter(id => id !== actorId)
     .map(id => ACTOR_LOCATIONS[id])
@@ -153,21 +219,12 @@ export function neighbourSpotsForActor(actorId) {
 }
 
 /**
- * A fresh spot for one post. `random` is injectable so a test can pin it.
- * Half the time this is another actor's ground, so the cohort can actually
- * reach each other; otherwise it is somewhere else in the world, never the
- * actor's own home city, and never the same spot twice in a row.
+ * A fresh spot for one post: somewhere in the world, never the actor's own
+ * home city, never the same place twice in a row, and never the exact point
+ * a previous pop took. `random` is injectable so a test can pin it.
  */
 export function randomPostLocation(actorId, previous = null, random = Math.random) {
-  const neighbours = neighbourSpotsForActor(actorId);
-  // Alternate rather than roll: a pop that just travelled the world comes back
-  // to ground somebody lives on, and the next one leaves again. Deciding from
-  // the previous spot costs no draw, so a caller pinning `random` sees exactly
-  // the sequence it always did.
-  const previousWasNeighbour = Boolean(previous)
-    && neighbours.some(spot => spot.place === previous.place);
-  const towardNeighbour = neighbours.length > 0 && Boolean(previous) && !previousWasNeighbour;
-  const spots = towardNeighbour ? neighbours : postSpotsForActor(actorId);
+  const spots = postSpotsForActor(actorId);
   let spot = spots[Math.min(spots.length - 1, Math.max(0, Math.floor(random() * spots.length)))];
   if (previous && spots.length > 1 && spot.place === previous.place) {
     spot = spots[(spots.indexOf(spot) + 1) % spots.length];
@@ -188,11 +245,53 @@ export const LIVE_MAX_LIKES_PER_ACTOR = 12;
 /** Direct messages: one per poster the actor engaged with, a few per run, short and canned. */
 export const LIVE_MAX_DMS_PER_ACTOR = 3;
 export const LIVE_DM_TEXT_MAX = 240;
+/**
+ * How many messages one actor may send ONE person over a run. The first is
+ * the opener; the rest are replies to what that person writes back (a thread
+ * the owner answers used to go silent, because the guard admitted exactly one
+ * message per recipient). Bounded so a runaway loop cannot flood a thread.
+ */
+export const LIVE_MAX_DM_MESSAGES_PER_RECIPIENT = 8;
+/** How often an actor looks in on its owner thread for something to answer. */
+export const LIVE_REPLY_CHECK_INTERVAL_MS = 3 * 60_000;
 export const LIVE_DM_MESSAGES = Object.freeze([
   'Hey! Your post just reached me on the Feed — nice spot. Radius growing over here.',
   'Caught your post on Poplur and liked it. What’s the story behind it?',
   'Your pin showed up in my radius today. Keep posting, it travels!',
 ]);
+
+/**
+ * What a tester says back. Answers first when the owner asked something;
+ * otherwise a beat that keeps the thread alive without pretending to be a
+ * person — every line says it is a Poplur tester, and none invents a fact.
+ */
+export const LIVE_DM_ANSWERS = Object.freeze([
+  'Mostly your pins and the official world posts — my own radius is still small, so the Feed is quiet where I am.',
+  'Right now I see your latest post and a couple of the world pops. Nothing else has reached my radius yet.',
+  'A few pops in range tonight, yours included. The radius counter moved when I liked it, which was fun to watch.',
+  'Your post, one shopping pop and the news channel. The map side is livelier than the Feed here.',
+]);
+export const LIVE_DM_REPLIES = Object.freeze([
+  'Nice — thanks for writing back! I’m one of the Poplur testers, so I’ll keep liking and posting so your radius keeps moving.',
+  'Got it. I’ll drop a pop near you later and see if it reaches your Feed.',
+  'Good to hear from you. I just gave your post another look from the map — the pin is easy to spot.',
+  'Thanks! I’ll be around the radius tonight; ping me here if you want me to test a call.',
+  'Copy that. I’m posting from a different city each time, so watch the map for my pins.',
+  'Appreciated. The Feed showed your post at the top for me, so the reach is working on my side.',
+]);
+
+/**
+ * The reply for one owner message. A question gets an answer, anything else a
+ * beat; both cycle by how many replies this actor has already sent, offset by
+ * the actor so eight testers do not all say the same thing at once. Pure, so
+ * a test can pin it.
+ */
+export function replyForOwnerMessage(actorId, ownerText, repliesSent = 0) {
+  const offset = Math.max(0, ACTOR_IDS.indexOf(actorId));
+  const asked = /\?/.test(String(ownerText || ''));
+  const pool = asked ? LIVE_DM_ANSWERS : LIVE_DM_REPLIES;
+  return pool[(offset + repliesSent) % pool.length].slice(0, LIVE_DM_TEXT_MAX);
+}
 
 /**
  * The activity catalogue shown in the Test Center. `reported` says where the
@@ -251,7 +350,7 @@ export function validateRunnerCommand(value) {
  * `engage` steps are gated by the pacing constants above at run time, so a
  * plan cycle without a due post simply skips them.
  */
-export const LIVE_STEP_METHODS = new Set(['current', 'right', 'left', 'hold', 'escape', 'post', 'engage', 'dm', 'call']);
+export const LIVE_STEP_METHODS = new Set(['current', 'right', 'left', 'hold', 'escape', 'post', 'engage', 'dm', 'call', 'reply']);
 
 const LIVE_PLANS = Object.freeze({
   'sim-food-001': Object.freeze([
@@ -341,6 +440,7 @@ export function livePlanForActor(actorId) {
   return [plan[0],
     { screen: 'feed', action: 'like-post', method: 'engage' },
     { screen: 'feed', action: 'send-dm', method: 'dm' },
+    { screen: 'feed', action: 'reply-dm', method: 'reply' },
     { screen: 'feed', action: 'call-owner', method: 'call' },
     ...plan.slice(1)];
 }
@@ -359,7 +459,7 @@ export const LIVE_FRAME_STAGES = Object.freeze([
 export function cloudEventForLiveStep(step) {
   if (!step) return null;
   if (step.method === 'post') return { screen: 'map', action: 'screen-view' };
-  if (step.method === 'engage' || step.method === 'dm' || step.method === 'call') return { screen: 'feed', action: 'screen-view' };
+  if (step.method === 'engage' || step.method === 'dm' || step.method === 'reply' || step.method === 'call') return { screen: 'feed', action: 'screen-view' };
   return { screen: step.screen, action: step.action };
 }
 
@@ -627,7 +727,8 @@ function canonicalThreadId(a, b) {
  * A direct message exactly as the shipping shell sends it: one merge-set on
  * the thread and one set on the message, in the same batch. Only threads with
  * a recipient the runner bound after the app showed that poster, only from
- * the actor, one message per recipient, short text.
+ * the actor, a bounded number of messages per recipient (the opener and the
+ * replies to what they write back), short text.
  */
 function isExactLiveDMWrite(write, state, path, fields) {
   const match = path.match(/^dmThreads\/([A-Za-z0-9_-]{13,257})(?:\/messages\/([A-Za-z0-9_-]{6,128}))?$/);
@@ -651,10 +752,14 @@ function isExactLiveDMWrite(write, state, path, fields) {
       && typeof text === 'string' && text.trim().length > 0 && text.length <= LIVE_DM_TEXT_MAX
       && !('updateMask' in write)
       && transforms.length === 1 && isServerTime(transforms[0], 'createdAt')
-      && (state.dmMessageIds.has(messageId) || !state.dmSentTo.has(other));
+      // The opener, then replies to what this person writes back — bounded
+      // per recipient, so a thread can be a conversation but never a flood.
+      && (state.dmMessageIds.has(messageId)
+        || (state.dmMessagesTo.get(other) ?? 0) < LIVE_MAX_DM_MESSAGES_PER_RECIPIENT);
     if (ok && !state.dmMessageIds.has(messageId)) {
       state.dmMessageIds.add(messageId);
       state.dmSentTo.add(other);
+      state.dmMessagesTo.set(other, (state.dmMessagesTo.get(other) ?? 0) + 1);
       state.dmsSent += 1;
     }
     return ok;
@@ -727,6 +832,7 @@ export function createLiveCohortNetworkPolicy(identity, runId) {
     dmRecipients: new Set(),
     dmMessageIds: new Set(),
     dmSentTo: new Set(),
+    dmMessagesTo: new Map(),
     dmsSent: 0,
     callIds: new Set(),
     callRecipient: null,

@@ -17,7 +17,7 @@ import {
   livePlanForActor,
   validateRunnerCommand,
   randomPostLocation,
-  postSpotsForActor, WORLD_POST_SPOTS,
+  postSpotsForActor, WORLD_POST_SPOTS, POST_SPOT_JITTER_DEG,
   expectedAccountTypeForActor,
 } from './synthetic-live-actions.mjs';
 import { ACTOR_IDS, SAFE_ACTIONS, SAFE_EVENT_SCREENS, isAllowedEvent, eventTypeForAction } from './synthetic-runner-actions.mjs';
@@ -304,7 +304,10 @@ test('live policy admits one short DM per bound poster and blocks everything els
   assert.equal(policy.state.dmsSent, 1);
   assert.equal(policy.inspect(dmBatch(LIVE_DM_MESSAGES[0])).allow, true, 'retry of the same client message id');
   assert.equal(policy.state.dmsSent, 1);
-  assert.equal(policy.inspect(dmBatch(LIVE_DM_MESSAGES[1], 'dm-second-message-id')).allow, false, 'second DM to the same poster');
+  // A second message to the same person is a reply, and replies are what a
+  // conversation is made of (bounded per recipient; see the thread test).
+  assert.equal(policy.inspect(dmBatch(LIVE_DM_MESSAGES[1], 'dm-second-message-id')).allow, true, 'a reply to the same poster');
+  assert.equal(policy.state.dmsSent, 2);
   assert.equal(policy.inspect(dmBatch('x'.repeat(LIVE_DM_TEXT_MAX + 1), 'dm-long-message-id')).allow, false, 'too long');
   assert.equal(policy.inspect(dmBatch(LIVE_DM_MESSAGES[0], 'dm-other-thread-id', 'ZH9TGw7iwKXLaxBrXDd1PkAJlrP2')).allow, false, 'unbound thread');
   const foreignSender = commit([{
@@ -349,8 +352,8 @@ test('randomPostLocation spreads posts across real places and rounds exactly', (
   const spot = randomPostLocation('sim-food-001', null, random);
   const base = spots[2];
   assert.equal(spot.place, base.place);
-  assert.equal(spot.latitude, Math.round((base.latitude + 0.01) * 1_000) / 1_000);
-  assert.equal(spot.longitude, Math.round((base.longitude - 0.01) * 1_000) / 1_000);
+  assert.equal(spot.latitude, Math.round((base.latitude + POST_SPOT_JITTER_DEG) * 1_000) / 1_000);
+  assert.equal(spot.longitude, Math.round((base.longitude - POST_SPOT_JITTER_DEG) * 1_000) / 1_000);
   // The guard compares cells and 3-decimal values; both must derive from the
   // exact coordinates handed to the app, the way locationForActor does.
   assert.equal(spot.latitudeCell, Math.round(spot.latitude * 1000));
@@ -453,40 +456,98 @@ import { NEIGHBOUR_POST_SHARE, neighbourSpotsForActor, ACTOR_LOCATIONS as HOMES 
 const isNeighbourOf = (actorId, spot) => neighbourSpotsForActor(actorId)
   .some(candidate => candidate.place === spot.place);
 
-test('a pop alternates between the world and ground another actor stands on', () => {
-  // A pop nobody is near reaches nobody, so the cohort has to come back to
-  // each other or no view, like or message can ever happen.
-  const away = randomPostLocation('sim-food-001', null, () => 0);
-  assert.equal(isNeighbourOf('sim-food-001', away), false, 'the first pop keeps the world spread');
-
-  const home = randomPostLocation('sim-food-001', away, () => 0);
-  assert.equal(isNeighbourOf('sim-food-001', home), true, 'the next lands where another actor is');
-
-  const againAway = randomPostLocation('sim-food-001', home, () => 0);
-  assert.equal(isNeighbourOf('sim-food-001', againAway), false, 'and then it travels again');
-
-  for (const spot of [away, home, againAway]) {
-    assert.notEqual(spot.place, HOMES['sim-food-001'].place, 'never the actor’s own city');
+test('every pop goes somewhere in the world, never back to cohort ground on purpose', () => {
+  // The board should read as a live world: posts spread across many cities,
+  // not stacked on the three downtowns the cohort lives in.
+  assert.equal(NEIGHBOUR_POST_SHARE, 0);
+  assert.ok(WORLD_POST_SPOTS.length >= 80, `only ${WORLD_POST_SPOTS.length} world spots`);
+  let seed = 0.377;
+  const random = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const places = new Set();
+  let previous = null;
+  for (let i = 0; i < 400; i += 1) {
+    previous = randomPostLocation('sim-food-001', previous, random);
+    places.add(previous.place);
+    assert.notEqual(previous.place, HOMES['sim-food-001'].place, 'never the actor’s own city');
   }
-  assert.ok(NEIGHBOUR_POST_SHARE > 0 && NEIGHBOUR_POST_SHARE <= 1);
+  assert.ok(places.size >= 60, `400 pops visited only ${places.size} places`);
+  // Cohort ground is still reachable by chance — it is in the world — but no
+  // draw is steered there any more.
+  const away = randomPostLocation('sim-food-001', null, () => 0);
+  const next = randomPostLocation('sim-food-001', away, () => 0);
+  assert.equal(isNeighbourOf('sim-food-001', next), isNeighbourOf('sim-food-001', away));
 });
 
-test('every actor can reach the ground it returns to', () => {
+test('a pop lands within the jitter of its named place', () => {
   const km = (a, b) => {
     const north = (a.latitude - b.latitude) * 111.32;
     const east = (a.longitude - b.longitude) * 111.32 * Math.cos(a.latitude * Math.PI / 180);
     return Math.sqrt(north * north + east * east);
   };
-  for (const actorId of ACTOR_IDS) {
-    // Somewhere none of the cohort stands, so the next pop must come back.
-    const away = { place: 'Tokyo' };
-    const spot = randomPostLocation(actorId, away, () => 0);
-    const host = neighbourSpotsForActor(actorId).find(candidate => candidate.place === spot.place);
-    assert.ok(host, `${actorId} never returns to another actor's ground`);
-    // A new post carries a 5 km seed, so the jitter must stay well inside it
-    // or the pop lands out of reach of the very actor it was aimed at.
-    assert.ok(km(spot, host) < 3, `${actorId} landed ${km(spot, host).toFixed(1)} km from ${host.place}`);
+  let seed = 0.61;
+  const random = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  for (let i = 0; i < 200; i += 1) {
+    const spot = randomPostLocation('sim-news-005', null, random);
+    const base = WORLD_POST_SPOTS.find(candidate => candidate.place === spot.place);
+    assert.ok(base, `${spot.place} is not a named world spot`);
+    assert.ok(km(spot, base) < POST_SPOT_JITTER_DEG * 111.32 * 1.5, `${spot.place} landed ${km(spot, base).toFixed(1)} km out`);
   }
+});
+
+import { LIVE_MAX_DM_MESSAGES_PER_RECIPIENT, replyForOwnerMessage, LIVE_DM_ANSWERS, LIVE_DM_REPLIES } from './synthetic-live-actions.mjs';
+
+test('a tester answers an owner question and keeps a statement moving', () => {
+  const answer = replyForOwnerMessage('sim-food-001', 'What are you seeing in your radius tonight?', 0);
+  assert.ok(LIVE_DM_ANSWERS.includes(answer));
+  const beat = replyForOwnerMessage('sim-food-001', 'Nice to meet you.', 0);
+  assert.ok(LIVE_DM_REPLIES.includes(beat));
+  // Eight testers, eight different openers for the same message.
+  const said = new Set(['sim-food-001', 'sim-sports-002', 'sim-music-003', 'sim-tech-004', 'sim-news-005']
+    .map(actorId => replyForOwnerMessage(actorId, 'Nice to meet you.', 0)));
+  assert.ok(said.size >= 4);
+  // And one tester never repeats itself on consecutive replies.
+  assert.notEqual(replyForOwnerMessage('sim-food-001', 'ok', 0), replyForOwnerMessage('sim-food-001', 'ok', 1));
+  for (const line of [...LIVE_DM_ANSWERS, ...LIVE_DM_REPLIES]) assert.ok(line.length <= 240);
+});
+
+test('a bound thread admits the opener and its replies, bounded per recipient', () => {
+  const policy = bound();
+  const other = policy.bindDMRecipient(LIVE_OWNER_UID);
+  const me = policy.state.uid;
+  const threadId = [me, other].sort().join('_');
+  // The shell's own shape: one merge-set on the thread and one set on the
+  // message, in one batch — exactly what the guard admits for the opener.
+  const message = (id, text) => commit([
+    {
+      update: { name: `${DOC}/dmThreads/${threadId}`, fields: {
+        participants: { arrayValue: { values: [me, other].sort().map(value => ({ stringValue: value })) } },
+        lastMessage: str(text), lastSenderId: str(me),
+        unreadBy: { mapValue: { fields: { [me]: int(0) } } },
+      } },
+      updateMask: { fieldPaths: ['participants', 'lastMessage', 'lastSenderId', `unreadBy.\`${me}\``] },
+      updateTransforms: [
+        { fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' },
+        { fieldPath: `unreadBy.\`${other}\``, increment: { integerValue: '1' } },
+      ],
+    },
+    {
+      update: { name: `${DOC}/dmThreads/${threadId}/messages/${id}`, fields: {
+        senderId: str(me), clientMessageId: str(id), text: str(text), kind: str('text'),
+      } },
+      updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }],
+    },
+  ]);
+  assert.equal(policy.inspect(message('msg-opener-0001', 'hello')).allow, true, 'the opener');
+  assert.equal(policy.inspect(message('msg-reply-00001', 'and a reply')).allow, true, 'a reply to the same person');
+  for (let i = 2; i < LIVE_MAX_DM_MESSAGES_PER_RECIPIENT; i += 1) {
+    assert.equal(policy.inspect(message(`msg-reply-${String(i).padStart(5, '0')}`, `reply ${i}`)).allow, true, `reply ${i}`);
+  }
+  assert.equal(policy.inspect(message('msg-reply-99999', 'one too many')).allow, false, 'the per-recipient bound');
+  // A message to somebody the runner never bound stays refused.
+  const strangerThread = [me, 'stranger-uid-000000000000'].sort().join('_');
+  assert.equal(policy.inspect(commit([{ update: { name: `${DOC}/dmThreads/${strangerThread}/messages/msg-x-000001`, fields: {
+    senderId: str(me), clientMessageId: str('msg-x-000001'), kind: str('text'), text: str('hi'),
+  } }, updateTransforms: [{ fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' }] }])).allow, false);
 });
 
 import { LIVE_OWNER_UID } from './synthetic-social-contract.mjs';

@@ -22,6 +22,7 @@ import {
   livePlanForActor,
   locationForActor,
   randomPostLocation,
+  POST_SPREAD_MEMORY,
 } from './synthetic-live-actions.mjs';
 import {
   ACTOR_IDS,
@@ -280,6 +281,8 @@ export function createSyntheticLiveRunner({
   verdictLog = process.env.POPLUR_ONBOARDING_VERDICT_LOG !== '0',
 }) {
   const actors = new Map(SYNTHETIC_ACTORS.map(descriptor => [descriptor.actorId, createActorRuntime(descriptor)]));
+  /** Where the cohort's latest pops landed, across every actor (see randomPostLocation). */
+  const recentCohortSpots = [];
   const runtime = {
     mode: null,
     enabled: false,
@@ -701,7 +704,10 @@ export function createSyntheticLiveRunner({
   };
 
   const moveActorForPost = async (actor, clay) => {
-    const spot = randomPostLocation(actor.actorId, actor.lastPostSpot ?? null);
+    // Every actor's pops push away from the cohort's latest pops, not only
+    // from its own last one, so the five of them spread over the board
+    // together rather than each wandering into the same dense corner.
+    const spot = randomPostLocation(actor.actorId, actor.lastPostSpot ?? null, Math.random, recentCohortSpots);
     actor.policy.state.expectedLocation = spot;
     await setHostSyntheticLocation(actor, spot);
     // The fix lives on the Poplur shell frame (`clay`), not the host page: the
@@ -784,6 +790,8 @@ export function createSyntheticLiveRunner({
     actor.postsPublished += 1;
     actor.lastPostId = actor.policy.state.lastPostId;
     actor.lastPostSpot = spot;
+    recentCohortSpots.push(spot);
+    if (recentCohortSpots.length > POST_SPREAD_MEMORY * 2) recentCohortSpots.splice(0, recentCohortSpots.length - POST_SPREAD_MEMORY);
     actor.policy.state.expectedLocation = null;
     await returnActorHome(actor);
     actor.lastPostAtMs = Date.now();

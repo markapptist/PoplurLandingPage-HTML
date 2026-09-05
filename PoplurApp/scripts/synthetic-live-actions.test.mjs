@@ -17,7 +17,7 @@ import {
   livePlanForActor,
   validateRunnerCommand,
   randomPostLocation,
-  postSpotsForActor, WORLD_POST_SPOTS, POST_SPOT_JITTER_DEG,
+  postSpotsForActor, WORLD_POST_SPOTS, POST_SPOT_JITTER_DEG, POST_SPREAD_MEMORY, POST_SPREAD_CANDIDATES,
   expectedAccountTypeForActor,
 } from './synthetic-live-actions.mjs';
 import { ACTOR_IDS, SAFE_ACTIONS, SAFE_EVENT_SCREENS, isAllowedEvent, eventTypeForAction } from './synthetic-runner-actions.mjs';
@@ -381,6 +381,32 @@ test('randomPostLocation never lands an actor in its own home city', () => {
       assert.notEqual(previous.place, homeCity, `${actorId} landed at home on draw ${i}`);
     }
   }
+});
+
+test('randomPostLocation pushes a pop away from the cohort\'s latest pops', () => {
+  const km = (a, b) => {
+    const rad = d => d * Math.PI / 180;
+    const h = Math.sin(rad(b.latitude - a.latitude) / 2) ** 2
+      + Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(rad(b.longitude - a.longitude) / 2) ** 2;
+    return 2 * 6_371 * Math.asin(Math.sqrt(h));
+  };
+  // The cohort has just piled into western Europe.
+  const recent = ['Paris', 'Brussels', 'Amsterdam', 'Berlin', 'Zurich', 'Milan']
+    .map(place => WORLD_POST_SPOTS.find(spot => spot.place === place));
+  assert.ok(recent.every(Boolean));
+  let seed = 0.29;
+  const random = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  let nearest = Infinity;
+  for (let i = 0; i < 60; i += 1) {
+    const spot = randomPostLocation('sim-food-001', null, random, recent);
+    nearest = Math.min(nearest, Math.min(...recent.map(anchor => km(spot, anchor))));
+  }
+  // Sixty draws weighed against that pile-up never land inside it.
+  assert.ok(nearest > 1_000, `a pop landed ${nearest.toFixed(0)} km from the pile-up`);
+  // The plain draw still stands with nothing recent: the same seed, the same spot.
+  const seq = () => { let s = 0.29; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; };
+  assert.equal(randomPostLocation('sim-food-001', null, seq(), []).place, randomPostLocation('sim-food-001', null, seq()).place);
+  assert.ok(POST_SPREAD_MEMORY >= 8 && POST_SPREAD_CANDIDATES >= 4);
 });
 
 test('randomPostLocation refuses an unknown actor', () => {

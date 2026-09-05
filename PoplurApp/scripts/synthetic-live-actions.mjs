@@ -180,6 +180,20 @@ function withCells(location) {
 /** How far (in degrees, either axis) a spot must sit from an actor's home to count as "somewhere else". */
 const HOME_EXCLUSION_DEG = 0.5;
 
+/** How many of the cohort's latest pops a new pop is pushed away from. */
+export const POST_SPREAD_MEMORY = 12;
+/** How many random spots are weighed for one pop before the farthest is kept. */
+export const POST_SPREAD_CANDIDATES = 6;
+
+function greatCircleKm(a, b) {
+  const rad = degrees => degrees * Math.PI / 180;
+  const dLat = rad(b.latitude - a.latitude);
+  const dLon = rad(b.longitude - a.longitude);
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6_371 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 /**
  * The places one actor may post from: every world spot except its own home
  * city — by name, and by proximity, since a home like "World beta region" is
@@ -223,9 +237,28 @@ export function neighbourSpotsForActor(actorId) {
  * home city, never the same place twice in a row, and never the exact point
  * a previous pop took. `random` is injectable so a test can pin it.
  */
-export function randomPostLocation(actorId, previous = null, random = Math.random) {
+export function randomPostLocation(actorId, previous = null, random = Math.random, recent = []) {
   const spots = postSpotsForActor(actorId);
-  let spot = spots[Math.min(spots.length - 1, Math.max(0, Math.floor(random() * spots.length)))];
+  const draw = () => spots[Math.min(spots.length - 1, Math.max(0, Math.floor(random() * spots.length)))];
+  let spot = draw();
+  // Uniform draws over a city list pile up wherever the list is dense: Europe
+  // holds a quarter of the spots on a twentieth of the land, so "posting all
+  // over the world" still read as a clutter over one continent (5 Sep 2026).
+  // Weigh a few candidates and keep the one farthest from the cohort's latest
+  // pops — farthest-point sampling seeded by chance — so consecutive pops
+  // push away from each other across the whole board. With nothing recent
+  // the plain draw stands, which is also what keeps the older tests exact.
+  const anchors = recent
+    .filter(point => Number.isFinite(point?.latitude) && Number.isFinite(point?.longitude))
+    .slice(-POST_SPREAD_MEMORY);
+  if (anchors.length) {
+    let best = -1;
+    for (let i = 0; i < POST_SPREAD_CANDIDATES; i += 1) {
+      const candidate = i === 0 ? spot : draw();
+      const nearestKm = Math.min(...anchors.map(anchor => greatCircleKm(candidate, anchor)));
+      if (nearestKm > best) { best = nearestKm; spot = candidate; }
+    }
+  }
   if (previous && spots.length > 1 && spot.place === previous.place) {
     spot = spots[(spots.indexOf(spot) + 1) % spots.length];
   }

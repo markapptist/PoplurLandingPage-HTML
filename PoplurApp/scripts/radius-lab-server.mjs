@@ -61,16 +61,41 @@ const COHORT_POSTERS = Object.freeze([
   { pinColor: 'green',  ownerId: 'synthetic-conquer-green',  username: 'greenline.6ix' },
   { pinColor: 'orange', ownerId: 'synthetic-conquer-orange', username: 'orange.peel' },
 ]);
-/** Where each poster's two pops stand relative to the drop centre — bearing
- *  (degrees), distance and radius (metres). Overlapping ON PURPOSE: contested
- *  ground is what makes five colours read as a takeover rather than five dots. */
-const COHORT_LAYOUT = Object.freeze([
-  [{ bearing: 20,  distance: 900,   radius: 2_400 }, { bearing: 200, distance: 2_100, radius: 1_500 }],
-  [{ bearing: 95,  distance: 1_300, radius: 3_200 }, { bearing: 300, distance: 1_700, radius: 1_200 }],
-  [{ bearing: 160, distance: 800,   radius: 2_000 }, { bearing: 40,  distance: 2_600, radius: 2_800 }],
-  [{ bearing: 245, distance: 1_100, radius: 4_200 }, { bearing: 120, distance: 2_300, radius: 1_000 }],
-  [{ bearing: 330, distance: 700,   radius: 1_800 }, { bearing: 270, distance: 2_900, radius: 3_600 }],
-]);
+/** Where each poster's pops stand relative to the drop centre.
+ *
+ *  The cohort used to be two pops each inside a 3km circle: ten pins in one
+ *  cluster, which reads as a single contested block and leaves the rest of the
+ *  board empty. A takeover should look like one — pins across the map, not a
+ *  huddle (user-ordered 6 Sep).
+ *
+ *  So each poster now holds SIX pops laid on 5km rings: the same sectioning
+ *  the product uses, one ring per step out, with the five colours interleaved
+ *  around each ring so neighbouring sections belong to different owners and
+ *  the ground between them is contested rather than tidy. Thirty pins from
+ *  ~800m out to ~40km.
+ *
+ *  Radii stay inside the 5km section: a pop covers its own ground and reaches
+ *  into its neighbours', which is what makes the board read as a fight.
+ */
+const COHORT_SECTION_METERS = 5_000;
+const COHORT_SLOTS_PER_POSTER = 6;
+const COHORT_LAYOUT = Object.freeze(
+  Array.from({ length: 5 }, (_, posterIndex) => Object.freeze(
+    Array.from({ length: COHORT_SLOTS_PER_POSTER }, (_, slotIndex) => {
+      // Ring 0 sits close in; each further ring is one 5km section out.
+      const ring = slotIndex;
+      const distance = ring === 0
+        ? 800 + posterIndex * 140
+        : ring * COHORT_SECTION_METERS + posterIndex * 620;
+      // Five colours evenly around each ring, rotated per ring so the same
+      // owner never stacks along one bearing.
+      const bearing = (posterIndex * 72 + ring * 31) % 360;
+      // Inside the section, varied so the board is not five identical discs.
+      const radius = 1_200 + ((posterIndex * 3 + slotIndex * 7) % 9) * 420;
+      return { bearing, distance, radius };
+    }),
+  )),
+);
 const maxBodyBytes = 16 * 1024;
 const statePath = new URL('./.radius-lab-state.json', import.meta.url).pathname;
 const manifestPath = new URL('./radius-lab-manifest.md', import.meta.url).pathname;
@@ -273,7 +298,78 @@ async function removeCohort(reason) {
   }
   writeCohortState(null);
   lastCohort = [];
+  stopCohortPulse();
   return true;
+}
+
+/**
+ * The board BREATHES.
+ *
+ * A dropped cohort used to sit at a fixed radius forever, so the map was a
+ * still life: the right pins in the right places, none of them doing
+ * anything. Real ground is won and lost, so each pop now walks its radius up
+ * and down on its own phase — some growing while others shrink, which is what
+ * makes a takeover look contested rather than painted (user-ordered 6 Sep).
+ *
+ * Every step stays inside the 5km section the pin was laid on, and writes a
+ * radiusHistory entry the way every other radius change does, so the growth
+ * line over a cohort pop tells the truth.
+ */
+const COHORT_PULSE_MS = 20_000;
+let cohortPulseTimer = null;
+
+async function pulseCohort() {
+  const state = readCohortState();
+  if (!state || !Array.isArray(state.posts) || state.posts.length === 0) return;
+  const now = Date.now();
+  const batch = db().batch();
+  let moved = 0;
+  for (const [index, post] of state.posts.entries()) {
+    const base = Number(post.radiusMeters);
+    if (!Number.isFinite(base) || base <= 0) continue;
+    // Each pop on its own phase, so the board never pulses in unison.
+    const phase = (now / 60_000) + index * 0.7;
+    // Between half and the full section: it never leaves its own ground and
+    // never swallows a neighbour's whole claim.
+    const swing = 0.5 + 0.5 * ((Math.sin(phase) + 1) / 2);
+    const next = clampRadius(Math.round(
+      Math.min(base * swing * 1.6, COHORT_SECTION_METERS),
+    ));
+    if (next === base || next <= 0) continue;
+    const postRef = db().collection('posts').doc(post.postId);
+    batch.set(postRef, {
+      radiusMeters: next,
+      radius: next,
+      organicRadiusMeters: next,
+      updatedAt: Timestamp.fromMillis(now),
+    }, { merge: true });
+    batch.set(radiusHistoryRef(postRef, `pulse-${now}`), radiusHistoryDoc({
+      atMillis: now,
+      cause: next > base ? 'growth' : 'decay',
+      previous: { radiusMeters: base, organicRadiusMeters: base },
+      next: { radiusMeters: next, organicRadiusMeters: next },
+    }));
+    post.radiusMeters = next;
+    moved += 1;
+  }
+  if (moved === 0) return;
+  await batch.commit();
+  writeCohortState(state);
+  manifest(`PULSED ${moved} cohort pops (radius walk inside the 5km section).`);
+}
+
+function startCohortPulse() {
+  if (cohortPulseTimer) return;
+  cohortPulseTimer = setInterval(() => {
+    pulseCohort().catch(error => manifest(`cohort pulse failed: ${error?.message ?? error}`));
+  }, COHORT_PULSE_MS);
+  if (typeof cohortPulseTimer.unref === 'function') cohortPulseTimer.unref();
+}
+
+function stopCohortPulse() {
+  if (!cohortPulseTimer) return;
+  clearInterval(cohortPulseTimer);
+  cohortPulseTimer = null;
 }
 
 async function dropCohort({ latitude, longitude, radiusScale }) {
@@ -347,6 +443,8 @@ async function dropCohort({ latitude, longitude, radiusScale }) {
     createdAtMs: now,
     posts: created.map(({ postId, poster }) => ({ postId, ownerId: poster.ownerId, pinColor: poster.pinColor })),
   });
+  // The board starts breathing as soon as it is dropped.
+  startCohortPulse();
   for (const { postId, fields, mediaFrom, poster } of created) {
     manifest(`created posts/${postId} (owner ${poster.ownerId} @${poster.username}, pin ${poster.pinColor}, radius ${fields.radiusMeters} m, `
       + `syntheticSource: ${COHORT_SOURCE}, at ${fields.latitude},${fields.longitude}, media approved from officialContent posts/${mediaFrom}); `

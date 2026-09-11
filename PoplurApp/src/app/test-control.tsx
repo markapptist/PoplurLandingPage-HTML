@@ -426,7 +426,7 @@ function TesterTable({ rows, expandedUid, onToggle, openPostId, onOpenPost }: { 
       return <View key={row.uid}>
         <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => onToggle(row.uid)} style={[styles.tableRow, expanded && styles.tableRowOpen]}>
           <View style={styles.colName}><Text style={styles.name} numberOfLines={1}>{row.label}</Text><Text style={styles.meta} numberOfLines={1}>{row.username ? `@${row.username}` : row.uid.slice(0, 8)}{row.accountType !== 'user' ? ` · ${row.accountType}` : ''}{row.platform ? ` · ${row.platform}` : ''}</Text></View>
-          <View style={[styles.colStatus, styles.row]}><View style={[styles.statusDot, row.presence === 'online' ? styles.statusLive : row.presence === 'away' ? styles.statusAway : styles.statusNone]} /><Text style={styles.cell}>{row.presence === 'online' ? (row.screen ? row.screen.replace(/-/g, ' ') : 'LIVE') : row.presence === 'away' ? ago(row.lastActivityAtMs) : PRESENCE_LABEL.unknown}</Text></View>
+          <View style={[styles.colStatus, styles.row]}><View style={[styles.statusDot, row.presence === 'online' ? styles.statusLive : row.presence === 'away' ? styles.statusAway : styles.statusNone]} /><Text style={styles.cell}>{row.presence === 'online' ? (row.screen ? row.screen.replace(/-/g, ' ') : row.presenceSource === 'lease' ? 'IN APP' : 'LIVE') : row.presence === 'away' ? ago(row.lastActivityAtMs) : PRESENCE_LABEL.unknown}</Text></View>
           <Text style={[styles.cell, styles.colWhen]}>{stamp(row.signedUpAtMs)}</Text>
           <Text style={[styles.cell, styles.colNum]}>{row.postCount}</Text>
           <Text style={[styles.cell, styles.colWhen]}>{row.lastPostedAtMs ? ago(row.lastPostedAtMs) : '—'}</Text>

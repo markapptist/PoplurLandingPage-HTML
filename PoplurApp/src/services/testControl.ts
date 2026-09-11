@@ -206,6 +206,21 @@ export type BetaTesterRow = {
   postCount: number;
   lastPostedAtMs: number;
   posts: BetaTesterPost[];
+  synthetic: boolean;
+};
+
+export type BetaDailyCount = {
+  day: string;
+  signups: number;
+  syntheticSignups: number;
+  posts: number;
+  syntheticPosts: number;
+};
+
+export type BetaDailySeries = {
+  timeZone: string;
+  days: BetaDailyCount[];
+  postsComplete: boolean;
 };
 
 export type PostHistoryEntry = {
@@ -240,6 +255,7 @@ export type PostHistory = {
 export type BetaDashboard = {
   generatedAtMs: number;
   testers: BetaTesterRow[];
+  daily: BetaDailySeries;
   rows: TestActivityRow[];
   posts: BetaPostRow[];
   map: BetaMapCell[];
@@ -568,6 +584,7 @@ const testerRow = (value: unknown): BetaTesterRow | null => {
     platform: text(row.platform, 16),
     postCount: integer(row.postCount, 100_000),
     lastPostedAtMs: timeMs(row.lastPostedAtMs),
+    synthetic: row.synthetic === true,
     posts: Array.isArray(row.posts) ? row.posts.map(testerPost).filter((post): post is BetaTesterPost => post !== null).slice(0, 24) : [],
   };
 };
@@ -611,6 +628,28 @@ const postHistory = (value: unknown): PostHistory => {
   };
 };
 
+const dailyCount = (value: unknown): BetaDailyCount | null => {
+  const entry = record(value);
+  const day = text(entry.day, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  return {
+    day,
+    signups: integer(entry.signups, 100_000),
+    syntheticSignups: integer(entry.syntheticSignups, 100_000),
+    posts: integer(entry.posts, 1_000_000),
+    syntheticPosts: integer(entry.syntheticPosts, 1_000_000),
+  };
+};
+
+const dailySeries = (value: unknown): BetaDailySeries => {
+  const series = record(value);
+  return {
+    timeZone: text(series.timeZone, 64),
+    days: Array.isArray(series.days) ? series.days.map(dailyCount).filter((day): day is BetaDailyCount => day !== null).slice(0, 90) : [],
+    postsComplete: series.postsComplete !== false,
+  };
+};
+
 const dashboard = (value: unknown): BetaDashboard => {
   const result = record(value) as Partial<BetaDashboard> & Record<string, unknown>;
   const actors = Array.isArray(result.runnerActors)
@@ -620,6 +659,7 @@ const dashboard = (value: unknown): BetaDashboard => {
       : [];
   return {
     generatedAtMs: timeMs(result.generatedAtMs) || Date.now(),
+    daily: dailySeries(result.daily),
     testers: Array.isArray(result.testers)
       ? result.testers.map(testerRow).filter((row): row is BetaTesterRow => row !== null).slice(0, 1000)
       : [],

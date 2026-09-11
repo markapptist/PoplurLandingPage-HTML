@@ -11,7 +11,7 @@ import {
   type RealtimeFeedPost,
   type RealtimePublicPost,
 } from '@/services/testControl';
-import { readPostHistory, type BetaTesterPost, type BetaTesterRow, type PostHistory } from '@/services/testControl';
+import { readPostHistory, type BetaDailySeries, type BetaTesterPost, type BetaTesterRow, type PostHistory } from '@/services/testControl';
 import {
   readSyntheticRunnerFrames,
   readSyntheticRunnerFrameImage,
@@ -403,7 +403,7 @@ export default function TestControlScreen() {
       <Section title="The five isolated testing profiles" kicker="RUNNER PERSONAS"><View style={styles.personaGrid}>{!dashboard.runnerActors.length ? <Empty text="The beta runner manifest is loading." /> : dashboard.runnerActors.map(profile => <PersonaCard key={profile.id} profile={profile} />)}</View></Section>
       <Section title="Radius and virality desk" kicker="FIRESTORE REALTIME POST MOMENTUM">{!realtimePosts.length ? <Empty text="A published post with an approximate public area will appear here immediately." /> : realtimePosts.slice(0, 12).map(post => <View key={post.id} style={styles.listRow}><View style={styles.rate}><Text style={styles.rateValue}>{Math.round(post.viralPerHour)}</Text><Text style={styles.rateLabel}>/HR</Text></View><View style={styles.flex}><Text style={styles.name}>{post.label} · {post.place}</Text><Text style={styles.meta}>Posted {clock(post.postedAtMs)} · {post.initialRadiusKm.toFixed(1)} km → {post.radiusKm.toFixed(1)} km ({post.radiusDeltaKm >= 0 ? '+' : ''}{post.radiusDeltaKm.toFixed(1)} km)</Text></View><Text style={styles.when}>{ago(post.updatedAtMs || post.postedAtMs)}</Text></View>)}</Section>
       <Section title="What the live Feed is receiving" kicker="FIRESTORE REALTIME FEED CHANNELS">{!feedChannels.length ? <Empty text="The wiped Feed is empty. Channels will appear here at the same moment a published Firestore post reaches the app." /> : feedChannels.map(([channelId, counts]) => <View key={channelId} style={styles.listRow}><View style={styles.badge}><Text style={styles.badgeText}>{counts.total}</Text></View><View style={styles.flex}><Text style={styles.name}>{words(channelId)}</Text><Text style={styles.meta}>{counts.photos} photos · {counts.videos} videos · {counts.total - counts.photos - counts.videos} unclassified</Text></View><Text style={styles.when}>LIVE</Text></View>)}</Section>
-      <Section title="Every tester, live" kicker="TESTER TABLE">{!dashboard.testers.length ? <Empty text="No accounts yet." /> : <TesterTable rows={dashboard.testers} expandedUid={expandedTester} onToggle={uid => setExpandedTester(current => current === uid ? null : uid)} openPostId={openPostId} onOpenPost={openPost} />}{!!openPostId && <PostDrilldown postId={openPostId} history={postHistory} state={postHistoryState} />}</Section>
+      <Section title="Every tester, live" kicker="TESTER TABLE">{!dashboard.testers.length ? <Empty text="No accounts yet." /> : <TesterTable rows={dashboard.testers} daily={dashboard.daily} expandedUid={expandedTester} onToggle={uid => setExpandedTester(current => current === uid ? null : uid)} openPostId={openPostId} onOpenPost={openPost} />}{!!openPostId && <PostDrilldown postId={openPostId} history={postHistory} state={postHistoryState} />}</Section>
       <Section title="Who is testing right now" kicker="TESTER ACTIVITY">{!dashboard.rows.length ? <Empty text="No opted-in tester activity yet." /> : dashboard.rows.map(row => <View key={row.id} style={styles.listRow}><View style={[styles.statusDot, row.state === 'active' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text style={styles.name}>{row.label}</Text><Text style={styles.meta}>{row.screen.replace(/-/g, ' ')} · {row.platform} · v{row.appVersion}</Text></View><Text style={styles.when}>{row.state === 'active' ? 'LIVE' : ago(row.lastActivityAtMs)}</Text></View>)}</Section>
       <Section title="Findings, wins and improvements" kicker="WHAT TESTERS ARE SAYING">{!dashboard.feedback.length ? <Empty text="Voluntary tester reports will land here." /> : dashboard.feedback.map(report => <View key={report.id} style={styles.report}><View style={styles.row}><Text style={styles.name}>{report.label}</Text><Text style={styles.when}>{ago(report.createdAtMs)}</Text></View>{!!report.finding && <Text style={styles.reportText}><Text style={styles.reportLabel}>FOUND </Text>{report.finding}</Text>}{!!report.liked && <Text style={styles.reportText}><Text style={styles.reportLabel}>LIKED </Text>{report.liked}</Text>}{!!report.improve && <Text style={styles.reportText}><Text style={styles.reportLabel}>IMPROVE </Text>{report.improve}</Text>}</View>)}</Section>
     </>}{!!notice && <Text style={styles.notice}>{notice}</Text>}
@@ -416,10 +416,60 @@ const stamp = (ms: number) => !ms ? '—' : new Date(ms).toLocaleString(undefine
 const PRESENCE_LABEL: Record<BetaTesterRow['presence'], string> = { online: 'ONLINE', away: 'AWAY', unknown: 'NO SIGNAL' };
 const CAUSE_COLOR: Record<string, string> = { create: '#8ec5ff', engagement: '#5af0a4', decay: '#ff8a6b', boost: '#ffd166', synthetic: '#c8a2ff', lab: '#c8a2ff', backfill: '#806476' };
 
-function TesterTable({ rows, expandedUid, onToggle, openPostId, onOpenPost }: { rows: BetaTesterRow[]; expandedUid: string | null; onToggle: (uid: string) => void; openPostId: string | null; onOpenPost: (postId: string) => void }) {
+const dayLabel = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const share = (part: number, whole: number) => `${Math.round(Math.max(0, Math.min(1, whole > 0 ? part / whole : 0)) * 100)}%` as const;
+
+/** One column per calendar day: how many people joined and how many pops were
+ *  dropped. Real counts draw solid; the simulation's share sits behind them in
+ *  the muted tone so a busy cohort day never reads as a busy beta day. */
+function DailyStrip({ series }: { series: BetaDailySeries }) {
+  if (!series.days.length) return null;
+  const maxSignups = Math.max(1, ...series.days.map(day => day.signups));
+  const maxPosts = Math.max(1, ...series.days.map(day => day.posts));
+  const realSignups = series.days.reduce((sum, day) => sum + day.signups - day.syntheticSignups, 0);
+  const realPosts = series.days.reduce((sum, day) => sum + day.posts - day.syntheticPosts, 0);
+  return <View style={styles.daily}>
+    <View style={styles.dailyHead}>
+      <Text style={styles.dailyTitle}>Joining and dropping, per day</Text>
+      <Text style={styles.meta}>Last {series.days.length} days · {realSignups} new testers · {realPosts} pops dropped · days roll at midnight {series.timeZone.replace('_', ' ')}{series.postsComplete ? '' : ' · earliest days under-count pops (ledger slice capped)'}</Text>
+    </View>
+    <View style={styles.dailyLegend}>
+      <View style={styles.legendItem}><View style={[styles.legendSwatch, styles.dailyBarSignups]} /><Text style={styles.legendText}>NEW TESTERS</Text></View>
+      <View style={styles.legendItem}><View style={[styles.legendSwatch, styles.dailyBarPosts]} /><Text style={styles.legendText}>POPS DROPPED</Text></View>
+      <View style={styles.legendItem}><View style={[styles.legendSwatch, styles.dailyBarSim]} /><Text style={styles.legendText}>SIMULATION (+N)</Text></View>
+    </View>
+    <View style={styles.dailyRow}>
+      {series.days.map(day => {
+        const people = day.signups - day.syntheticSignups;
+        const pops = day.posts - day.syntheticPosts;
+        return <View key={day.day} style={styles.dailyCol}>
+          <View style={styles.dailyBars}>
+            <View style={styles.dailyTrack}>
+              <View style={[styles.dailyBar, styles.dailyBarSim, { height: share(day.signups, maxSignups) }]} />
+              <View style={[styles.dailyBar, styles.dailyBarSignups, { height: share(people, maxSignups) }]} />
+            </View>
+            <View style={styles.dailyTrack}>
+              <View style={[styles.dailyBar, styles.dailyBarSim, { height: share(day.posts, maxPosts) }]} />
+              <View style={[styles.dailyBar, styles.dailyBarPosts, { height: share(pops, maxPosts) }]} />
+            </View>
+          </View>
+          <Text style={[styles.dailyNum, styles.dailyNumSignups]} numberOfLines={1}>{people}{day.syntheticSignups ? <Text style={styles.dailySim}>+{day.syntheticSignups}</Text> : null}</Text>
+          <Text style={[styles.dailyNum, styles.dailyNumPosts]} numberOfLines={1}>{pops}{day.syntheticPosts ? <Text style={styles.dailySim}>+{day.syntheticPosts}</Text> : null}</Text>
+          <Text style={styles.dailyDay} numberOfLines={1}>{dayLabel(day.day)}</Text>
+        </View>;
+      })}
+    </View>
+  </View>;
+}
+
+function TesterTable({ rows, daily, expandedUid, onToggle, openPostId, onOpenPost }: { rows: BetaTesterRow[]; daily: BetaDailySeries; expandedUid: string | null; onToggle: (uid: string) => void; openPostId: string | null; onOpenPost: (postId: string) => void }) {
   const online = rows.filter(row => row.presence === 'online').length;
+  const people = rows.filter(row => !row.synthetic);
+  const peoplePosts = people.reduce((sum, row) => sum + row.postCount, 0);
+  const allPosts = rows.reduce((sum, row) => sum + row.postCount, 0);
   return <View>
-    <Text style={styles.tableSummary}>{online} online · {rows.length} signed up · {rows.reduce((sum, row) => sum + row.postCount, 0)} posts</Text>
+    <DailyStrip series={daily} />
+    <Text style={styles.tableSummary}>{online} online · {people.length} testers ({rows.length - people.length} simulation accounts) · {peoplePosts} pops by testers ({allPosts - peoplePosts} by the simulation)</Text>
     <View style={[styles.tableRow, styles.tableHead]}><Text style={[styles.th, styles.colName]}>TESTER</Text><Text style={[styles.th, styles.colStatus]}>STATUS</Text><Text style={[styles.th, styles.colWhen]}>SIGNED UP</Text><Text style={[styles.th, styles.colNum]}>POSTS</Text><Text style={[styles.th, styles.colWhen]}>LAST POST</Text></View>
     {rows.map(row => {
       const expanded = expandedUid === row.uid;
@@ -536,4 +586,24 @@ const styles = StyleSheet.create<Record<string, any>>({
   modePicker: { flexDirection: 'row', gap: 6 }, modeButton: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 11, borderWidth: 1, borderColor: '#79506c', backgroundColor: '#2a1725' }, modeButtonActive: { borderColor: '#8fddff', backgroundColor: '#174760' }, modeButtonLive: { borderColor: '#ff8ac5', backgroundColor: '#b0134f' }, modeButtonText: { color: '#d8b8c8', fontSize: 9, fontWeight: '900', letterSpacing: .8 }, modeButtonTextActive: { color: '#fff' },
   activityPanel: { gap: 12, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#652944', backgroundColor: '#1b0a16' }, activityList: { gap: 6 }, activityRow: { flexDirection: 'row', gap: 10, alignItems: 'center', padding: 9, borderRadius: 11, borderWidth: 1, borderColor: '#44263b', backgroundColor: '#1d111b' }, activityIndex: { width: 22, color: '#8fddff', fontSize: 10, fontWeight: '900' }, activityLabel: { color: '#fff', fontSize: 11, fontWeight: '900' }, activityDetail: { color: '#b98ca4', fontSize: 9, lineHeight: 13 }, activityChip: { minWidth: 76, paddingHorizontal: 7, paddingVertical: 4, alignItems: 'center', borderRadius: 7 }, activityChipCloud: { backgroundColor: '#174760' }, activityChipLocal: { backgroundColor: '#493547' }, activityChipProduction: { backgroundColor: '#b0134f' }, activityChipText: { color: '#fff', fontSize: 7, fontWeight: '900', letterSpacing: .6 }, activityFoot: { color: '#8f7181', fontSize: 9, lineHeight: 14 },
   rosterPanel: { gap: 10, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#4b3148', backgroundColor: '#140b15' }, rosterRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 9, borderTopWidth: 1, borderTopColor: '#3a2334' }, rosterName: { color: '#fff8fc', fontSize: 12, fontWeight: '900' }, rosterPersona: { color: '#d0a2b9', fontSize: 10, fontWeight: '600' }, rosterMeta: { color: '#a77891', fontSize: 9 }, rosterStats: { alignItems: 'flex-end', gap: 2, maxWidth: 170 }, rosterStat: { color: '#8fddff', fontSize: 10, fontWeight: '900' }, rosterStatMeta: { color: '#8f7181', fontSize: 8, textAlign: 'right' }, rosterFailures: { gap: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#3a2334' }, rosterError: { color: '#ff9ebf', fontSize: 9, fontWeight: '800', lineHeight: 13 },
+  daily: { marginBottom: 14, padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
+  dailyHead: { marginBottom: 8 },
+  dailyTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 2 },
+  dailyLegend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 8 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  legendSwatch: { width: 10, height: 10, borderRadius: 2 },
+  legendText: { color: '#a894b3', fontSize: 10, letterSpacing: 1, fontWeight: '700' },
+  dailyRow: { flexDirection: 'row', gap: 4 },
+  dailyCol: { flex: 1, minWidth: 0, alignItems: 'center' },
+  dailyBars: { flexDirection: 'row', gap: 2, height: 56, alignItems: 'flex-end', width: '100%' },
+  dailyTrack: { flex: 1, height: '100%', position: 'relative', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.04)', overflow: 'hidden' },
+  dailyBar: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
+  dailyBarSignups: { backgroundColor: '#8ec5ff' },
+  dailyBarPosts: { backgroundColor: '#5af0a4' },
+  dailyBarSim: { backgroundColor: '#5a4a66' },
+  dailyNum: { fontSize: 11, fontWeight: '700', marginTop: 4, fontVariant: ['tabular-nums'] },
+  dailyNumSignups: { color: '#8ec5ff' },
+  dailyNumPosts: { color: '#5af0a4', marginTop: 1 },
+  dailySim: { color: '#8a7a96', fontWeight: '600' },
+  dailyDay: { color: '#8a7a96', fontSize: 9, marginTop: 3 },
 });

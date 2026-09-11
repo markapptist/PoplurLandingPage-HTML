@@ -167,10 +167,16 @@ async function refreshLiveDashboard() {
     liveUpstreamFailedAtMs = 0;
     if (!onboardingQuarantine && combined) broadcastLiveDashboard(combined);
   } catch {
-    // A broken watcher/upstream clears both cache and registrations. The next
-    // reconnect must earn LIVE again from a fresh Firestore snapshot.
+    // The cloud switch failed. Keep the Firestore watchers and the public
+    // snapshot (both still valid) and drop only the cached dashboard, then
+    // close the clients so the desk shows OFFLINE and earns LIVE again from
+    // the next successful cloud call. Tearing the seven watchers down here
+    // cost ~460 document reads per reconnect: ~400k reads an hour for the
+    // five hours of the 11 Sep outage. A watcher that itself fails still
+    // goes through resetLiveWatchers via its error callback.
     liveUpstreamFailedAtMs = Date.now();
-    resetLiveWatchers();
+    liveState.cache(null);
+    closeLiveClients();
   } finally {
     liveRefreshInFlight = false;
     if (liveRefreshAgain) {

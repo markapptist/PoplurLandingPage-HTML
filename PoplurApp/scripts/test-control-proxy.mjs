@@ -21,6 +21,11 @@ const controlRoomOrigin = 'http://127.0.0.1:8084';
 // postHistory is the tester table's drill-down: one post's radius ledger.
 const allowedActions = new Set(['dashboard', 'runner', 'postHistory']);
 let liveSignupTicker = null;
+// Set while the cloud switch is failing. Every reconnect re-earns LIVE with a
+// fresh dashboard call, so a failing upstream must not be hammered at the
+// 1.5 s reconnect cadence: 40 calls/min starved Cloud Run's instance
+// admission while it recovered from a spend cap (11 Sep).
+let liveUpstreamFailedAtMs = 0;
 const actorPattern = '[a-zA-Z0-9._:-]+';
 const maxBodyBytes = 16 * 1024;
 const liveClients = new Set();
@@ -159,10 +164,12 @@ async function refreshLiveDashboard() {
   try {
     if (!liveState.isPublicReady()) return;
     const combined = liveState.combine(await callCloudControl({ action: 'dashboard' }));
+    liveUpstreamFailedAtMs = 0;
     if (!onboardingQuarantine && combined) broadcastLiveDashboard(combined);
   } catch {
     // A broken watcher/upstream clears both cache and registrations. The next
     // reconnect must earn LIVE again from a fresh Firestore snapshot.
+    liveUpstreamFailedAtMs = Date.now();
     resetLiveWatchers();
   } finally {
     liveRefreshInFlight = false;
@@ -220,7 +227,8 @@ function openLiveStream(request, response, origin) {
     connection: 'keep-alive',
     'x-accel-buffering': 'no',
   });
-  response.write('retry: 1500\n\n');
+  // Reconnect fast while healthy; back off to 15 s while the upstream is down.
+  response.write(`retry: ${liveUpstreamFailedAtMs ? 15_000 : 1500}\n\n`);
   liveClients.add(response);
   if (!onboardingQuarantine) startLiveWatchers();
   // Firestore watchers drive every refresh, but the tester table also reads

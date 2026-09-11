@@ -11,6 +11,7 @@ import {
   type RealtimeFeedPost,
   type RealtimePublicPost,
 } from '@/services/testControl';
+import { readPostHistory, type BetaTesterPost, type BetaTesterRow, type PostHistory } from '@/services/testControl';
 import {
   readSyntheticRunnerFrames,
   readSyntheticRunnerFrameImage,
@@ -346,6 +347,25 @@ function ReplayButton({ label, active = false, disabled = false, onPress }: { la
 export default function TestControlScreen() {
   const [dashboard, setDashboard] = useState<BetaDashboard | null>(null); const [loading, setLoading] = useState(true); const [notice, setNotice] = useState<string | null>(null);
   const [deskRealtimeState, setDeskRealtimeState] = useState<'connecting' | 'live' | 'offline'>('connecting');
+  // The tester table's drill-down. Expanding a tester is local; opening a post
+  // fetches its radius ledger through the proxy on demand rather than shipping
+  // every post's history inside every live frame.
+  const [expandedTester, setExpandedTester] = useState<string | null>(null);
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
+  const [postHistory, setPostHistory] = useState<PostHistory | null>(null);
+  const [postHistoryState, setPostHistoryState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const openPost = useCallback((postId: string) => {
+    setOpenPostId(current => current === postId ? null : postId);
+  }, []);
+  useEffect(() => {
+    if (!openPostId) { setPostHistory(null); setPostHistoryState('idle'); return; }
+    let cancelled = false;
+    setPostHistoryState('loading');
+    readPostHistory(openPostId)
+      .then(history => { if (!cancelled) { setPostHistory(history); setPostHistoryState('idle'); } })
+      .catch(() => { if (!cancelled) setPostHistoryState('error'); });
+    return () => { cancelled = true; };
+  }, [openPostId]);
   const refreshInFlight = useRef(false); const requestGeneration = useRef(0);
   const refresh = useCallback(async () => { if (refreshInFlight.current) return; refreshInFlight.current = true; const generation = ++requestGeneration.current; setLoading(true); try { const next = await readOwnerDashboard(); if (generation === requestGeneration.current) { setDashboard(next); setNotice(null); } } catch (error) { if (generation === requestGeneration.current) setNotice(error instanceof Error ? error.message : 'The local beta desk connection is unavailable.'); } finally { refreshInFlight.current = false; if (generation === requestGeneration.current) setLoading(false); } }, []);
   useEffect(() => subscribeOwnerDashboard(next => {
@@ -383,6 +403,7 @@ export default function TestControlScreen() {
       <Section title="The five isolated testing profiles" kicker="RUNNER PERSONAS"><View style={styles.personaGrid}>{!dashboard.runnerActors.length ? <Empty text="The beta runner manifest is loading." /> : dashboard.runnerActors.map(profile => <PersonaCard key={profile.id} profile={profile} />)}</View></Section>
       <Section title="Radius and virality desk" kicker="FIRESTORE REALTIME POST MOMENTUM">{!realtimePosts.length ? <Empty text="A published post with an approximate public area will appear here immediately." /> : realtimePosts.slice(0, 12).map(post => <View key={post.id} style={styles.listRow}><View style={styles.rate}><Text style={styles.rateValue}>{Math.round(post.viralPerHour)}</Text><Text style={styles.rateLabel}>/HR</Text></View><View style={styles.flex}><Text style={styles.name}>{post.label} · {post.place}</Text><Text style={styles.meta}>Posted {clock(post.postedAtMs)} · {post.initialRadiusKm.toFixed(1)} km → {post.radiusKm.toFixed(1)} km ({post.radiusDeltaKm >= 0 ? '+' : ''}{post.radiusDeltaKm.toFixed(1)} km)</Text></View><Text style={styles.when}>{ago(post.updatedAtMs || post.postedAtMs)}</Text></View>)}</Section>
       <Section title="What the live Feed is receiving" kicker="FIRESTORE REALTIME FEED CHANNELS">{!feedChannels.length ? <Empty text="The wiped Feed is empty. Channels will appear here at the same moment a published Firestore post reaches the app." /> : feedChannels.map(([channelId, counts]) => <View key={channelId} style={styles.listRow}><View style={styles.badge}><Text style={styles.badgeText}>{counts.total}</Text></View><View style={styles.flex}><Text style={styles.name}>{words(channelId)}</Text><Text style={styles.meta}>{counts.photos} photos · {counts.videos} videos · {counts.total - counts.photos - counts.videos} unclassified</Text></View><Text style={styles.when}>LIVE</Text></View>)}</Section>
+      <Section title="Every tester, live" kicker="TESTER TABLE">{!dashboard.testers.length ? <Empty text="No accounts yet." /> : <TesterTable rows={dashboard.testers} expandedUid={expandedTester} onToggle={uid => setExpandedTester(current => current === uid ? null : uid)} openPostId={openPostId} onOpenPost={openPost} />}{!!openPostId && <PostDrilldown postId={openPostId} history={postHistory} state={postHistoryState} />}</Section>
       <Section title="Who is testing right now" kicker="TESTER ACTIVITY">{!dashboard.rows.length ? <Empty text="No opted-in tester activity yet." /> : dashboard.rows.map(row => <View key={row.id} style={styles.listRow}><View style={[styles.statusDot, row.state === 'active' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text style={styles.name}>{row.label}</Text><Text style={styles.meta}>{row.screen.replace(/-/g, ' ')} · {row.platform} · v{row.appVersion}</Text></View><Text style={styles.when}>{row.state === 'active' ? 'LIVE' : ago(row.lastActivityAtMs)}</Text></View>)}</Section>
       <Section title="Findings, wins and improvements" kicker="WHAT TESTERS ARE SAYING">{!dashboard.feedback.length ? <Empty text="Voluntary tester reports will land here." /> : dashboard.feedback.map(report => <View key={report.id} style={styles.report}><View style={styles.row}><Text style={styles.name}>{report.label}</Text><Text style={styles.when}>{ago(report.createdAtMs)}</Text></View>{!!report.finding && <Text style={styles.reportText}><Text style={styles.reportLabel}>FOUND </Text>{report.finding}</Text>}{!!report.liked && <Text style={styles.reportText}><Text style={styles.reportLabel}>LIKED </Text>{report.liked}</Text>}{!!report.improve && <Text style={styles.reportText}><Text style={styles.reportLabel}>IMPROVE </Text>{report.improve}</Text>}</View>)}</Section>
     </>}{!!notice && <Text style={styles.notice}>{notice}</Text>}
@@ -390,10 +411,113 @@ export default function TestControlScreen() {
 }
 function Metric({ label, value, suffix, note }: { label: string; value: string; suffix?: string; note: string }) { return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.metricValue}>{value}{suffix && <Text style={styles.metricSuffix}> {suffix}</Text>}</Text><Text style={styles.metricNote}>{note}</Text></View>; }
 function PersonaCard({ profile }: { profile: BetaRunnerActor }) { const personaKey = Object.keys(PERSONA_MARKS).find(key => profile.persona.toLowerCase().includes(key)); const mark = personaKey ? PERSONA_MARKS[personaKey] : '●'; return <View style={styles.personaCard}><View style={styles.personaTop}><View style={styles.personaAvatar}><Text style={styles.personaMark}>{mark}</Text><Text style={styles.personaTile}>{profile.avatarTile.toUpperCase()}</Text></View><View style={styles.flex}><Text style={styles.personaFlag}>ISOLATED RUNNER ACTOR</Text><Text style={styles.name}>{profile.label}</Text><Text style={styles.meta}>{profile.persona} · {profile.place}</Text></View><Text style={[styles.personaStatus, profile.state === 'live' ? styles.simLive : styles.simPaused]}>{profile.state.replace(/-/g, ' ').toUpperCase()}</Text></View><Text style={styles.observationLabel}>RUNNER ENROLMENT</Text><Text style={styles.reportText}>{profile.active ? `Allowlisted for generation ${profile.generation}.` : 'Not allowlisted. This persona cannot create a session.'}</Text></View>; }
+const km = (meters: number) => meters >= 100_000 ? `${Math.round(meters / 1000)} km` : meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+const stamp = (ms: number) => !ms ? '—' : new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const PRESENCE_LABEL: Record<BetaTesterRow['presence'], string> = { online: 'ONLINE', away: 'AWAY', unknown: 'NO SIGNAL' };
+const CAUSE_COLOR: Record<string, string> = { create: '#8ec5ff', engagement: '#5af0a4', decay: '#ff8a6b', boost: '#ffd166', synthetic: '#c8a2ff', lab: '#c8a2ff', backfill: '#806476' };
+
+function TesterTable({ rows, expandedUid, onToggle, openPostId, onOpenPost }: { rows: BetaTesterRow[]; expandedUid: string | null; onToggle: (uid: string) => void; openPostId: string | null; onOpenPost: (postId: string) => void }) {
+  const online = rows.filter(row => row.presence === 'online').length;
+  return <View>
+    <Text style={styles.tableSummary}>{online} online · {rows.length} signed up · {rows.reduce((sum, row) => sum + row.postCount, 0)} posts</Text>
+    <View style={[styles.tableRow, styles.tableHead]}><Text style={[styles.th, styles.colName]}>TESTER</Text><Text style={[styles.th, styles.colStatus]}>STATUS</Text><Text style={[styles.th, styles.colWhen]}>SIGNED UP</Text><Text style={[styles.th, styles.colNum]}>POSTS</Text><Text style={[styles.th, styles.colWhen]}>LAST POST</Text></View>
+    {rows.map(row => {
+      const expanded = expandedUid === row.uid;
+      return <View key={row.uid}>
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => onToggle(row.uid)} style={[styles.tableRow, expanded && styles.tableRowOpen]}>
+          <View style={styles.colName}><Text style={styles.name} numberOfLines={1}>{row.label}</Text><Text style={styles.meta} numberOfLines={1}>{row.username ? `@${row.username}` : row.uid.slice(0, 8)}{row.accountType !== 'user' ? ` · ${row.accountType}` : ''}{row.platform ? ` · ${row.platform}` : ''}</Text></View>
+          <View style={[styles.colStatus, styles.row]}><View style={[styles.statusDot, row.presence === 'online' ? styles.statusLive : row.presence === 'away' ? styles.statusAway : styles.statusNone]} /><Text style={styles.cell}>{row.presence === 'online' ? (row.screen ? row.screen.replace(/-/g, ' ') : 'LIVE') : row.presence === 'away' ? ago(row.lastActivityAtMs) : PRESENCE_LABEL.unknown}</Text></View>
+          <Text style={[styles.cell, styles.colWhen]}>{stamp(row.signedUpAtMs)}</Text>
+          <Text style={[styles.cell, styles.colNum]}>{row.postCount}</Text>
+          <Text style={[styles.cell, styles.colWhen]}>{row.lastPostedAtMs ? ago(row.lastPostedAtMs) : '—'}</Text>
+        </Pressable>
+        {expanded && (!row.posts.length
+          ? <Text style={[styles.copy, styles.postList]}>No posts yet.</Text>
+          : <View style={styles.postList}>{row.posts.map(post => <PostRow key={post.id} post={post} open={openPostId === post.id} onPress={() => onOpenPost(post.id)} />)}</View>)}
+      </View>;
+    })}
+  </View>;
+}
+
+function PostRow({ post, open, onPress }: { post: BetaTesterPost; open: boolean; onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityState={{ selected: open }} onPress={onPress} style={[styles.postRow, open && styles.postRowOpen]}>
+    <Text style={styles.postKind}>{post.mediaType === 'video' ? 'VIDEO' : post.mediaCount > 1 ? `CAROUSEL ×${post.mediaCount}` : 'PHOTO'}</Text>
+    <View style={styles.flex}><Text style={styles.cell} numberOfLines={1}>{post.caption || post.id}</Text><Text style={styles.meta}>{stamp(post.createdAtMs)}{post.channelId ? ` · ${post.channelId}` : ''}{post.coarse ? ` · ${post.coarse.latitude.toFixed(3)}, ${post.coarse.longitude.toFixed(3)}` : ''}</Text></View>
+    <Text style={styles.postRadius}>{km(post.radiusMeters)}</Text>
+  </Pressable>;
+}
+
+/** Radius over time, drawn with plain views: no chart dependency in this app. */
+function RadiusBars({ history }: { history: PostHistory['history'] }) {
+  const peak = Math.max(1, ...history.map(entry => entry.radiusMeters));
+  return <View style={styles.bars}>{history.map(entry => <View key={entry.id} style={styles.barCol}><View style={[styles.bar, { height: Math.max(3, Math.round((entry.radiusMeters / peak) * 72)), backgroundColor: CAUSE_COLOR[entry.cause] ?? '#806476' }]} /></View>)}</View>;
+}
+
+function PostDrilldown({ postId, history, state }: { postId: string; history: PostHistory | null; state: 'idle' | 'loading' | 'error' }) {
+  if (state === 'loading' || (!history && state === 'idle')) return <View style={styles.drill}><ActivityIndicator color="#5af0a4" /><Text style={styles.copy}>Loading the radius ledger for {postId}…</Text></View>;
+  if (state === 'error' || !history) return <View style={styles.drill}><Text style={styles.copy}>That post's ledger could not be read.</Text></View>;
+  const first = history.history[0];
+  const last = history.history[history.history.length - 1];
+  const peak = history.history.reduce((best, entry) => entry.radiusMeters > best.radiusMeters ? entry : best, first ?? { radiusMeters: 0, atMs: 0 });
+  const where = history.exact ?? history.coarse;
+  return <View style={styles.drill}>
+    <Text style={styles.drillTitle}>{history.caption || history.postId}</Text>
+    <Text style={styles.meta}>Posted {stamp(history.createdAtMs)}{history.channelId ? ` · ${history.channelId}` : ''} · {history.mediaType === 'video' ? 'video' : history.mediaCount > 1 ? `carousel ×${history.mediaCount}` : 'photo'}</Text>
+    <Text style={styles.meta}>{where ? `${history.exact ? 'Dropped at' : 'Near'} ${where.latitude.toFixed(5)}, ${where.longitude.toFixed(5)}` : 'Location hidden'}{history.locationVisibility ? ` · ${history.locationVisibility}` : ''}</Text>
+    <View style={styles.drillFacts}>
+      <SessionFact label="STARTED" value={first ? km(first.radiusMeters) : km(history.seedRadiusMeters)} />
+      <SessionFact label="NOW" value={km(history.radiusMeters)} />
+      <SessionFact label="PEAK" value={peak.radiusMeters ? `${km(peak.radiusMeters)} · ${ago(peak.atMs)}` : '—'} />
+      <SessionFact label="GROWTH" value={first && last ? `${last.radiusMeters >= first.radiusMeters ? '+' : '−'}${km(Math.abs(last.radiusMeters - first.radiusMeters))}` : '—'} />
+    </View>
+    {!history.history.length ? <Text style={styles.copy}>No radius changes recorded yet — the ledger starts with the post's first engagement.</Text> : <>
+      <RadiusBars history={history.history} />
+      {history.history.slice().reverse().map(entry => <View key={entry.id} style={styles.ledgerRow}>
+        <View style={[styles.causeChip, { backgroundColor: CAUSE_COLOR[entry.cause] ?? '#806476' }]} />
+        <Text style={[styles.cell, styles.ledgerCause]}>{entry.cause}{entry.kind ? ` · ${entry.kind}` : ''}</Text>
+        <Text style={[styles.cell, styles.ledgerWhen]}>{stamp(entry.atMs)}</Text>
+        <Text style={[styles.cell, styles.ledgerRadius]}>{km(entry.radiusMeters)}</Text>
+        <Text style={[styles.delta, entry.delta > 0 ? styles.deltaUp : entry.delta < 0 ? styles.deltaDown : styles.deltaFlat]}>{entry.delta > 0 ? '▲' : entry.delta < 0 ? '▼' : '·'} {km(Math.abs(entry.delta))}</Text>
+      </View>)}
+    </>}
+  </View>;
+}
+
 function Section({ title, kicker, children }: { title: string; kicker: string; children: React.ReactNode }) { return <View style={[styles.card, { flexGrow: 0, flexBasis: 'auto' }]}><Text style={styles.kicker}>{kicker}</Text><Text style={styles.cardTitle}>{title}</Text>{children}</View>; }
 function Empty({ text }: { text: string }) { return <Text style={styles.copy}>{text}</Text>; }
 
 const styles = StyleSheet.create<Record<string, any>>({
+  tableSummary: { color: '#f4d7e6', fontSize: 13, fontWeight: '700', marginBottom: 8 },
+  tableRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, borderTopWidth: 1, borderTopColor: '#57203d' },
+  tableHead: { borderTopWidth: 0, paddingVertical: 4 },
+  tableRowOpen: { backgroundColor: 'rgba(90, 240, 164, 0.06)' },
+  th: { color: '#b98aa6', fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  cell: { color: '#f4d7e6', fontSize: 12 },
+  colName: { flex: 2.2, minWidth: 0 },
+  colStatus: { flex: 1.4, minWidth: 0, gap: 6 },
+  colWhen: { flex: 1.2, minWidth: 0 },
+  colNum: { flex: 0.6, textAlign: 'right' },
+  statusNone: { backgroundColor: '#3d2130', borderWidth: 1, borderColor: '#806476' },
+  postList: { paddingLeft: 12, paddingBottom: 6 },
+  postRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: '#3d2130' },
+  postRowOpen: { backgroundColor: 'rgba(142, 197, 255, 0.08)' },
+  postKind: { color: '#b98aa6', fontSize: 10, fontWeight: '800', letterSpacing: 1, width: 92 },
+  postRadius: { color: '#5af0a4', fontSize: 12, fontWeight: '700' },
+  drill: { marginTop: 10, padding: 12, borderRadius: 12, backgroundColor: '#2a1120', gap: 6 },
+  drillTitle: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  drillFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginVertical: 6 },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 76, marginVertical: 6 },
+  barCol: { flex: 1, minWidth: 3, maxWidth: 14, justifyContent: 'flex-end' },
+  bar: { width: '100%', borderRadius: 2 },
+  ledgerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5, borderTopWidth: 1, borderTopColor: '#3d2130' },
+  causeChip: { width: 8, height: 8, borderRadius: 4 },
+  ledgerCause: { flex: 1.6 },
+  ledgerWhen: { flex: 1.4 },
+  ledgerRadius: { flex: 1, textAlign: 'right' },
+  delta: { flex: 1, textAlign: 'right', fontSize: 12, fontWeight: '800' },
+  deltaUp: { color: '#5af0a4' },
+  deltaDown: { color: '#ff8a6b' },
+  deltaFlat: { color: '#806476' },
   safe: { flex: 1, backgroundColor: '#12020c' }, page: { flexGrow: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: 20, paddingBottom: 48, gap: 16, backgroundImage: 'radial-gradient(circle at 50% 0%, #501032 0%, #18030f 38%, #080409 76%)' }, broadcast: { minHeight: 42, marginHorizontal: -20, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f20b69', borderBottomWidth: 3, borderBottomColor: '#8d0642' }, broadcastLeft: { flexDirection: 'row', gap: 8, alignItems: 'center' }, liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' }, liveText: { color: '#fff', fontWeight: '900', fontSize: 11, letterSpacing: 1.2 }, broadcastRight: { color: '#ffe1ef', fontWeight: '800', fontSize: 10, letterSpacing: 1 }, header: { paddingTop: 28, gap: 5 }, brand: { color: '#ff4aa3', fontWeight: '900', fontSize: 13, letterSpacing: 4, textShadowColor: '#ff1680', textShadowRadius: 12 }, title: { color: '#fff7fb', fontSize: 42, fontWeight: '900', letterSpacing: -1.6 }, subtitle: { color: '#e0b8cc', fontSize: 15, lineHeight: 21, maxWidth: 700 }, connecting: { flexDirection: 'row', gap: 12, padding: 18, alignItems: 'center', borderWidth: 1, borderColor: '#78204b', borderRadius: 18, backgroundColor: '#210914' }, headline: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 8 }, kicker: { color: '#ff4aa3', fontSize: 10, fontWeight: '900', letterSpacing: 1.6 }, roomTitle: { color: '#fff7fb', fontSize: 27, fontWeight: '900' }, refresh: { backgroundColor: '#ff2f91', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 2, borderColor: '#ff8ac5' }, refreshText: { color: '#fff', fontWeight: '900', fontSize: 10, letterSpacing: 1 }, stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, metric: { flexGrow: 1, flexBasis: 190, minHeight: 112, padding: 15, justifyContent: 'space-between', borderWidth: 1, borderTopWidth: 3, borderColor: '#6b2548', borderTopColor: '#ff2f91', borderRadius: 18, backgroundColor: 'rgba(39,9,25,.93)', boxShadow: '0 10px 28px rgba(0,0,0,.25)' }, metricLabel: { color: '#d29ab7', fontWeight: '900', fontSize: 10, letterSpacing: 1.1 }, metricValue: { color: '#fff9fc', fontSize: 31, fontWeight: '900' }, metricSuffix: { color: '#edbfd6', fontSize: 14 }, metricNote: { color: '#b7859f', fontSize: 11 }, map: { height: 470, position: 'relative', overflow: 'hidden', padding: 22, borderWidth: 2, borderColor: '#ff4aa3', borderRadius: 28, backgroundColor: '#130711', boxShadow: '0 22px 55px rgba(255,19,126,.18)' }, mapGrid: { ...StyleSheet.absoluteFill, backgroundImage: 'linear-gradient(rgba(255,72,161,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,72,161,.045) 1px, transparent 1px)', backgroundSize: '32px 32px', backgroundColor: '#130711' }, mapViewport: { position: 'absolute', left: '3%', right: '3%', top: 84, bottom: 54 }, mapHeading: { gap: 1, zIndex: 2 }, mapTitle: { color: '#fff7fb', fontSize: 26, fontWeight: '900' }, mapRule: { color: '#d5a7bf', fontSize: 12 }, mapPoint: { position: 'absolute', width: 0, height: 0, alignItems: 'center', justifyContent: 'center', zIndex: 3 }, pulse: { position: 'absolute', backgroundColor: 'rgba(255,39,141,.24)', borderWidth: 2, borderColor: '#fff' }, pulseSim: { backgroundColor: 'rgba(143,88,255,.28)', borderColor: '#c9afff' }, dot: { backgroundColor: '#ff1580', borderWidth: 3, borderColor: '#fff', boxShadow: '0 0 22px #ff1680' }, dotSim: { backgroundColor: '#8d5cff', borderColor: '#f1e9ff', boxShadow: '0 0 22px #8d5cff' }, dotCopy: { position: 'absolute', top: 21, left: 10, width: 160, padding: 9, borderRadius: 10, backgroundColor: 'rgba(31,5,20,.95)', borderWidth: 1, borderColor: '#ff4aa3' }, dotPlace: { color: '#fff', fontSize: 10, fontWeight: '800' }, dotMeta: { color: '#e2b4cb', fontSize: 9 }, mapEmpty: { position: 'absolute', top: '47%', left: '15%', right: '15%', alignItems: 'center', gap: 4, zIndex: 3, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,74,163,.55)', backgroundColor: 'rgba(20,4,14,.88)' }, mapEmptyTitle: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: 1.3, textAlign: 'center', textShadowColor: '#ff1680', textShadowRadius: 8 }, mapEmptyCopy: { textAlign: 'center', fontSize: 11, lineHeight: 16 }, mapFoot: { position: 'absolute', left: 22, bottom: 18, flexDirection: 'row', gap: 7, alignItems: 'center', zIndex: 3 }, mapFootText: { color: '#d4a1bc', fontSize: 9, fontWeight: '900', letterSpacing: 1 }, split: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, card: { flexGrow: 1, flexBasis: 340, gap: 12, padding: 18, borderWidth: 1, borderColor: '#6b2548', borderRadius: 20, backgroundColor: 'rgba(37,8,23,.94)', boxShadow: '0 12px 30px rgba(0,0,0,.24)' }, row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }, cardTitle: { color: '#fff8fc', fontSize: 19, fontWeight: '800' }, copy: { color: '#d5a7bf', fontSize: 13, lineHeight: 19 }, simState: { fontSize: 11, fontWeight: '900', letterSpacing: 1.1 }, simLive: { color: '#6ff5b0' }, simPaused: { color: '#d1a0b9' }, time: { color: '#fff7fb', fontSize: 27, fontWeight: '900' }, listRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#57203d' }, flex: { flex: 1, gap: 2 }, badge: { minWidth: 34, paddingVertical: 4, alignItems: 'center', borderRadius: 8 }, betaBadge: { backgroundColor: '#ed176f' }, simBadge: { backgroundColor: '#493547' }, badgeText: { color: '#fff', fontSize: 8, fontWeight: '900' }, name: { color: '#fff8fc', fontSize: 13, fontWeight: '800' }, verb: { color: '#ff6caf', textTransform: 'uppercase', fontSize: 10 }, meta: { color: '#d0a2b9', fontSize: 11 }, when: { color: '#8fddff', fontSize: 10, fontWeight: '900' }, rate: { width: 42, alignItems: 'center', borderLeftWidth: 3, borderLeftColor: '#ff2f91' }, rateValue: { color: '#fff8fc', fontSize: 18, fontWeight: '900' }, rateLabel: { color: '#c890ac', fontSize: 8, fontWeight: '900' }, statusDot: { width: 9, height: 9, borderRadius: 5 }, statusLive: { backgroundColor: '#5af0a4' }, statusAway: { backgroundColor: '#806476' }, report: { gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#57203d' }, reportText: { color: '#dec0cf', fontSize: 12, lineHeight: 18 }, reportLabel: { color: '#ff6caf', fontSize: 10, fontWeight: '900', letterSpacing: .8 }, personaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, personaCard: { flexGrow: 1, flexBasis: 290, gap: 7, minWidth: 0, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: '#70304f', backgroundColor: 'rgba(20,5,14,.86)' }, personaTop: { flexDirection: 'row', alignItems: 'center', gap: 10 }, personaAvatar: { width: 54, height: 54, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f22e88', borderWidth: 2, borderColor: '#ff9aca', boxShadow: '0 6px 18px rgba(255,28,132,.28)' }, personaMark: { fontSize: 24 }, personaTile: { position: 'absolute', right: 3, bottom: 2, color: '#fff', fontSize: 7, fontWeight: '900' }, personaFlag: { color: '#ff65ab', fontSize: 8, fontWeight: '900', letterSpacing: 1 }, personaStatus: { alignSelf: 'flex-start', fontSize: 9, fontWeight: '900', letterSpacing: .8 }, observationLabel: { color: '#8fddff', fontSize: 8, fontWeight: '900', letterSpacing: 1, marginTop: 3 },
   monitorCard: { gap: 16, padding: 18, borderWidth: 2, borderColor: '#ff4aa3', borderRadius: 24, backgroundColor: 'rgba(18,4,13,.97)', boxShadow: '0 18px 48px rgba(255,19,126,.18)' },
   monitorHeading: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, alignItems: 'center', justifyContent: 'space-between' }, monitorTitle: { color: '#fff8fc', fontSize: 25, fontWeight: '900' }, monitorStatus: { minWidth: 140, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center', borderRadius: 999, borderWidth: 1 }, monitorLive: { backgroundColor: 'rgba(28,119,79,.35)', borderColor: '#62f1aa' }, monitorReplay: { backgroundColor: 'rgba(39,102,135,.38)', borderColor: '#8fddff' }, monitorPaused: { backgroundColor: 'rgba(99,72,91,.38)', borderColor: '#aa8097' }, monitorStatusText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 1, textAlign: 'center' },

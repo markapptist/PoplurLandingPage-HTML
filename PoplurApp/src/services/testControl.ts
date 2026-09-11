@@ -180,8 +180,65 @@ export type BetaRunnerAnalytics = {
   windowEndMs: number;
 };
 
+export type BetaTesterPost = {
+  id: string;
+  createdAtMs: number;
+  radiusMeters: number;
+  mediaType: 'photo' | 'video';
+  mediaCount: number;
+  caption: string;
+  channelId: string;
+  coarse: { latitude: number; longitude: number } | null;
+};
+
+export type BetaTesterRow = {
+  uid: string;
+  label: string;
+  username: string;
+  accountType: string;
+  signedUpAtMs: number;
+  lastSignInAtMs: number;
+  presence: 'online' | 'away' | 'unknown';
+  lastActivityAtMs: number;
+  screen: string;
+  platform: string;
+  postCount: number;
+  lastPostedAtMs: number;
+  posts: BetaTesterPost[];
+};
+
+export type PostHistoryEntry = {
+  id: string;
+  atMs: number;
+  cause: string;
+  kind: string | null;
+  radiusMeters: number;
+  organicRadiusMeters: number;
+  seedRadiusMeters: number;
+  delta: number;
+  writer: string;
+};
+
+export type PostHistory = {
+  postId: string;
+  ownerId: string;
+  createdAtMs: number;
+  caption: string;
+  channelId: string;
+  mediaType: 'photo' | 'video';
+  mediaCount: number;
+  radiusMeters: number;
+  seedRadiusMeters: number;
+  organicRadiusMeters: number;
+  locationVisibility: string;
+  coarse: { latitude: number; longitude: number } | null;
+  exact: { latitude: number; longitude: number } | null;
+  history: PostHistoryEntry[];
+};
+
 export type BetaDashboard = {
   generatedAtMs: number;
+  testers: BetaTesterRow[];
   rows: TestActivityRow[];
   posts: BetaPostRow[];
   map: BetaMapCell[];
@@ -468,6 +525,90 @@ const dashboardCounts = (result: Partial<BetaDashboard>): BetaDashboardCounts =>
   runnerActiveActors: Number(result.counts?.runnerActiveActors) || 0,
 });
 
+const coordinate = (value: unknown): { latitude: number; longitude: number } | null => {
+  const point = record(value);
+  const latitude = Number(point.latitude);
+  const longitude = Number(point.longitude);
+  return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
+};
+
+const testerPost = (value: unknown): BetaTesterPost | null => {
+  const post = record(value);
+  const id = text(post.id, 120);
+  if (!id) return null;
+  return {
+    id,
+    createdAtMs: timeMs(post.createdAtMs),
+    radiusMeters: metric(post.radiusMeters, 40_075_000),
+    mediaType: post.mediaType === 'video' ? 'video' : 'photo',
+    mediaCount: Math.max(1, integer(post.mediaCount, 10)),
+    caption: text(post.caption, 120),
+    channelId: text(post.channelId, 64),
+    coarse: coordinate(post.coarse),
+  };
+};
+
+const testerRow = (value: unknown): BetaTesterRow | null => {
+  const row = record(value);
+  const uid = text(row.uid, 128);
+  if (!uid) return null;
+  const presence = row.presence === 'online' || row.presence === 'away' ? row.presence : 'unknown';
+  return {
+    uid,
+    label: text(row.label, 50) || `Tester ${uid.slice(-4)}`,
+    username: text(row.username, 40),
+    accountType: text(row.accountType, 16) || 'user',
+    signedUpAtMs: timeMs(row.signedUpAtMs),
+    lastSignInAtMs: timeMs(row.lastSignInAtMs),
+    presence,
+    lastActivityAtMs: timeMs(row.lastActivityAtMs),
+    screen: text(row.screen, 40),
+    platform: text(row.platform, 16),
+    postCount: integer(row.postCount, 100_000),
+    lastPostedAtMs: timeMs(row.lastPostedAtMs),
+    posts: Array.isArray(row.posts) ? row.posts.map(testerPost).filter((post): post is BetaTesterPost => post !== null).slice(0, 24) : [],
+  };
+};
+
+const postHistoryEntry = (value: unknown): PostHistoryEntry | null => {
+  const entry = record(value);
+  const atMs = timeMs(entry.atMs);
+  if (!atMs) return null;
+  return {
+    id: text(entry.id, 120),
+    atMs,
+    cause: text(entry.cause, 24) || 'unknown',
+    kind: text(entry.kind, 24) || null,
+    radiusMeters: metric(entry.radiusMeters, 40_075_000),
+    organicRadiusMeters: metric(entry.organicRadiusMeters, 40_075_000),
+    seedRadiusMeters: metric(entry.seedRadiusMeters, 40_075_000),
+    delta: (() => { const n = Number(entry.delta); return Number.isFinite(n) ? n : 0; })(),
+    writer: text(entry.writer, 40),
+  };
+};
+
+const postHistory = (value: unknown): PostHistory => {
+  const result = record(value);
+  return {
+    postId: text(result.postId, 120),
+    ownerId: text(result.ownerId, 128),
+    createdAtMs: timeMs(result.createdAtMs),
+    caption: text(result.caption, 280),
+    channelId: text(result.channelId, 64),
+    mediaType: result.mediaType === 'video' ? 'video' : 'photo',
+    mediaCount: Math.max(1, integer(result.mediaCount, 10)),
+    radiusMeters: metric(result.radiusMeters, 40_075_000),
+    seedRadiusMeters: metric(result.seedRadiusMeters, 40_075_000),
+    organicRadiusMeters: metric(result.organicRadiusMeters, 40_075_000),
+    locationVisibility: text(result.locationVisibility, 16),
+    coarse: coordinate(result.coarse),
+    exact: coordinate(result.exact),
+    history: Array.isArray(result.history)
+      ? result.history.map(postHistoryEntry).filter((entry): entry is PostHistoryEntry => entry !== null).slice(0, 500)
+      : [],
+  };
+};
+
 const dashboard = (value: unknown): BetaDashboard => {
   const result = record(value) as Partial<BetaDashboard> & Record<string, unknown>;
   const actors = Array.isArray(result.runnerActors)
@@ -477,6 +618,9 @@ const dashboard = (value: unknown): BetaDashboard => {
       : [];
   return {
     generatedAtMs: timeMs(result.generatedAtMs) || Date.now(),
+    testers: Array.isArray(result.testers)
+      ? result.testers.map(testerRow).filter((row): row is BetaTesterRow => row !== null).slice(0, 1000)
+      : [],
     rows: Array.isArray(result.rows) ? result.rows : [],
     posts: Array.isArray(result.posts) ? result.posts : [],
     map: Array.isArray(result.map) ? result.map : [],
@@ -557,6 +701,11 @@ export async function readActivityDashboard(): Promise<BetaDashboard> {
 
 export async function readOwnerDashboard(): Promise<BetaDashboard> {
   return dashboard(await ownerCall<unknown>({ action: 'dashboard' }));
+}
+
+/** One post's radius ledger, through the owner-only loopback proxy. */
+export async function readPostHistory(postId: string): Promise<PostHistory> {
+  return postHistory(await ownerCall<unknown>({ action: 'postHistory', postId }));
 }
 
 /**

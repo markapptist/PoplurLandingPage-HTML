@@ -18,7 +18,9 @@ const localRunnerCredential = process.env.POPLUR_RUNNER_LOCAL_TOKEN || credentia
 const runnerPort = boundedPort(process.env.POPLUR_SYNTHETIC_RUNNER_PORT, 8097);
 const functionURL = 'https://us-central1-poplur2025.cloudfunctions.net/testActivityControl';
 const controlRoomOrigin = 'http://127.0.0.1:8084';
-const allowedActions = new Set(['dashboard', 'runner']);
+// postHistory is the tester table's drill-down: one post's radius ledger.
+const allowedActions = new Set(['dashboard', 'runner', 'postHistory']);
+let liveSignupTicker = null;
 const actorPattern = '[a-zA-Z0-9._:-]+';
 const maxBodyBytes = 16 * 1024;
 const liveClients = new Set();
@@ -221,6 +223,16 @@ function openLiveStream(request, response, origin) {
   response.write('retry: 1500\n\n');
   liveClients.add(response);
   if (!onboardingQuarantine) startLiveWatchers();
+  // Firestore watchers drive every refresh, but the tester table also reads
+  // Auth, which has no watcher: a brand-new signup that has not yet touched
+  // Firestore would sit invisible until something else changed. Tick while
+  // anyone is watching so it surfaces within a minute regardless.
+  if (!liveSignupTicker) {
+    liveSignupTicker = setInterval(() => {
+      if (!liveClients.size) { clearInterval(liveSignupTicker); liveSignupTicker = null; return; }
+      scheduleLiveDashboardRefresh();
+    }, 60_000);
+  }
   const cached = liveState.cached();
   if (cached) sendLiveEvent(response, { result: cached });
   else scheduleLiveDashboardRefresh(0);

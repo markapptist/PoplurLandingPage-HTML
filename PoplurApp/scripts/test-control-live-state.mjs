@@ -26,8 +26,9 @@ const compareTesterRows = (a, b) => presenceRank(a) - presenceRank(b)
 
 /**
  * Merge the live foreground leases into the cloud's tester rows the way the
- * cloud does it (buildTesterTable, fn/testActivity.ts:130-171): a live
- * non-synthetic lease makes the row online by lease; a row the cloud marked
+ * cloud does it (buildTesterTable, fn/testActivity.ts): any live lease —
+ * synthetic ones too, owner decision 12 Sep — makes the row online by lease
+ * (rows the runner's live session decided pass through); a row the cloud marked
  * online by a lease that has since lapsed drops to away. Heartbeat-decided rows
  * are left to the next cloud call — the proxy cannot see heartbeat freshness.
  */
@@ -35,7 +36,7 @@ export function mergePresenceIntoTesters(rows, leases, now) {
   if (!Array.isArray(rows) || !Array.isArray(leases)) return rows;
   const liveUntil = new Map();
   for (const lease of leases) {
-    if (!lease || typeof lease.uid !== 'string' || !lease.uid || lease.synthetic) continue;
+    if (!lease || typeof lease.uid !== 'string' || !lease.uid) continue;
     if (!leaseLive(lease, now)) continue;
     liveUntil.set(lease.uid, Math.max(liveUntil.get(lease.uid) ?? 0, lease.activeUntilMs));
   }

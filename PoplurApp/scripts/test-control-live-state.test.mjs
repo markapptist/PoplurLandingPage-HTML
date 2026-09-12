@@ -104,6 +104,17 @@ test('combine without a public snapshot stores the private frame but returns nul
   assert.equal(frame.algorithm, null);
 });
 
+test('a synthetic lease on a listed actor row makes it online — a tester in the app is online (owner, 12 Sep)', () => {
+  const state = createLiveDashboardState();
+  state.acceptPublic({ posts: [], cells: [], feed: [] });
+  state.combine(privateDashboard({ testers: [tester('mark'), tester('sim-food-001', { synthetic: true })] }), NOW);
+  state.acceptPresence([{ uid: 'sim-food-001', synthetic: true, activeUntilMs: NOW + 90_000 }]);
+  const row = state.recombine(NOW).testers.find(r => r.uid === 'sim-food-001');
+  assert.equal(row.presence, 'online');
+  assert.equal(row.presenceSource, 'lease');
+  assert.equal(row.synthetic, true, 'the split stays visible on the row');
+});
+
 test('a presence lease flips a tester row to online locally and drops it to away when the lease lapses', () => {
   const state = createLiveDashboardState();
   state.acceptPublic({ posts: [], cells: [], feed: [] });
@@ -121,7 +132,7 @@ test('a presence lease flips a tester row to online locally and drops it to away
   assert.equal(rowA.lastActivityAtMs, NOW);
   assert.equal(frame.testers[0].uid, 'tester-a', 'online rows sort first, as the cloud sorts them');
   assert.equal(frame.testers.find(row => row.uid === 'tester-b').presence, 'away', 'an expired lease is not online');
-  assert.ok(!frame.testers.some(row => row.uid === 'sim-food-scout'), 'synthetic leases never add rows');
+  assert.ok(!frame.testers.some(row => row.uid === 'sim-food-scout'), 'a lease for a uid the cloud does not list adds no row');
   // 100 s later the lease has lapsed with no Firestore event: the re-issued
   // query's snapshot re-folds the same leases and the row drops to away.
   const later = state.recombine(NOW + 100_000);

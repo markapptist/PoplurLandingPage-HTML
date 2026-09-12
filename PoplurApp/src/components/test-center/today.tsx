@@ -23,9 +23,13 @@ export function TodayStrip({ testers, daily, posts, statusLine }: {
   statusLine: string;
 }) {
   const connected = !!testers && !!daily && !!posts;
-  const realTesters = testers?.filter(row => !row.synthetic).length ?? 0;
-  const onlineReal = testers?.filter(row => row.presence === 'online' && !row.synthetic).length ?? 0;
+  // Every tester in the app counts as online — the simulation's actors too
+  // (owner, 12 Sep: "they should be online and being active within the app").
+  // The tile's big number is everyone online; the meta line keeps the split.
+  const allTesters = testers?.length ?? 0;
+  const onlineAll = testers?.filter(row => row.presence === 'online').length ?? 0;
   const onlineSim = testers?.filter(row => row.presence === 'online' && row.synthetic).length ?? 0;
+  const onlineMeta = `of ${allTesters} testers · in the app now${onlineSim ? ` · ${onlineSim} simulation` : ''}`;
   const latestDay = daily ? latestDayOf(daily.days) : null;
   const last7 = daily ? [...daily.days].sort((a, b) => b.day.localeCompare(a.day)).slice(0, 7) : [];
   const signups7 = last7.reduce((sum, day) => sum + day.signups - day.syntheticSignups, 0);
@@ -35,7 +39,7 @@ export function TodayStrip({ testers, daily, posts, statusLine }: {
   const simNetKm = posts?.filter(post => post.synthetic).reduce((sum, post) => sum + post.radiusDeltaKm, 0) ?? 0;
   return <View style={styles.strip}>
     <View style={styles.tiles}>
-      <Tile label="ONLINE NOW" value={connected ? onlineReal : '—'} sim={connected ? onlineSim : undefined} meta={connected ? `of ${realTesters} testers · in the app now` : 'connecting'} />
+      <Tile label="ONLINE NOW" value={connected ? onlineAll : '—'} meta={connected ? onlineMeta : 'connecting'} />
       <Tile label="NEW TESTERS" value={latestDay ? latestDay.signups - latestDay.syntheticSignups : '—'} sim={latestDay?.syntheticSignups} meta={latestDay ? `${dayLabel(latestDay.day)} · ${signups7} in 7 days` : seriesMeta} />
       <Tile label="POPS DROPPED" value={latestDay ? latestDay.posts - latestDay.syntheticPosts : '—'} sim={latestDay?.syntheticPosts} meta={latestDay ? `${dayLabel(latestDay.day)} · ${pops7} in 7 days${daily?.postsComplete ? '' : ' · earliest days under-count'}` : seriesMeta} />
       <Tile label="RADIUS MOVED" value={connected ? <Delta meters={realNetKm * 1000} size="metric" /> : '—'} sim={connected ? <Delta meters={simNetKm * 1000} tone="sim" /> : undefined} meta={`newest ${PUBLIC_POPS_WINDOW} public pops · net`} />

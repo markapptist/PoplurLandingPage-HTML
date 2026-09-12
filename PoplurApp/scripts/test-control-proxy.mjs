@@ -1,13 +1,33 @@
 import { createServer } from 'node:http';
 import { Buffer } from 'node:buffer';
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+import { Timestamp, getFirestore } from 'firebase-admin/firestore';
 import {
   aggregateRealtimePublicPosts,
   applyRealtimeRadiusBaselines,
   normalizeRealtimePublicSnapshot,
 } from './realtime-public-post-policy.mjs';
-import { createLiveDashboardState } from './test-control-live-state.mjs';
+import {
+  LEDGER_EXPORT_ENTRY_LIMIT,
+  actorClass,
+  createLedgerReadBudget,
+  digestKnobs,
+  estimateLedgerExport,
+  ledgerCsv,
+  ledgerExportFilename,
+  ledgerRowsForPost,
+  normalizeAlgorithmDigest,
+  ownerClassOf,
+  postClass,
+  validateLedgerExportRequest,
+} from './algorithm-digest-policy.mjs';
+import {
+  createLiveDashboardState,
+  createLiveRefreshScheduler,
+  liveStreamOpenPlan,
+  parseRefreshFloorMs,
+} from './test-control-live-state.mjs';
 import { isAuthorizedTestControlMutation, validateOnboardingCommand } from './synthetic-onboarding-actions.mjs';
 import { validateRunnerCommand } from './synthetic-live-actions.mjs';
 
@@ -18,8 +38,19 @@ const localRunnerCredential = process.env.POPLUR_RUNNER_LOCAL_TOKEN || credentia
 const runnerPort = boundedPort(process.env.POPLUR_SYNTHETIC_RUNNER_PORT, 8097);
 const functionURL = 'https://us-central1-poplur2025.cloudfunctions.net/testActivityControl';
 const controlRoomOrigin = 'http://127.0.0.1:8084';
-// postHistory is the tester table's drill-down: one post's radius ledger.
-const allowedActions = new Set(['dashboard', 'runner', 'postHistory']);
+// postHistory is the tester table's drill-down: one post's radius ledger;
+// testerPosts is a row's lazy post list (≤ 24 reads on expand).
+const allowedActions = new Set(['dashboard', 'runner', 'postHistory', 'testerPosts']);
+// Watcher-triggered cloud `dashboard` calls run at most once per floor. Every
+// Firestore change in a watched window used to become a full ≈ 516-read call
+// after a 100 ms debounce: a lab hour alone was ≈ 93k reads (11 Sep). The
+// public frame, the digest and presence are exempt — they are local data the
+// watchers already paid for.
+const LIVE_REFRESH_MIN_MS = parseRefreshFloorMs(process.env.POPLUR_LIVE_REFRESH_MIN_MS);
+// The presence query's lower bound is fixed at issue time, so it is re-issued
+// every minute; a lease that lapsed since is filtered at merge time.
+const PRESENCE_REISSUE_MS = 60_000;
+const ledgerReadBudget = createLedgerReadBudget();
 let liveSignupTicker = null;
 // Set while the cloud switch is failing. Every reconnect re-earns LIVE with a
 // fresh dashboard call, so a failing upstream must not be hammered at the
@@ -36,9 +67,10 @@ const liveRadiusBaselines = new Map();
 let liveWatchers = [];
 let liveWatchersStarted = false;
 let liveFirestore = null;
-let liveRefreshTimer = null;
-let liveRefreshInFlight = false;
-let liveRefreshAgain = false;
+// One broadcast per debounce window for local-only changes (public frame,
+// presence): re-folds the last private dashboard, never calls the cloud.
+let liveLocalBroadcastTimer = null;
+const liveRefresh = createLiveRefreshScheduler({ minIntervalMs: LIVE_REFRESH_MIN_MS, run: refreshLiveDashboard });
 let onboardingQuarantine = false;
 let onboardingActive = false;
 
@@ -87,9 +119,9 @@ function resetLiveWatchers() {
   liveFirestore = null;
   liveRadiusBaselines.clear();
   liveState.reset();
-  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
-  liveRefreshTimer = null;
-  liveRefreshAgain = false;
+  liveRefresh.cancel();
+  if (liveLocalBroadcastTimer) clearTimeout(liveLocalBroadcastTimer);
+  liveLocalBroadcastTimer = null;
   for (const waiter of publicSnapshotWaiters) {
     clearTimeout(waiter.timeout);
     waiter.reject(new Error('Production snapshot wait was cancelled.'));
@@ -154,15 +186,10 @@ function broadcastLiveDashboard(result) {
   }
 }
 
+/** The scheduler's run(): 'called' stamps the refresh floor, 'skipped' never does. */
 async function refreshLiveDashboard() {
-  if (onboardingQuarantine) return;
-  if (liveRefreshInFlight) {
-    liveRefreshAgain = true;
-    return;
-  }
-  liveRefreshInFlight = true;
+  if (onboardingQuarantine || !liveState.isPublicReady()) return 'skipped';
   try {
-    if (!liveState.isPublicReady()) return;
     const combined = liveState.combine(await callCloudControl({ action: 'dashboard' }));
     liveUpstreamFailedAtMs = 0;
     if (!onboardingQuarantine && combined) broadcastLiveDashboard(combined);
@@ -170,47 +197,98 @@ async function refreshLiveDashboard() {
     // The cloud switch failed. Keep the Firestore watchers and the public
     // snapshot (both still valid) and drop only the cached dashboard, then
     // close the clients so the desk shows OFFLINE and earns LIVE again from
-    // the next successful cloud call. Tearing the seven watchers down here
-    // cost ~460 document reads per reconnect: ~400k reads an hour for the
-    // five hours of the 11 Sep outage. A watcher that itself fails still
-    // goes through resetLiveWatchers via its error callback.
+    // the next successful cloud call. Tearing the watchers down here cost
+    // ~460 document reads per reconnect: ~400k reads an hour for the five
+    // hours of the 11 Sep outage. A watcher that itself fails still goes
+    // through resetLiveWatchers via its error callback.
     liveUpstreamFailedAtMs = Date.now();
     liveState.cache(null);
     closeLiveClients();
-  } finally {
-    liveRefreshInFlight = false;
-    if (liveRefreshAgain) {
-      liveRefreshAgain = false;
-      scheduleLiveDashboardRefresh(40);
-    }
   }
+  return 'called';
 }
 
 function scheduleLiveDashboardRefresh(delay = 100) {
   if (onboardingQuarantine) return;
-  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
-  liveRefreshTimer = setTimeout(() => {
-    liveRefreshTimer = null;
-    void refreshLiveDashboard();
+  liveRefresh.schedule(delay);
+}
+
+/** Re-broadcast the last private dashboard with fresh local data — no cloud call. */
+function scheduleLocalBroadcast(delay = 100) {
+  if (onboardingQuarantine || liveLocalBroadcastTimer) return;
+  liveLocalBroadcastTimer = setTimeout(() => {
+    liveLocalBroadcastTimer = null;
+    if (onboardingQuarantine) return;
+    const frame = liveState.recombine();
+    if (frame) broadcastLiveDashboard(frame);
   }, delay);
+}
+
+function adminApp() {
+  return getApps()[0] ?? initializeApp({
+    credential: applicationDefault(),
+    projectId: 'poplur2025',
+  });
+}
+
+/**
+ * Ninth watcher: foreground leases (120 s, fn/appPresence.ts:7). The query's
+ * `activeUntil > now` bound is fixed when it is issued, so it is re-issued
+ * every minute; each snapshot merges "online" into the tester rows locally,
+ * because behind the refresh floor a two-minute visit would never show and
+ * "online" would linger for five minutes after a tester left.
+ */
+function startPresenceWatcher(firestore, presenceChanged, failed) {
+  let unsubscribe = null;
+  const issue = () => {
+    if (unsubscribe) {
+      try { unsubscribe(); } catch { /* already closed */ }
+    }
+    unsubscribe = firestore.collection('appPresenceSessions')
+      .where('activeUntil', '>', Timestamp.fromMillis(Date.now()))
+      .select('uid', 'synthetic', 'activeUntil')
+      .onSnapshot(presenceChanged, failed);
+  };
+  issue();
+  const timer = setInterval(issue, PRESENCE_REISSUE_MS);
+  return () => {
+    clearInterval(timer);
+    if (unsubscribe) unsubscribe();
+  };
 }
 
 function startLiveWatchers() {
   if (onboardingQuarantine || liveWatchersStarted) return;
   liveWatchersStarted = true;
   try {
-    const app = getApps()[0] ?? initializeApp({
-      credential: applicationDefault(),
-      projectId: 'poplur2025',
-    });
-    const firestore = getFirestore(app);
+    const firestore = getFirestore(adminApp());
     liveFirestore = firestore;
     const changed = () => scheduleLiveDashboardRefresh();
     const failed = () => resetLiveWatchers();
     const publicPostsChanged = snapshot => {
       if (onboardingQuarantine) return;
       acceptPublicDocuments(snapshot.docs.map(document => ({ id: document.id, data: document.data() })));
+      // The map/feed strip is local data: broadcast it now, and let the
+      // private dashboard catch up behind the floor.
+      scheduleLocalBroadcast();
       scheduleLiveDashboardRefresh();
+    };
+    // Eighth watcher: the published digest (1 read per hourly write). Folded
+    // locally — the generic `changed` would cost a full dashboard call per write.
+    const algorithmChanged = snapshot => {
+      if (onboardingQuarantine) return;
+      liveState.acceptAlgorithm(normalizeAlgorithmDigest(snapshot.data() ?? null));
+      const frame = liveState.recombine();
+      if (frame) broadcastLiveDashboard(frame);
+    };
+    const presenceChanged = snapshot => {
+      if (onboardingQuarantine) return;
+      liveState.acceptPresence(snapshot.docs.map(document => ({
+        uid: typeof document.data().uid === 'string' ? document.data().uid : '',
+        synthetic: document.data().synthetic === true,
+        activeUntilMs: document.data().activeUntil?.toMillis?.() ?? 0,
+      })));
+      scheduleLocalBroadcast();
     };
     liveWatchers = [
       firestore.collection('posts').orderBy('createdAt', 'desc').limit(160).onSnapshot(publicPostsChanged, failed),
@@ -220,6 +298,8 @@ function startLiveWatchers() {
       firestore.collection('testControl').doc('syntheticBrowserRunner').onSnapshot(changed, failed),
       firestore.collection('testControl').doc('syntheticBrowserRuntime').onSnapshot(changed, failed),
       firestore.collection('testControl').doc('simulation').onSnapshot(changed, failed),
+      firestore.collection('testControl').doc('algorithmDigest').onSnapshot(algorithmChanged, failed),
+      startPresenceWatcher(firestore, presenceChanged, failed),
     ];
     scheduleLiveDashboardRefresh(0);
   } catch {
@@ -240,15 +320,21 @@ function openLiveStream(request, response, origin) {
   // Firestore watchers drive every refresh, but the tester table also reads
   // Auth, which has no watcher: a brand-new signup that has not yet touched
   // Firestore would sit invisible until something else changed. Tick while
-  // anyone is watching so it surfaces within a minute regardless.
+  // anyone is watching so it surfaces within ten minutes regardless (a signup
+  // with zero Firestore footprint can wait; Firestore changes still land
+  // within the floor, and presence lands within a minute).
   if (!liveSignupTicker) {
     liveSignupTicker = setInterval(() => {
       if (!liveClients.size) { clearInterval(liveSignupTicker); liveSignupTicker = null; return; }
       scheduleLiveDashboardRefresh();
-    }, 60_000);
+    }, 600_000);
   }
-  const cached = liveState.cached();
-  if (cached) sendLiveEvent(response, { result: cached });
+  // A reconnect inside 15 s of an upstream failure must not re-earn LIVE with
+  // a fresh call (the client's retry was 1.5 s when it last connected). It
+  // gets a frame without `result`, which the page skips, and the 15 s retry.
+  const plan = liveStreamOpenPlan({ cached: liveState.cached(), failedAtMs: liveUpstreamFailedAtMs, now: Date.now() });
+  if (plan === 'cached') sendLiveEvent(response, { result: liveState.cached() });
+  else if (plan === 'upstream-down') sendLiveEvent(response, { result: null, upstream: 'down' });
   else scheduleLiveDashboardRefresh(0);
   const heartbeat = setInterval(() => {
     if (!response.destroyed && !response.writableEnded) response.write(': keep-alive\n\n');
@@ -496,6 +582,125 @@ async function applyRunnerCommand(body, response, origin) {
   });
 }
 
+/** One Auth page (an API call, not a Firestore read) so QA accounts that exist only in Auth classify as synthetic. */
+async function authEmailPage() {
+  const page = await getAuth(adminApp()).listUsers(1000);
+  return new Map(page.users.map(user => [user.uid, typeof user.email === 'string' ? user.email : null]));
+}
+
+/**
+ * POST /api/export/ledger { postIds, classifyActors? }: ≤ 50 posts × ≤ 500
+ * entries, estimated from the digest before any read and refused (429) when
+ * the estimate exceeds what is left of the 25,000-reads Toronto day. Never
+ * scans; never emits a uid — the CSV carries the five-valued actor class.
+ */
+async function applyLedgerExport(body, response, origin) {
+  let request;
+  try {
+    request = validateLedgerExportRequest(body);
+  } catch (error) {
+    sendJSON(response, 400, origin, { error: { message: error instanceof Error ? error.message : 'Ledger export request is invalid.' } });
+    return;
+  }
+  if (onboardingQuarantine) {
+    sendJSON(response, 503, origin, { error: { message: 'Production reads are quarantined during first-user onboarding.' } });
+    return;
+  }
+  const digest = liveState.algorithm();
+  const estimate = estimateLedgerExport(digest, request.postIds);
+  const remaining = ledgerReadBudget.remaining(Date.now());
+  if (estimate.reads > remaining) {
+    sendJSON(response, 429, origin, {
+      error: { message: 'That export would exceed today\'s ledger read budget.' },
+      remaining,
+      estimate,
+    });
+    return;
+  }
+  let reads = 0;
+  try {
+    const firestore = getFirestore(adminApp());
+    const emailByUid = request.classifyActors ? await authEmailPage() : null;
+    const digestPosts = new Map((digest?.posts ?? []).map(post => [post.postId, post]));
+    const knobs = digestKnobs(digest);
+    // Per request: a uid absent from the Auth page costs one users/{uid} read
+    // (known = exists), the digest's own rule; absent from both → unknown.
+    const classByUid = new Map();
+    const resolveActorClass = async uid => {
+      if (!uid) return 'unknown';
+      if (classByUid.has(uid)) return classByUid.get(uid);
+      let cls;
+      if (!emailByUid) {
+        cls = actorClass(uid, null, null, false);
+      } else if (emailByUid.has(uid)) {
+        cls = actorClass(uid, null, emailByUid.get(uid), true);
+      } else if (reads < remaining) {
+        const profile = await firestore.collection('users').doc(uid).get();
+        reads += 1;
+        cls = actorClass(uid, profile.data() ?? null, profile.data()?.email ?? null, profile.exists);
+      } else {
+        cls = 'unknown';
+      }
+      classByUid.set(uid, cls);
+      return cls;
+    };
+    const rows = [];
+    for (const postId of request.postIds) {
+      const postRef = firestore.collection('posts').doc(postId);
+      const [postSnapshot, historySnapshot] = await Promise.all([
+        postRef.get(),
+        postRef.collection('radiusHistory').orderBy('atMillis', 'asc').limit(LEDGER_EXPORT_ENTRY_LIMIT).get(),
+      ]);
+      reads += 1 + Math.max(1, historySnapshot.size);
+      if (!postSnapshot.exists) continue;
+      const post = postSnapshot.data() ?? {};
+      const summary = digestPosts.get(postId);
+      const ownerUid = typeof post.userID === 'string' ? post.userID : '';
+      const ownerActorClass = await resolveActorClass(ownerUid);
+      const cls = summary?.cls ?? postClass(postId, post, ownerActorClass === 'synthetic');
+      const ownerClass = summary?.ownerClass
+        ?? (cls === 'official' ? 'official' : ownerClassOf(postId, post, emailByUid?.get(ownerUid) ?? null, ownerActorClass !== 'unknown'));
+      const entries = historySnapshot.docs.map(document => ({ id: document.id, ...document.data() }));
+      const actorClassByEntryId = new Map();
+      // Join only on real and official posts (decision 6); the day guard stays
+      // hard — past it the remaining entries read unknown rather than reading.
+      if (emailByUid && (cls === 'real' || cls === 'official')) {
+        for (const entry of entries) {
+          if (entry.cause !== 'engagement' || typeof entry.engagementId !== 'string' || !entry.engagementId) continue;
+          if (reads >= remaining) { actorClassByEntryId.set(entry.id, 'unknown'); continue; }
+          const engagement = await postRef.collection('engagements').doc(entry.engagementId).get();
+          reads += 1;
+          const actorUid = typeof engagement.data()?.actorUid === 'string' ? engagement.data().actorUid : '';
+          actorClassByEntryId.set(entry.id, await resolveActorClass(actorUid));
+        }
+      }
+      rows.push(...ledgerRowsForPost({
+        postId,
+        post,
+        entries,
+        postClass: cls,
+        ownerClass,
+        clean: typeof summary?.clean === 'boolean' ? summary.clean : null,
+        actorClassByEntryId,
+        knobs,
+      }));
+    }
+    ledgerReadBudget.charge(reads, Date.now());
+    const csv = ledgerCsv(rows);
+    response.writeHead(200, {
+      ...responseHeaders(origin, 'text/csv; charset=utf-8'),
+      'content-disposition': `attachment; filename="${ledgerExportFilename(Date.now())}"`,
+      'access-control-expose-headers': 'content-disposition, x-poplur-ledger-reads',
+      'x-poplur-ledger-reads': String(reads),
+      'content-length': String(Buffer.byteLength(csv)),
+    });
+    response.end(csv);
+  } catch {
+    ledgerReadBudget.charge(reads, Date.now());
+    sendJSON(response, 502, origin, { error: { message: 'The ledger export could not read Poplur.' } });
+  }
+}
+
 async function relayControl(body, response, origin) {
   const data = body?.data;
   if (!data || typeof data !== 'object' || !allowedActions.has(data.action)) {
@@ -575,7 +780,8 @@ const server = createServer(async (request, response) => {
 
   if (request.method !== 'POST' || (requestURL.pathname !== '/api/control'
     && requestURL.pathname !== '/api/runner/command'
-    && requestURL.pathname !== '/api/runner/onboarding')) {
+    && requestURL.pathname !== '/api/runner/onboarding'
+    && requestURL.pathname !== '/api/export/ledger')) {
     sendJSON(response, 404, origin, { error: { message: 'Local beta desk route not found.' } });
     return;
   }
@@ -583,6 +789,7 @@ const server = createServer(async (request, response) => {
     const body = await readBody(request);
     if (requestURL.pathname === '/api/runner/command') await applyRunnerCommand(body, response, origin);
     else if (requestURL.pathname === '/api/runner/onboarding') await applyOnboardingCommand(body, response, origin);
+    else if (requestURL.pathname === '/api/export/ledger') await applyLedgerExport(body, response, origin);
     else await relayControl(body, response, origin);
   } catch (error) {
     const status = error instanceof BodyTooLargeError ? 413 : 400;

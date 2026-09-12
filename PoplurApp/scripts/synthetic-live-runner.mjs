@@ -882,8 +882,16 @@ export function createSyntheticLiveRunner({
       const span = Array.from(element.querySelectorAll('span')).find(child => /^\d+/.test(child.textContent?.trim() || ''));
       return span?.textContent?.trim().split(/\s*·\s*/)[0] || '';
     }, undefined, { timeout: 10_000 });
+    // The dock's hint line rotates every 2.8 s, so the element is never
+    // "stable" and Playwright's focus()/press() wait out their whole timeout.
+    // The dock handles keydown on the group itself: focus it in the page and
+    // dispatch the key there, skipping the actionability wait.
+    const dockKey = key => controls.evaluate((element, keyName) => {
+      element.focus();
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: keyName, bubbles: true, cancelable: true }));
+    }, key, { timeout: 10_000 });
     const channelUp = async () => {
-      if (isDock) { await controls.focus(); await controls.press('ArrowUp'); }
+      if (isDock) await dockKey('ArrowUp');
       else await activateControl(controls.getByRole('button', { name: 'Channel up', exact: true }), 'Channel up');
     };
     let selected = await readChannel();
@@ -902,7 +910,7 @@ export function createSyntheticLiveRunner({
       if (owner === LIVE_OWNER_UID) return { clay, id };
       if (id && seen.has(id)) break;
       if (id) seen.add(id);
-      if (isDock) { await controls.focus(); await controls.press('ArrowRight'); }
+      if (isDock) await dockKey('ArrowRight');
       else {
         const next = clay.getByRole('button', { name: 'Next post', exact: true }).first();
         if (!await next.isVisible().catch(() => false)) break;

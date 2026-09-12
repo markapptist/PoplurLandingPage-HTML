@@ -230,17 +230,27 @@ function internalCredentialMatches(value) {
   return timingSafeEqual(Buffer.from(supplied), Buffer.from(LOCAL_CREDENTIAL));
 }
 
-async function fetchJSON(url, options, timeoutMs = NETWORK_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(`Cloud request failed with HTTP ${response.status}.`);
-    if (!body || typeof body !== 'object') throw new Error('Cloud request returned no JSON result.');
-    return body.result && typeof body.result === 'object' ? body.result : body;
-  } finally {
-    clearTimeout(timeout);
+async function fetchJSON(url, options, timeoutMs = NETWORK_TIMEOUT_MS, { retries = 1 } = {}) {
+  // A cold Cloud Run instance can take longer than the timeout on its first
+  // hop; that used to abort the whole cohort start with the bare message
+  // "This operation was aborted" (12 Sep). Retry once and name the URL.
+  for (let attempt = 0; ; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(`Cloud request failed with HTTP ${response.status}.`);
+      if (!body || typeof body !== 'object') throw new Error('Cloud request returned no JSON result.');
+      return body.result && typeof body.result === 'object' ? body.result : body;
+    } catch (error) {
+      const aborted = error?.name === 'AbortError' || /aborted/i.test(String(error?.message));
+      if (aborted && attempt < retries) { console.error(`[runner] ${new URL(url).pathname} timed out after ${timeoutMs} ms; retrying`); continue; }
+      if (aborted) throw new Error(`Cloud request to ${new URL(url).pathname} timed out after ${timeoutMs} ms.`);
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 

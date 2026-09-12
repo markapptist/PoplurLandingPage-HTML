@@ -11,7 +11,8 @@ import {
   type RealtimeFeedPost,
   type RealtimePublicPost,
 } from '@/services/testControl';
-import { readPostHistory, type BetaDailySeries, type BetaTesterPost, type BetaTesterRow, type PostHistory } from '@/services/testControl';
+import { readPostHistory, readTesterPosts, type BetaDailySeries, type BetaTesterPost, type BetaTesterRow, type PostHistory } from '@/services/testControl';
+import AlgorithmDesk from '@/components/AlgorithmDesk';
 import {
   readSyntheticRunnerFrames,
   readSyntheticRunnerFrameImage,
@@ -357,6 +358,24 @@ export default function TestControlScreen() {
   const openPost = useCallback((postId: string) => {
     setOpenPostId(current => current === postId ? null : postId);
   }, []);
+  // Tester rows arrive with an empty posts[] (the dashboard counts, it no
+  // longer reads every post); a row's posts load when it is expanded and are
+  // refetched when its last-post stamp moves.
+  const [testerPosts, setTesterPosts] = useState<Record<string, { atMs: number; posts: BetaTesterPost[] | null }>>({});
+  const expandedRow = dashboard?.testers.find(row => row.uid === expandedTester) ?? null;
+  const expandedStamp = expandedRow?.lastPostedAtMs ?? 0;
+  useEffect(() => {
+    if (!expandedTester) return;
+    const cached = testerPosts[expandedTester];
+    if (cached && cached.atMs === expandedStamp && cached.posts !== null) return;
+    let cancelled = false;
+    setTesterPosts(current => ({ ...current, [expandedTester]: { atMs: expandedStamp, posts: null } }));
+    readTesterPosts(expandedTester)
+      .then(posts => { if (!cancelled) setTesterPosts(current => ({ ...current, [expandedTester]: { atMs: expandedStamp, posts } })); })
+      .catch(() => { if (!cancelled) setTesterPosts(current => ({ ...current, [expandedTester]: { atMs: expandedStamp, posts: [] } })); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedTester, expandedStamp]);
   useEffect(() => {
     if (!openPostId) { setPostHistory(null); setPostHistoryState('idle'); return; }
     let cancelled = false;
@@ -403,7 +422,8 @@ export default function TestControlScreen() {
       <Section title="The five isolated testing profiles" kicker="RUNNER PERSONAS"><View style={styles.personaGrid}>{!dashboard.runnerActors.length ? <Empty text="The beta runner manifest is loading." /> : dashboard.runnerActors.map(profile => <PersonaCard key={profile.id} profile={profile} />)}</View></Section>
       <Section title="Radius and virality desk" kicker="FIRESTORE REALTIME POST MOMENTUM">{!realtimePosts.length ? <Empty text="A published post with an approximate public area will appear here immediately." /> : realtimePosts.slice(0, 12).map(post => <View key={post.id} style={styles.listRow}><View style={styles.rate}><Text style={styles.rateValue}>{Math.round(post.viralPerHour)}</Text><Text style={styles.rateLabel}>/HR</Text></View><View style={styles.flex}><Text style={styles.name}>{post.label} · {post.place}</Text><Text style={styles.meta}>Posted {clock(post.postedAtMs)} · {post.initialRadiusKm.toFixed(1)} km → {post.radiusKm.toFixed(1)} km ({post.radiusDeltaKm >= 0 ? '+' : ''}{post.radiusDeltaKm.toFixed(1)} km)</Text></View><Text style={styles.when}>{ago(post.updatedAtMs || post.postedAtMs)}</Text></View>)}</Section>
       <Section title="What the live Feed is receiving" kicker="FIRESTORE REALTIME FEED CHANNELS">{!feedChannels.length ? <Empty text="The wiped Feed is empty. Channels will appear here at the same moment a published Firestore post reaches the app." /> : feedChannels.map(([channelId, counts]) => <View key={channelId} style={styles.listRow}><View style={styles.badge}><Text style={styles.badgeText}>{counts.total}</Text></View><View style={styles.flex}><Text style={styles.name}>{words(channelId)}</Text><Text style={styles.meta}>{counts.photos} photos · {counts.videos} videos · {counts.total - counts.photos - counts.videos} unclassified</Text></View><Text style={styles.when}>LIVE</Text></View>)}</Section>
-      <Section title="Every tester, live" kicker="TESTER TABLE">{!dashboard.testers.length ? <Empty text="No accounts yet." /> : <TesterTable rows={dashboard.testers} daily={dashboard.daily} expandedUid={expandedTester} onToggle={uid => setExpandedTester(current => current === uid ? null : uid)} openPostId={openPostId} onOpenPost={openPost} />}{!!openPostId && <PostDrilldown postId={openPostId} history={postHistory} state={postHistoryState} />}</Section>
+      <Section title="Every tester, live" kicker="TESTER TABLE">{!dashboard.testers.length ? <Empty text="No accounts yet." /> : <TesterTable rows={dashboard.testers} daily={dashboard.daily} expandedUid={expandedTester} expandedPosts={expandedTester ? testerPosts[expandedTester]?.posts ?? null : null} onToggle={uid => setExpandedTester(current => current === uid ? null : uid)} openPostId={openPostId} onOpenPost={openPost} />}{!!openPostId && <PostDrilldown postId={openPostId} history={postHistory} state={postHistoryState} />}</Section>
+      <AlgorithmDesk digest={dashboard.algorithm} refusal={dashboard.algorithmRefusal} openPostId={openPostId} onOpenPost={openPost} postHistory={postHistory} postHistoryState={postHistoryState} testers={dashboard.testers} />
       <Section title="Who is testing right now" kicker="TESTER ACTIVITY">{!dashboard.rows.length ? <Empty text="No opted-in tester activity yet." /> : dashboard.rows.map(row => <View key={row.id} style={styles.listRow}><View style={[styles.statusDot, row.state === 'active' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text style={styles.name}>{row.label}</Text><Text style={styles.meta}>{row.screen.replace(/-/g, ' ')} · {row.platform} · v{row.appVersion}</Text></View><Text style={styles.when}>{row.state === 'active' ? 'LIVE' : ago(row.lastActivityAtMs)}</Text></View>)}</Section>
       <Section title="Findings, wins and improvements" kicker="WHAT TESTERS ARE SAYING">{!dashboard.feedback.length ? <Empty text="Voluntary tester reports will land here." /> : dashboard.feedback.map(report => <View key={report.id} style={styles.report}><View style={styles.row}><Text style={styles.name}>{report.label}</Text><Text style={styles.when}>{ago(report.createdAtMs)}</Text></View>{!!report.finding && <Text style={styles.reportText}><Text style={styles.reportLabel}>FOUND </Text>{report.finding}</Text>}{!!report.liked && <Text style={styles.reportText}><Text style={styles.reportLabel}>LIKED </Text>{report.liked}</Text>}{!!report.improve && <Text style={styles.reportText}><Text style={styles.reportLabel}>IMPROVE </Text>{report.improve}</Text>}</View>)}</Section>
     </>}{!!notice && <Text style={styles.notice}>{notice}</Text>}
@@ -462,7 +482,7 @@ function DailyStrip({ series }: { series: BetaDailySeries }) {
   </View>;
 }
 
-function TesterTable({ rows, daily, expandedUid, onToggle, openPostId, onOpenPost }: { rows: BetaTesterRow[]; daily: BetaDailySeries; expandedUid: string | null; onToggle: (uid: string) => void; openPostId: string | null; onOpenPost: (postId: string) => void }) {
+function TesterTable({ rows, daily, expandedUid, expandedPosts, onToggle, openPostId, onOpenPost }: { rows: BetaTesterRow[]; daily: BetaDailySeries; expandedUid: string | null; expandedPosts: BetaTesterPost[] | null; onToggle: (uid: string) => void; openPostId: string | null; onOpenPost: (postId: string) => void }) {
   const online = rows.filter(row => row.presence === 'online').length;
   const people = rows.filter(row => !row.synthetic);
   const peoplePosts = people.reduce((sum, row) => sum + row.postCount, 0);
@@ -481,9 +501,12 @@ function TesterTable({ rows, daily, expandedUid, onToggle, openPostId, onOpenPos
           <Text style={[styles.cell, styles.colNum]}>{row.postCount}</Text>
           <Text style={[styles.cell, styles.colWhen]}>{row.lastPostedAtMs ? ago(row.lastPostedAtMs) : '—'}</Text>
         </Pressable>
-        {expanded && (!row.posts.length
-          ? <Text style={[styles.copy, styles.postList]}>No posts yet.</Text>
-          : <View style={styles.postList}>{row.posts.map(post => <PostRow key={post.id} post={post} open={openPostId === post.id} onPress={() => onOpenPost(post.id)} />)}</View>)}
+        {expanded && (() => {
+          const posts = expandedPosts ?? (row.posts.length ? row.posts : null);
+          if (posts === null) return <Text style={[styles.copy, styles.postList]}>{row.postCount ? 'Loading posts…' : 'No posts yet.'}</Text>;
+          if (!posts.length) return <Text style={[styles.copy, styles.postList]}>No posts yet.</Text>;
+          return <View style={styles.postList}>{posts.map(post => <PostRow key={post.id} post={post} open={openPostId === post.id} onPress={() => onOpenPost(post.id)} />)}</View>;
+        })()}
       </View>;
     })}
   </View>;

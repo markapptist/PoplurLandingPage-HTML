@@ -1223,8 +1223,12 @@ const seedRestCounts = (value: unknown): BetaAlgorithmSeedRestCounts => {
 
 /** The stepped curve may publish `daysToFloor` keyed by start metres or as a
  *  list of `{startMeters, days}`; both fold to the same ordered points. */
-const curveLine = (value: unknown): BetaAlgorithmCurveLine => {
+const curveLine = (value: unknown, decayPerDay = 0): BetaAlgorithmCurveLine => {
   const line = record(value);
+  // The digest publishes the line's multiplier, not its rate; derive the rate
+  // from the knob so the page never prints "−0.0 %/day" for a real line.
+  const multiplier = nullable(line.multiplier, 100);
+  const ratePerDay = line.ratePerDay !== undefined ? fraction(line.ratePerDay) : Math.min(1, decayPerDay * (multiplier ?? 1));
   const raw = line.daysToFloor;
   const points = (Array.isArray(raw)
     ? raw.map(point => { const row = record(point); return [row.startMeters ?? row.meters ?? row.organic, row.days] as const; })
@@ -1234,8 +1238,8 @@ const curveLine = (value: unknown): BetaAlgorithmCurveLine => {
     .sort((left, right) => left.startMeters - right.startMeters)
     .slice(0, 8);
   return {
-    ratePerDay: fraction(line.ratePerDay),
-    multiplier: nullable(line.multiplier, 100),
+    ratePerDay,
+    multiplier,
     halfLifeDays: nullable(line.halfLifeDays, 100_000),
     linearTailDays: nullable(line.linearTailDays, 100_000),
     daysToFloorAt468m: nullable(line.daysToFloorAt468m, 100_000),
@@ -1297,6 +1301,7 @@ export const algorithmDigest = (value: unknown): BetaAlgorithmDigest | null => {
   const registered = record(coverage.registeredPosts);
   const sweep = record(coverage.sweep);
   const knobs = record(digest.knobs);
+  const decayPerDay = fraction(knobs.decayPerDay);
   const observedPolicy = record(digest.observedPolicy);
   const observed = record(digest.observed);
   const grants = record(observed.grants);
@@ -1468,9 +1473,9 @@ export const algorithmDigest = (value: unknown): BetaAlgorithmDigest | null => {
     },
     curve: {
       passMinutes: integer(curve.passMinutes, 1_440) || 60,
-      normal: curveLine(curve.normal),
-      normal65: curveLine(curve.normal65),
-      trial: curve.trial && typeof curve.trial === 'object' ? curveLine(curve.trial) : null,
+      normal: curveLine(curve.normal, decayPerDay),
+      normal65: curveLine(curve.normal65, decayPerDay),
+      trial: curve.trial && typeof curve.trial === 'object' ? curveLine(curve.trial, decayPerDay) : null,
       stress: { halfLifeHours: metric(record(curve.stress).halfLifeHours, 100_000) },
     },
     questions: {

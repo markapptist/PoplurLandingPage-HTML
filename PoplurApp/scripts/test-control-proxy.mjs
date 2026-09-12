@@ -244,9 +244,11 @@ function startPresenceWatcher(firestore, presenceChanged, failed) {
     if (unsubscribe) {
       try { unsubscribe(); } catch { /* already closed */ }
     }
+    // No .select(): Firestore refuses projections on real-time listeners
+    // ("'select' clauses are not supported for real-time queries"), and the
+    // error path tears down every watcher. Lease documents are three fields.
     unsubscribe = firestore.collection('appPresenceSessions')
       .where('activeUntil', '>', Timestamp.fromMillis(Date.now()))
-      .select('uid', 'synthetic', 'activeUntil')
       .onSnapshot(presenceChanged, failed);
   };
   issue();
@@ -264,7 +266,10 @@ function startLiveWatchers() {
     const firestore = getFirestore(adminApp());
     liveFirestore = firestore;
     const changed = () => scheduleLiveDashboardRefresh();
-    const failed = () => resetLiveWatchers();
+    const failed = error => {
+      console.error('live watcher failed:', error?.message ?? error);
+      resetLiveWatchers();
+    };
     const publicPostsChanged = snapshot => {
       if (onboardingQuarantine) return;
       acceptPublicDocuments(snapshot.docs.map(document => ({ id: document.id, data: document.data() })));

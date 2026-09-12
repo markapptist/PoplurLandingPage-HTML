@@ -260,3 +260,15 @@ test('the floor is read from the environment with bounds', () => {
   assert.equal(parseRefreshFloorMs('soon'), LIVE_REFRESH_MIN_MS_DEFAULT);
   assert.equal(parseRefreshFloorMs('1.5'), LIVE_REFRESH_MIN_MS_DEFAULT);
 });
+
+// Firestore rejects .select() on real-time listeners; a projected presence
+// query took every watcher down on 12 Sep. Pin the query shape at the source.
+test('presence watcher issues no select() projection', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('./test-control-proxy.mjs', import.meta.url), 'utf8');
+  // The query chain: from the collection() call to its onSnapshot(), code only.
+  const start = source.indexOf("collection('appPresenceSessions')");
+  assert.ok(start > 0, 'presence watcher present');
+  const chain = source.slice(start, source.indexOf('.onSnapshot(', start)).replace(/\/\/.*$/gm, '');
+  assert.ok(!/\.select\(/.test(chain), 'no .select() on the real-time presence query');
+});

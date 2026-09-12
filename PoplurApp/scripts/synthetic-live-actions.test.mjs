@@ -624,3 +624,15 @@ test('bound chat permits own typing and read receipts, never the owner’s state
   assert.equal(policy.inspect(commit([typing(identity().uid)])).allow, true);
   assert.equal(policy.inspect(commit([typing(LIVE_OWNER_UID)])).allow, false);
 });
+
+// The navigator's accessible name changed with the shared-UI sprite (12 Sep);
+// the runner must find the tab control under either renderer's name.
+test('the live runner finds the tab navigator under both renderer names', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('./synthetic-live-runner.mjs', import.meta.url), 'utf8');
+  const match = source.match(/const CUBE_NAME = (\/.+\/i);/);
+  assert.ok(match, 'CUBE_NAME is defined as a regex');
+  const pattern = new RegExp(match[1].slice(1, -2), 'i');
+  assert.ok(pattern.test('Feed tab model — swipe or use arrow keys to change tabs, hold for menu'), 'WebGL navigator');
+  assert.ok(pattern.test('Feed navigator — swipe to switch tabs, tap to open, hold for menu'), 'sprite navigator');
+  assert.ok(!pattern.test('Cube hold menu'), 'not the hold menu');
+});

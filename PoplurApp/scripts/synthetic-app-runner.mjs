@@ -579,7 +579,7 @@ async function executeStep(actor, step) {
   const page = actor.page;
   if (!page || page.isClosed()) throw new Error(`Browser page closed for ${actor.actorId}.`);
   if (step.method === 'right' || step.method === 'left') {
-    const cube = page.getByRole('button', { name: /tab model — swipe or use arrow keys to change tabs, hold for menu/i });
+    const cube = page.getByRole('button', { name: /(tab model — swipe or use arrow keys to change tabs|navigator — swipe to switch tabs)/i });
     await cube.waitFor({ state: 'visible' });
     const accessibleName = await cube.getAttribute('aria-label') || '';
     if (PROHIBITED_CONTROL_NAME.test(accessibleName)) {
@@ -587,7 +587,7 @@ async function executeStep(actor, step) {
     }
     await cube.press(step.method === 'right' ? 'ArrowRight' : 'ArrowLeft');
   } else if (step.method === 'hold') {
-    const cube = page.getByRole('button', { name: /tab model — swipe or use arrow keys to change tabs, hold for menu/i });
+    const cube = page.getByRole('button', { name: /(tab model — swipe or use arrow keys to change tabs|navigator — swipe to switch tabs)/i });
     const box = await cube.boundingBox();
     if (!box) throw new Error(`Navigator is not visible for ${actor.actorId}.`);
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);

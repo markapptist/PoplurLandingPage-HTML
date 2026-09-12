@@ -57,7 +57,14 @@ const ENGAGE_DWELL_MS = 6_000;
 
 /** DOM marker the clay page exposes for each screen a live frame may validate against. */
 const SCREEN_MARKERS = Object.freeze({ feed: 'feed', profile: 'profile', map: 'map', 'hold-menu': 'hold', camera: 'camera' });
-const CUBE_NAME = /tab model — swipe or use arrow keys to change tabs/i;
+// The tab navigator's accessible name, in both renderers: the WebGL object
+// ("<Tab> tab model — swipe or use arrow keys to change tabs, hold for menu",
+// WebGLNavigator.tsx) and the shared-UI sprite that replaced it on the
+// trial branch ("<Tab> navigator — swipe to switch tabs, tap to open, hold
+// for menu", SpriteNavigator.tsx). Both take Enter and the arrow keys and
+// both lead with the tab's name, which moveCubeTo reads. 12 Sep: the sprite
+// shipped and every actor timed out here waiting for the old name.
+const CUBE_NAME = /(tab model — swipe or use arrow keys to change tabs|navigator — swipe to switch tabs)/i;
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 

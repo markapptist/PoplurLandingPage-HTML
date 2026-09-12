@@ -1042,12 +1042,18 @@ export function createSyntheticLiveRunner({
     // A view requires the real image/video to be ready. Failed media is never
     // converted into an artificial view just to make the counter move.
     await sleep(ENGAGE_DWELL_MS);
-    if (await post.clay.locator('[data-feed-post-id]').first().getAttribute('data-feed-post-id') !== post.id) {
+    // The shared-UI shell remounts the home frame during the dwell; a frame
+    // handle taken before it detaches and every locator on it times out
+    // (12 Sep: every like-post step died this way). Re-resolve the live frame
+    // now, and again for the press.
+    let clay = await clayFrame(actor);
+    if (await clay.locator('[data-feed-post-id]').first().getAttribute('data-feed-post-id') !== post.id) {
       post = await findOwnerPost(actor);
       if (!post) return;
+      clay = await clayFrame(actor);
     }
     if (!actor.likedPostIds.has(post.id) && actor.policy.state.likesGiven < LIVE_MAX_LIKES_PER_ACTOR) {
-      const like = post.clay.getByRole('button', { name: /Increase this post.s radius by one/i }).first();
+      const like = clay.getByRole('button', { name: /Increase this post.s radius by one/i }).first();
       const response = actor.page.waitForResponse(response => response.url().includes('/recordPostEngagement')
         && response.request().postDataJSON()?.data?.kind === 'like'
         && response.request().postDataJSON()?.data?.postId === post.id.replace(/^firestore:/, ''), { timeout: 20_000 });

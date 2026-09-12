@@ -1,0 +1,406 @@
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import type { BetaDashboard, BetaRunnerActor, BetaRunnerAnalytics } from '@/services/testControl';
+import {
+  readSyntheticRunnerFrames,
+  readSyntheticRunnerFrameImage,
+  readSyntheticRunnerState,
+  runFirstUserOnboarding,
+  runSharedFirstUserOnboarding,
+  setSyntheticRunnerEnabled,
+  isCohortMode,
+  SYNTHETIC_ACTIVITY_FALLBACK,
+  type SyntheticActivity,
+  type SyntheticCohortMode,
+  type SyntheticRunnerActor,
+  type SyntheticRunnerFrame,
+  type SyntheticRunnerState,
+} from '@/services/syntheticRunner';
+import { ago, clock, duration, words } from './theme';
+
+const RUNNER_REFRESH_MS = 2_500;
+export const PERSONA_MARKS: Record<string, string> = { food: '🍜', sports: '⚽', music: '🎧', performance: '💻', tech: '💻', news: '📰' };
+export function AnalyticsBars({ title, counts }: { title: string; counts: Record<string, number> }) {
+  const entries = Object.entries(counts).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 8);
+  const maximum = Math.max(1, ...entries.map(([, count]) => count));
+  return <View style={styles.analyticsGroup}><Text style={styles.analyticsTitle}>{title}</Text>{!entries.length ? <Text style={styles.analyticsEmpty}>Waiting for recorded synthetic events.</Text> : entries.map(([label, count]) => <View key={label} style={styles.analyticsRow}><View style={styles.analyticsLabelRow}><Text style={styles.analyticsLabel}>{words(label)}</Text><Text style={styles.analyticsValue}>{count}</Text></View><View style={styles.analyticsTrack}><View style={[styles.analyticsFill, { width: `${Math.max(5, (count / maximum) * 100)}%` } as never]} /></View></View>)}</View>;
+}
+
+export function SessionAnalytics({ analytics }: { analytics: BetaRunnerAnalytics }) {
+  return <View style={styles.analyticsPanel}>
+    <View style={styles.analyticsSummary}><View><Text style={styles.analyticsNumber}>{analytics.eventCount}</Text><Text style={styles.analyticsCaption}>RECORDED EVENTS</Text></View><View><Text style={styles.analyticsNumber}>{analytics.sessionCount}</Text><Text style={styles.analyticsCaption}>SESSIONS</Text></View><View><Text style={styles.analyticsNumber}>{duration(analytics.averageDwellMs)}</Text><Text style={styles.analyticsCaption}>AVG DWELL</Text></View></View>
+    <View style={styles.analyticsColumns}><AnalyticsBars title="Screens" counts={analytics.screenCounts} /><AnalyticsBars title="Actions" counts={analytics.actionCounts} /></View>
+    <Text style={styles.analyticsWindow}>{analytics.windowStartMs && analytics.windowEndMs ? `${clock(analytics.windowStartMs)} – ${clock(analytics.windowEndMs)} runtime window` : 'Analytics will fill as synthetic journeys are recorded.'}</Text>
+  </View>;
+}
+
+const pageIsVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+
+export function ActualRunnerFrameImage({ actorId, frame, frameKey, actor, onUnavailable }: { actorId: string; frame: SyntheticRunnerFrame; frameKey: string; actor: string; onUnavailable: (key: string) => void }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let localUrl = '';
+    const load = async () => {
+      try {
+        const image = await readSyntheticRunnerFrameImage(actorId, frame.sequence);
+        if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') throw new Error('Object URLs are unavailable.');
+        localUrl = URL.createObjectURL(image);
+        if (cancelled) URL.revokeObjectURL(localUrl);
+        else setObjectUrl(localUrl);
+      } catch {
+        if (!cancelled) onUnavailable(frameKey);
+      }
+    };
+    void load();
+    return () => { cancelled = true; if (localUrl) URL.revokeObjectURL(localUrl); };
+  }, [actorId, frame.sequence, frameKey, onUnavailable]);
+  if (!objectUrl) return <View style={styles.frameLoading}><ActivityIndicator color="#ff4aa3" /><Text style={styles.frameLoadingText}>Loading actual local frame…</Text></View>;
+  return <Image accessibilityLabel={`Actual local Poplur frame for ${actor} on ${frame.screen || 'unknown screen'}`} resizeMode="contain" source={{ uri: objectUrl }} style={styles.actualFrame} />;
+}
+
+export function ActualSessionMonitor({ dashboard }: { dashboard: BetaDashboard | null }) {
+  const [runnerState, setRunnerState] = useState<SyntheticRunnerState | null>(null);
+  const [runnerError, setRunnerError] = useState<string | null>(null);
+  const [chosenActorId, setChosenActorId] = useState<string | null>(null);
+  const [framesByActor, setFramesByActor] = useState<Record<string, SyntheticRunnerFrame[]>>({});
+  const [frameErrors, setFrameErrors] = useState<Record<string, string>>({});
+  const [replayFrame, setReplayFrame] = useState<{ actorId: string; sequence: number } | null>(null);
+  const [brokenFrame, setBrokenFrame] = useState<string | null>(null);
+  const [commandBusy, setCommandBusy] = useState(false);
+  const [chosenMode, setModeChoice] = useState<SyntheticCohortMode>('five-actor-readonly');
+  const activeCohortMode: SyntheticCohortMode | null = runnerState?.enabled && isCohortMode(runnerState.mode) ? runnerState.mode : null;
+  // Derived, not synced through an effect (react-hooks/set-state-in-effect is
+  // an error here): while a cohort runs, its mode is the choice (spec §4.4).
+  const modeChoice = activeCohortMode ?? chosenMode;
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (delay = RUNNER_REFRESH_MS) => { if (!cancelled) timer = setTimeout(read, delay); };
+    const read = async () => {
+      if (cancelled) return;
+      if (!pageIsVisible()) { schedule(); return; }
+      try {
+        const next = await readSyntheticRunnerState();
+        if (!cancelled) {
+          setRunnerState(next);
+          setRunnerError(null);
+          if (!next.enabled && next.mode !== 'first-user-v1' && next.mode !== 'first-user-shared-v1') {
+            setFramesByActor({});
+            setReplayFrame(null);
+            setBrokenFrame(null);
+          }
+        }
+      } catch {
+        if (!cancelled) { setRunnerState(null); setRunnerError('The local session runner is offline.'); }
+      } finally { schedule(); }
+    };
+    const onVisibility = () => { if (pageIsVisible()) { if (timer) clearTimeout(timer); schedule(0); } };
+    schedule(0);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility); };
+  }, []);
+
+  const actors = runnerState?.actors ?? [];
+  const selected = actors.find(actor => actor.actorId === chosenActorId) ?? actors[0] ?? null;
+
+  useEffect(() => {
+    const actorId = selected?.actorId;
+    if (!actorId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (delay = RUNNER_REFRESH_MS) => { if (!cancelled) timer = setTimeout(read, delay); };
+    const read = async () => {
+      if (cancelled) return;
+      if (!pageIsVisible()) { schedule(); return; }
+      try {
+        const frames = await readSyntheticRunnerFrames(actorId);
+        if (!cancelled) {
+          setFramesByActor(current => ({ ...current, [actorId]: frames }));
+          setFrameErrors(current => { const next = { ...current }; delete next[actorId]; return next; });
+        }
+      } catch {
+        if (!cancelled) setFrameErrors(current => ({ ...current, [actorId]: 'The local frame sequence is offline.' }));
+      } finally { schedule(); }
+    };
+    const onVisibility = () => { if (pageIsVisible()) { if (timer) clearTimeout(timer); schedule(0); } };
+    schedule(0);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility); };
+  }, [selected?.actorId]);
+
+  const frames = selected ? framesByActor[selected.actorId] ?? [] : [];
+  const isolatedFirstUserMode = runnerState?.mode === 'first-user-v1';
+  const sharedFirstUserMode = runnerState?.mode === 'first-user-shared-v1';
+  const firstUserMode = isolatedFirstUserMode || sharedFirstUserMode;
+  const firstUserActive = firstUserMode
+    && (runnerState?.status === 'starting' || runnerState?.status === 'live');
+  const firstUserComplete = firstUserMode && runnerState?.completed === true;
+  const replayIndex = replayFrame && selected?.actorId === replayFrame.actorId
+    ? frames.findIndex(frame => frame.sequence === replayFrame.sequence)
+    : -1;
+  const isLiveView = replayFrame === null || replayIndex < 0;
+  const currentIndex = isLiveView ? 0 : replayIndex;
+  const currentFrame = frames[currentIndex] ?? null;
+  const currentKey = selected && currentFrame ? `${selected.actorId}:${currentFrame.sequence}` : '';
+  const frameOffline = Boolean(selected && frameErrors[selected.actorId]) || brokenFrame === currentKey;
+  const suppressed = Boolean(currentFrame?.frameSuppressed || (isLiveView && selected?.frameSuppressed));
+  const runnerUnavailable = runnerState?.status === 'offline' || runnerState?.status === 'error' || selected?.status === 'offline' || selected?.status === 'error';
+  const runnerPaused = !selected || !runnerState?.enabled || runnerState.status === 'paused'
+    || runnerState.status === 'starting' || selected.status === 'paused' || selected.status === 'starting';
+  const status = runnerError || frameOffline || !runnerState || runnerUnavailable
+    ? 'OFFLINE'
+    : firstUserComplete
+      ? 'JOURNEY COMPLETE'
+    : runnerPaused
+      ? 'PAUSED'
+      : suppressed ? 'FRAME SUPPRESSED' : 'REAL APP SESSION';
+  const visibleSession = status === 'REAL APP SESSION' || status === 'JOURNEY COMPLETE';
+  const screen = visibleSession ? (currentFrame?.screen || selected?.currentScreen || '') : '';
+  const action = visibleSession ? (currentFrame?.action || selected?.action || '') : '';
+  const canShowFrame = Boolean(visibleSession && selected && currentFrame && !frameOffline && !suppressed);
+
+  const choose = (actor: SyntheticRunnerActor) => { setChosenActorId(actor.actorId); setReplayFrame(null); setBrokenFrame(null); };
+  const toggleRunner = async (enabled: boolean) => {
+    if (commandBusy) return;
+    setCommandBusy(true);
+    try {
+      const next = await setSyntheticRunnerEnabled(enabled, modeChoice);
+      setRunnerState(next);
+      setRunnerError(null);
+      if (!next.enabled && next.mode !== 'first-user-v1' && next.mode !== 'first-user-shared-v1') {
+        setFramesByActor({});
+        setReplayFrame(null);
+        setBrokenFrame(null);
+      }
+    } catch {
+      setRunnerError('The local runner could not change state safely.');
+    } finally {
+      setCommandBusy(false);
+    }
+  };
+  const startFirstUser = async () => {
+    if (commandBusy || !runnerState || runnerState.enabled || firstUserActive) return;
+    setCommandBusy(true);
+    try {
+      const next = await runFirstUserOnboarding();
+      setRunnerState(next);
+      setRunnerError(next.error || null);
+    } catch {
+      setRunnerError('The emulator-only first-user journey could not start safely.');
+    } finally {
+      setCommandBusy(false);
+    }
+  };
+  const startSharedFirstUser = async () => {
+    if (commandBusy || !runnerState || runnerState.enabled || firstUserActive) return;
+    setCommandBusy(true);
+    try {
+      const next = await runSharedFirstUserOnboarding();
+      setRunnerState(next);
+      setRunnerError(next.error || null);
+    } catch {
+      setRunnerError('The shared-backend tester journey could not start safely.');
+    } finally {
+      setCommandBusy(false);
+    }
+  };
+  const previous = () => {
+    if (!selected) return;
+    const targetIndex = currentIndex + 1;
+    if (targetIndex < frames.length) setReplayFrame({ actorId: selected.actorId, sequence: frames[targetIndex].sequence });
+  };
+  const next = () => {
+    if (!selected || isLiveView) return;
+    if (currentIndex <= 1) setReplayFrame(null);
+    else setReplayFrame({ actorId: selected.actorId, sequence: frames[currentIndex - 1].sequence });
+  };
+
+  return <View style={styles.monitorCard}>
+    <View style={styles.monitorHeading}><View style={styles.flex}><Text style={styles.kicker}>LOCAL SYNTHETIC RUNNER</Text><Text style={styles.monitorTitle}>Live AI Session Monitor</Text><Text style={styles.copy}>Watch actual Poplur tester sessions and replay only the real frames held by this local runner.</Text></View><View style={[styles.monitorStatus, visibleSession ? styles.monitorLive : status === 'FRAME SUPPRESSED' ? styles.monitorReplay : styles.monitorPaused]}><Text style={styles.monitorStatusText}>{status}</Text></View></View>
+    <View style={styles.privacyStrip}><Text style={styles.privacyTitle}>ACTUAL SYNTHETIC POPLUR SESSIONS · FRAMES STAY LOCAL</Text><Text style={styles.privacyCopy}>These are actual local app frames, never a reconstruction. Human account access and private capture are blocked; both first-user modes use a fixed synthetic profile image and browser fake camera. The shared tester’s account and post are real production data, while every recorded frame remains on this machine.</Text></View>
+    <View style={styles.firstUserCard}>
+      <View style={styles.flex}><Text style={styles.firstUserKicker}>EMULATOR-ONLY · ONE SHOT</Text><Text style={styles.firstUserTitle}>Watch Poplur’s first user</Text><Text style={styles.firstUserCopy}>Creates one new synthetic account through the visible signup UI, adds its profile photo, posts through Camera and Composer, then verifies the same post on Map and Profile. The one-shot runner is quarantined from production Firebase.</Text>{isolatedFirstUserMode && <Text style={styles.firstUserIdentity}>{runnerState?.identity?.email || 'Generating first-user identity…'}</Text>}{isolatedFirstUserMode && !!runnerState?.error && <Text style={styles.firstUserError}>{runnerState.error}</Text>}</View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Run the emulator-only first user journey once" disabled={commandBusy || !runnerState || runnerState.enabled || firstUserActive} onPress={() => { void startFirstUser(); }} style={[styles.firstUserButton, (commandBusy || !runnerState || runnerState.enabled || firstUserActive) && styles.replayButtonDisabled]}><Text style={styles.firstUserButtonText}>{isolatedFirstUserMode && firstUserComplete ? 'COMPLETE' : isolatedFirstUserMode ? 'RUN RECORDED' : commandBusy ? 'RUNNING…' : 'RUN ISOLATED ONCE'}</Text></Pressable>
+    </View>
+    <View style={[styles.firstUserCard, styles.sharedFirstUserCard]}>
+      <View style={styles.flex}><Text style={styles.sharedFirstUserKicker}>SHARED POPLUR BACKEND · ONE SHOT</Text><Text style={styles.firstUserTitle}>Watch a separate real tester</Text><Text style={styles.sharedFirstUserCopy}>Creates one new tester account and one public post through the visible app. Both remain live on Poplur. The post appears on Map and, only when its normal radius qualifies, in Feed. It is never injected into or checked against your personal Profile. This test does not validate username-login reservation.</Text>{sharedFirstUserMode && <Text style={styles.firstUserIdentity}>{runnerState?.identity?.email || 'Generating shared tester identity…'}</Text>}{sharedFirstUserMode && runnerState?.result && <Text style={styles.sharedFirstUserResult}>MAP {runnerState.result.mapVerified ? 'VERIFIED' : 'PENDING'} · FEED {runnerState.result.feedEligible ? runnerState.result.feedVerified ? 'VERIFIED' : 'PENDING' : 'NOT RADIUS-ELIGIBLE'} · PROFILE NOT CHECKED</Text>}{sharedFirstUserMode && !!runnerState?.error && <Text style={styles.firstUserError}>{runnerState.error}</Text>}</View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Create one production tester account and public post" disabled={commandBusy || !runnerState || runnerState.enabled || firstUserActive} onPress={() => { void startSharedFirstUser(); }} style={[styles.firstUserButton, styles.sharedFirstUserButton, (commandBusy || !runnerState || runnerState.enabled || firstUserActive) && styles.replayButtonDisabled]}><Text style={styles.firstUserButtonText}>{sharedFirstUserMode && firstUserComplete ? 'COMPLETE' : sharedFirstUserMode ? 'RUN RECORDED' : commandBusy ? 'RUNNING…' : 'RUN SHARED TESTER ONCE'}</Text></Pressable>
+    </View>
+    <View style={styles.runnerControl}><View style={styles.flex}><Text style={styles.runnerControlLabel}>{cohortModeLabel(activeCohortMode ?? modeChoice)}</Text><Text style={styles.runnerControlTitle}>{firstUserActive ? 'Unavailable while first-user journey runs' : commandBusy ? 'Changing runner state safely…' : runnerState?.enabled ? (activeCohortMode === 'five-actor-live' ? 'Runner is on · the five users are using the app' : 'Runner is on') : 'Runner is off'}</Text><Text style={styles.runnerControlCopy}>{runnerState?.enabled ? (activeCohortMode === 'five-actor-live' ? 'Live use: the five beta accounts are signed in to the real app, posting and liking. Turn this off before app maintenance; stopping clears every local frame.' : 'Turn this off before app maintenance. Stopping clears every local frame.') : modeChoice === 'five-actor-live' ? 'Live use signs the five beta accounts in to the real app shell, publishes real posts tagged synthetic, and views and likes other testers’ posts so radius grows toward you.' : firstUserMode ? 'Starting the original five-person cohort will replace the recorded first-user replay.' : 'The original five-person cohort is unchanged and cannot overlap the first-user journey.'}</Text></View><View style={styles.modePicker}>{(['five-actor-readonly', 'five-actor-live'] as SyntheticCohortMode[]).map(mode => { const active = (activeCohortMode ?? modeChoice) === mode; return <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: active, disabled: Boolean(activeCohortMode) || commandBusy }} disabled={Boolean(activeCohortMode) || commandBusy} onPress={() => setModeChoice(mode)} style={[styles.modeButton, active && (mode === 'five-actor-live' ? styles.modeButtonLive : styles.modeButtonActive)]}><Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{mode === 'five-actor-live' ? 'LIVE USE · POSTS' : 'READ-ONLY'}</Text></Pressable>; })}</View><Switch accessibilityLabel="Start or stop the isolated synthetic runner" disabled={commandBusy || !runnerState || firstUserActive} onValueChange={enabled => { void toggleRunner(enabled); }} thumbColor="#fff" trackColor={{ false: '#5c5260', true: '#e42254' }} value={!firstUserMode && runnerState?.enabled === true} /></View>
+    <ActivityCatalogue mode={activeCohortMode ?? modeChoice} activities={activeCohortMode && runnerState?.activities.length ? runnerState.activities : SYNTHETIC_ACTIVITY_FALLBACK[activeCohortMode ?? modeChoice]} live={Boolean(activeCohortMode)} />
+    <SignedInRoster actors={actors} cohortMode={activeCohortMode} runnerOffline={Boolean(runnerError) || !runnerState} runError={runnerState && isCohortMode(runnerState.mode) ? runnerState.error : ''} />
+    {!!actors.length && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.personaTabs}>{actors.map(actor => { const active = actor.actorId === selected?.actorId; return <Pressable key={actor.actorId} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => choose(actor)} style={[styles.personaTab, active && styles.personaTabActive]}><View style={[styles.personaTabDot, actor.status === 'live' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text numberOfLines={1} style={[styles.personaTabName, active && styles.personaTabNameActive]}>{actor.actor}</Text><Text numberOfLines={1} style={styles.personaTabMeta}>{runnerState?.enabled && actor.currentScreen ? words(actor.currentScreen) : words(actor.status)}</Text></View></Pressable>; })}</ScrollView>}
+    <View style={styles.sessionMetaGrid}><SessionFact label="CURRENT SCREEN" value={screen ? words(screen) : 'No live session'} /><SessionFact label="CURRENT ACTION" value={action ? words(action) : 'No live action'} /><SessionFact label="SESSION" value={selected?.sessionId ? selected.sessionId.slice(-16) : 'Not running'} /><SessionFact label="LOCAL FRAMES" value={`${selected?.frameCount ?? frames.length}`} /></View>
+    <View style={styles.monitorColumns}>
+      <View style={styles.framePanel}><View style={styles.panelHeading}><View><Text style={styles.panelKicker}>{isLiveView ? 'LATEST ACTUAL FRAME' : `ACTUAL FRAME ${currentFrame?.sequence ?? '—'}`}</Text><Text style={styles.panelTitle}>{selected?.actor ?? 'No local actor running'}</Text></View><Text style={styles.panelPlace}>{currentFrame ? clock(currentFrame.capturedAtMs) : status}</Text></View>
+        <View style={styles.frameViewport}>{canShowFrame && currentFrame && selected ? <ActualRunnerFrameImage key={currentKey} actor={selected.actor} actorId={selected.actorId} frame={currentFrame} frameKey={currentKey} onUnavailable={setBrokenFrame} /> : <View style={styles.framePlaceholder}><Text style={styles.framePlaceholderTitle}>{status}</Text><Text style={styles.framePlaceholderCopy}>{runnerError || (frameOffline ? 'The local frame endpoint is unavailable.' : suppressed ? 'This protected step intentionally does not expose a frame.' : !selected ? 'The runner is off. No app session has started.' : 'Waiting for the first actual local frame.')}</Text></View>}</View>
+      </View>
+      <View style={styles.replayPanel}><View style={styles.panelHeading}><View><Text style={styles.panelKicker}>LOCAL FRAME REPLAY</Text><Text style={styles.panelTitle}>{frames.length ? `${frames.length} actual frames` : 'No frame sequence'}</Text></View><Text style={styles.panelPlace}>{selected?.sessionId ? selected.sessionId.slice(-12) : 'runner off'}</Text></View><View style={styles.replayControls}><ReplayButton label="LIVE" active={isLiveView} onPress={() => setReplayFrame(null)} disabled={!frames.length} /><ReplayButton label="PREV" onPress={previous} disabled={frames.length < 2 || currentIndex >= frames.length - 1} /><ReplayButton label="NEXT" onPress={next} disabled={!frames.length || isLiveView} /></View><View style={styles.eventList}>{!frames.length ? <Text style={styles.analyticsEmpty}>No frame recording is available. Nothing is inferred from legacy simulation events.</Text> : frames.slice(0, firstUserMode ? 14 : 8).map(frame => { const active = currentFrame?.sequence === frame.sequence; return <Pressable key={frame.sequence} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => { if (selected) setReplayFrame({ actorId: selected.actorId, sequence: frame.sequence }); }} style={[styles.eventRow, active && styles.eventRowActive]}><Text style={styles.eventTime}>{clock(frame.capturedAtMs)}</Text><View style={styles.flex}><Text style={styles.eventAction}>{frame.frameSuppressed ? 'Frame Suppressed' : (frame.action ? words(frame.action) : 'Actual Frame')}</Text><Text style={styles.eventMeta}>{frame.screen ? words(frame.screen) : 'Unknown screen'} · sequence {frame.sequence}</Text></View><Text style={styles.eventType}>{frame.frameSuppressed ? 'PROTECTED' : 'LOCAL JPEG'}</Text></Pressable>; })}</View></View>
+    </View>
+    {!firstUserMode && dashboard && <SessionAnalytics analytics={dashboard.runnerAnalytics} />}
+  </View>;
+}
+
+export function cohortModeLabel(mode: SyntheticCohortMode) { return mode === 'five-actor-live' ? 'FIVE-ACTOR LIVE USE · REAL POSTS' : 'FIVE-ACTOR READ-ONLY MODE'; }
+
+export const ACTIVITY_REPORT_LABEL: Record<SyntheticActivity['reported'], string> = { cloud: 'CLOUD EVENT', local: 'LOCAL FRAME', production: 'REAL DATA' };
+
+/** The activity list is the runner's own vocabulary: nothing here is inferred from a screenshot. */
+export function ActivityCatalogue({ mode, activities, live }: { mode: SyntheticCohortMode; activities: SyntheticActivity[]; live: boolean }) {
+  return <View style={styles.activityPanel}>
+    <View style={styles.panelHeading}><View><Text style={styles.panelKicker}>{live ? 'WHAT THE SYNTHETIC USERS ARE DOING' : 'WHAT THE SYNTHETIC USERS WILL DO'}</Text><Text style={styles.panelTitle}>{mode === 'five-actor-live' ? 'Live use — browse, post, view, like' : 'Read-only — browse only'}</Text></View><Text style={styles.panelPlace}>{activities.length} activities · {live ? 'reported by the runner now' : 'planned for this mode'}</Text></View>
+    <View style={styles.activityList}>{activities.map((activity, index) => <View key={activity.id} style={styles.activityRow}><Text style={styles.activityIndex}>{String(index + 1).padStart(2, '0')}</Text><View style={styles.flex}><Text style={styles.activityLabel}>{activity.label}</Text><Text style={styles.activityDetail}>{activity.detail}</Text></View><View style={[styles.activityChip, activity.reported === 'production' ? styles.activityChipProduction : activity.reported === 'local' ? styles.activityChipLocal : styles.activityChipCloud]}><Text style={styles.activityChipText}>{ACTIVITY_REPORT_LABEL[activity.reported]}</Text></View></View>)}</View>
+    {mode === 'five-actor-live' && <Text style={styles.activityFoot}>Each actor posts from its own managed city — three from Toronto, one from London, one from New York. Views and likes from other accounts grow a post by about a kilometre each, so their posts reach your Map, then your Feed, only when their radius actually intercepts you — the same rule real testers get.</Text>}
+  </View>;
+}
+
+/** Only accounts the local runner has actually signed in appear here; identity comes from the pinned beta cohort, never from a guess. */
+export function SignedInRoster({ actors, cohortMode, runnerOffline, runError }: { actors: SyntheticRunnerActor[]; cohortMode: SyntheticCohortMode | null; runnerOffline: boolean; runError: string }) {
+  const signedIn = cohortMode ? actors.filter(actor => Boolean(actor.sessionId) && (actor.status === 'live' || actor.status === 'starting')) : [];
+  const posting = signedIn.reduce((total, actor) => total + actor.postsPublished, 0);
+  const failed = cohortMode || runError ? actors.filter(actor => actor.lastError) : [];
+  return <View style={styles.rosterPanel}>
+    <View style={styles.panelHeading}><View><Text style={styles.panelKicker}>SIGNED-IN SYNTHETIC USERS</Text><Text style={styles.panelTitle}>{signedIn.length ? `${signedIn.length} of 5 accounts active` : runnerOffline ? 'Runner offline' : 'No account is signed in'}</Text></View><Text style={styles.panelPlace}>{signedIn.length ? `${posting} post${posting === 1 ? '' : 's'} published this run` : cohortMode ? 'signing in…' : 'runner off'}</Text></View>
+    {!!runError && <Text style={styles.rosterError}>LAST RUN STOPPED · {runError}</Text>}
+    {!signedIn.length ? <Text style={styles.analyticsEmpty}>{runnerOffline ? 'The local session runner is offline, so no synthetic account can be signed in.' : cohortMode ? 'Browser contexts are opening. Each account appears here the moment its sign-in completes.' : 'Turn the runner on to sign the five beta accounts in. They use isolated browser sessions on this machine only.'}</Text>
+      : signedIn.map(actor => <View key={actor.actorId} style={styles.rosterRow}><View style={[styles.statusDot, actor.status === 'live' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text style={styles.rosterName}>{actor.handle || actor.actor} <Text style={styles.rosterPersona}>{actor.persona}{actor.place ? ` · ${actor.place}` : ''}</Text></Text><Text style={styles.rosterMeta}>{actor.email || actor.uid || actor.actorId} · session …{actor.sessionId.slice(-10)} · signed in {clock(actor.signedInAtMs)}</Text><Text style={styles.rosterMeta}>{actor.currentScreen ? words(actor.currentScreen) : 'Starting'}{actor.action ? ` · ${words(actor.action)}` : ''}</Text></View><View style={styles.rosterStats}><Text style={styles.rosterStat}>{actor.postsPublished} POST{actor.postsPublished === 1 ? '' : 'S'}</Text><Text style={styles.rosterStatMeta}>{actor.lastPostId ? `last …${actor.lastPostId.slice(-8)} ${ago(actor.lastPostAtMs)}` : 'none yet'}</Text><Text style={styles.rosterStatMeta}>{actor.viewsGiven} views · {actor.likesGiven} likes · {actor.dmsSent} DM{actor.dmsSent === 1 ? '' : 's'}</Text></View></View>)}
+    {!!failed.length && <View style={styles.rosterFailures}>{failed.map(actor => <Text key={actor.actorId} style={styles.rosterError}>{actor.handle || actor.actorId} · {actor.email} · {actor.lastError}</Text>)}</View>}
+  </View>;
+}
+
+export function SessionFact({ label, value }: { label: string; value: string }) { return <View style={styles.sessionFact}><Text style={styles.sessionFactLabel}>{label}</Text><Text numberOfLines={2} style={styles.sessionFactValue}>{value}</Text></View>; }
+export function ReplayButton({ label, active = false, disabled = false, onPress }: { label: string; active?: boolean; disabled?: boolean; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityState={{ selected: active, disabled }} disabled={disabled} onPress={onPress} style={[styles.replayButton, active && styles.replayButtonActive, disabled && styles.replayButtonDisabled]}><Text style={[styles.replayButtonText, active && styles.replayButtonTextActive]}>{label}</Text></Pressable>; }
+export function PersonaCard({ profile }: { profile: BetaRunnerActor }) { const personaKey = Object.keys(PERSONA_MARKS).find(key => profile.persona.toLowerCase().includes(key)); const mark = personaKey ? PERSONA_MARKS[personaKey] : '●'; return <View style={styles.personaCard}><View style={styles.personaTop}><View style={styles.personaAvatar}><Text style={styles.personaMark}>{mark}</Text><Text style={styles.personaTile}>{profile.avatarTile.toUpperCase()}</Text></View><View style={styles.flex}><Text style={styles.personaFlag}>ISOLATED RUNNER ACTOR</Text><Text style={styles.name}>{profile.label}</Text><Text style={styles.meta}>{profile.persona} · {profile.place}</Text></View><Text style={[styles.personaStatus, profile.state === 'live' ? styles.simLive : styles.simPaused]}>{profile.state.replace(/-/g, ' ').toUpperCase()}</Text></View><Text style={styles.observationLabel}>RUNNER ENROLMENT</Text><Text style={styles.reportText}>{profile.active ? `Allowlisted for generation ${profile.generation}.` : 'Not allowlisted. This persona cannot create a session.'}</Text></View>; }
+
+const styles = StyleSheet.create({
+  kicker: { color: '#ff4aa3', fontSize: 10, fontWeight: '900', letterSpacing: 1.6 },
+  copy: { color: '#d5a7bf', fontSize: 13, lineHeight: 19 },
+  simLive: { color: '#6ff5b0' },
+  simPaused: { color: '#d1a0b9' },
+  flex: { flex: 1, gap: 2 },
+  name: { color: '#fff8fc', fontSize: 13, fontWeight: '800' },
+  meta: { color: '#d0a2b9', fontSize: 11 },
+  statusDot: { width: 9, height: 9, borderRadius: 5 },
+  statusLive: { backgroundColor: '#5af0a4' },
+  statusAway: { backgroundColor: '#806476' },
+  reportText: { color: '#dec0cf', fontSize: 12, lineHeight: 18 },
+  personaCard: { flexGrow: 1, flexBasis: 290, gap: 7, minWidth: 0, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: '#70304f', backgroundColor: 'rgba(20,5,14,.86)' },
+  personaTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  personaAvatar: { width: 54, height: 54, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f22e88', borderWidth: 2, borderColor: '#ff9aca', boxShadow: '0 6px 18px rgba(255,28,132,.28)' },
+  personaMark: { fontSize: 24 },
+  personaTile: { position: 'absolute', right: 3, bottom: 2, color: '#fff', fontSize: 7, fontWeight: '900' },
+  personaFlag: { color: '#ff65ab', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  personaStatus: { alignSelf: 'flex-start', fontSize: 9, fontWeight: '900', letterSpacing: .8 },
+  observationLabel: { color: '#8fddff', fontSize: 8, fontWeight: '900', letterSpacing: 1, marginTop: 3 },
+  monitorCard: { gap: 16, padding: 18, borderWidth: 2, borderColor: '#ff4aa3', borderRadius: 24, backgroundColor: 'rgba(18,4,13,.97)', boxShadow: '0 18px 48px rgba(255,19,126,.18)' },
+  monitorHeading: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, alignItems: 'center', justifyContent: 'space-between' },
+  monitorTitle: { color: '#fff8fc', fontSize: 25, fontWeight: '900' },
+  monitorStatus: { minWidth: 140, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center', borderRadius: 999, borderWidth: 1 },
+  monitorLive: { backgroundColor: 'rgba(28,119,79,.35)', borderColor: '#62f1aa' },
+  monitorReplay: { backgroundColor: 'rgba(39,102,135,.38)', borderColor: '#8fddff' },
+  monitorPaused: { backgroundColor: 'rgba(99,72,91,.38)', borderColor: '#aa8097' },
+  monitorStatusText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 1, textAlign: 'center' },
+  privacyStrip: { gap: 3, padding: 12, borderRadius: 13, borderLeftWidth: 4, borderLeftColor: '#8fddff', backgroundColor: 'rgba(40,20,54,.75)' },
+  privacyTitle: { color: '#b9ecff', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  privacyCopy: { color: '#d9bdd0', fontSize: 11, lineHeight: 16 },
+  firstUserCard: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: 16, borderRadius: 17, borderWidth: 2, borderColor: '#66e6bd', backgroundColor: 'rgba(7,42,39,.9)', boxShadow: '0 12px 32px rgba(58,239,188,.12)' },
+  firstUserKicker: { color: '#79f6cf', fontSize: 8, fontWeight: '900', letterSpacing: 1.2 },
+  firstUserTitle: { color: '#fff', fontSize: 18, fontWeight: '900' },
+  firstUserCopy: { maxWidth: 700, color: '#bde4d8', fontSize: 11, lineHeight: 17 },
+  firstUserIdentity: { color: '#93e6ff', fontSize: 10, fontWeight: '800' },
+  firstUserError: { color: '#ff9ebf', fontSize: 10, fontWeight: '800' },
+  firstUserButton: { minWidth: 190, alignItems: 'center', paddingHorizontal: 18, paddingVertical: 13, borderRadius: 13, borderWidth: 2, borderColor: '#d9fff3', backgroundColor: '#17a97e' },
+  firstUserButtonText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  sharedFirstUserCard: { borderColor: '#ff82be', backgroundColor: 'rgba(57,8,38,.93)', boxShadow: '0 12px 32px rgba(255,65,151,.14)' },
+  sharedFirstUserKicker: { color: '#ff8fc7', fontSize: 8, fontWeight: '900', letterSpacing: 1.2 },
+  sharedFirstUserCopy: { maxWidth: 700, color: '#ecc3d7', fontSize: 11, lineHeight: 17 },
+  sharedFirstUserResult: { color: '#8fddff', fontSize: 9, fontWeight: '900', letterSpacing: .6 },
+  sharedFirstUserButton: { borderColor: '#ffd2e8', backgroundColor: '#df247e' },
+  runnerControl: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 14, padding: 13, borderRadius: 14, borderWidth: 1, borderColor: '#783050', backgroundColor: '#260b1a' },
+  runnerControlLabel: { color: '#ff65ab', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  runnerControlTitle: { color: '#fff', fontSize: 14, fontWeight: '900' },
+  runnerControlCopy: { color: '#c493ac', fontSize: 10, lineHeight: 15 },
+  personaTabs: { gap: 8, paddingRight: 4 },
+  personaTab: { width: 190, minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 11, paddingVertical: 9, borderRadius: 14, borderWidth: 1, borderColor: '#5f2846', backgroundColor: '#210914' },
+  personaTabActive: { borderColor: '#ff72b6', backgroundColor: '#4b1231' },
+  personaTabDot: { width: 8, height: 8, borderRadius: 4 },
+  personaTabName: { color: '#cba2b7', fontSize: 12, fontWeight: '800' },
+  personaTabNameActive: { color: '#fff' },
+  personaTabMeta: { color: '#a77891', fontSize: 9 },
+  sessionMetaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  sessionFact: { flexGrow: 1, flexBasis: 170, minHeight: 70, gap: 5, padding: 11, borderRadius: 13, borderWidth: 1, borderColor: '#612542', backgroundColor: '#1d0814' },
+  sessionFactLabel: { color: '#bf829f', fontSize: 8, fontWeight: '900', letterSpacing: .9 },
+  sessionFactValue: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  monitorColumns: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'stretch' },
+  framePanel: { flexGrow: 1, flexShrink: 1, flexBasis: 380, minWidth: 0, gap: 12, padding: 14, borderRadius: 18, backgroundColor: '#210a19', borderWidth: 1, borderColor: '#652944' },
+  replayPanel: { flexGrow: 1, flexShrink: 1, flexBasis: 380, minWidth: 0, gap: 12, padding: 14, borderRadius: 18, backgroundColor: '#140b15', borderWidth: 1, borderColor: '#4b3148' },
+  panelHeading: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' },
+  panelKicker: { color: '#ff62aa', fontSize: 8, fontWeight: '900', letterSpacing: .9 },
+  panelTitle: { color: '#fff', fontSize: 16, fontWeight: '900' },
+  panelPlace: { color: '#94defe', fontSize: 9, fontWeight: '800' },
+  frameViewport: { width: '100%', maxWidth: 420, aspectRatio: 9 / 16, alignSelf: 'center', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderRadius: 26, borderWidth: 3, borderColor: '#ef338a', backgroundColor: '#070407', boxShadow: '0 18px 36px rgba(0,0,0,.35)' },
+  actualFrame: { width: '100%', height: '100%', backgroundColor: '#070407' },
+  frameLoading: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: '#070407' },
+  frameLoadingText: { color: '#cfa3ba', fontSize: 10, fontWeight: '800' },
+  framePlaceholder: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, backgroundColor: 'radial-gradient(circle at 50% 35%, #46122f 0%, #12070f 64%, #070407 100%)' },
+  framePlaceholderTitle: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 1.1, textAlign: 'center' },
+  framePlaceholderCopy: { maxWidth: 280, color: '#cfa3ba', fontSize: 11, lineHeight: 17, textAlign: 'center' },
+  replayControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  replayButton: { minWidth: 70, alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 11, borderWidth: 1, borderColor: '#79506c', backgroundColor: '#2a1725' },
+  replayButtonActive: { borderColor: '#8fddff', backgroundColor: '#174760' },
+  replayButtonDisabled: { opacity: .38 },
+  replayButtonText: { color: '#d8b8c8', fontSize: 9, fontWeight: '900', letterSpacing: .8 },
+  replayButtonTextActive: { color: '#dff7ff' },
+  eventList: { gap: 6 },
+  eventRow: { minHeight: 51, flexDirection: 'row', gap: 9, alignItems: 'center', padding: 9, borderRadius: 11, borderWidth: 1, borderColor: '#44263b', backgroundColor: '#1d111b' },
+  eventRowActive: { borderColor: '#ff65ab', backgroundColor: '#3e142e' },
+  eventTime: { color: '#8fddff', fontSize: 8, fontWeight: '900' },
+  eventAction: { color: '#fff', fontSize: 10, fontWeight: '900' },
+  eventMeta: { color: '#b98ca4', fontSize: 8 },
+  eventType: { maxWidth: 88, color: '#eab4ce', fontSize: 7, fontWeight: '900', textAlign: 'right' },
+  analyticsPanel: { gap: 14, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#59364f', backgroundColor: '#100a10' },
+  analyticsSummary: { flexDirection: 'row', flexWrap: 'wrap', gap: 22 },
+  analyticsNumber: { color: '#fff', fontSize: 20, fontWeight: '900' },
+  analyticsCaption: { color: '#b7849e', fontSize: 7, fontWeight: '900', letterSpacing: .8 },
+  analyticsColumns: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 },
+  analyticsGroup: { flexGrow: 1, flexShrink: 1, flexBasis: 300, minWidth: 0, gap: 8 },
+  analyticsTitle: { color: '#ff65ab', fontSize: 11, fontWeight: '900' },
+  analyticsEmpty: { color: '#9e788d', fontSize: 10, lineHeight: 15 },
+  analyticsRow: { gap: 4 },
+  analyticsLabelRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  analyticsLabel: { flex: 1, color: '#e7c7d7', fontSize: 9, fontWeight: '800' },
+  analyticsValue: { color: '#8fddff', fontSize: 9, fontWeight: '900' },
+  analyticsTrack: { height: 7, overflow: 'hidden', borderRadius: 6, backgroundColor: '#30202b' },
+  analyticsFill: { height: '100%', borderRadius: 6, backgroundColor: '#f12784' },
+  analyticsWindow: { color: '#8f7181', fontSize: 8 },
+  modePicker: { flexDirection: 'row', gap: 6 },
+  modeButton: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 11, borderWidth: 1, borderColor: '#79506c', backgroundColor: '#2a1725' },
+  modeButtonActive: { borderColor: '#8fddff', backgroundColor: '#174760' },
+  modeButtonLive: { borderColor: '#ff8ac5', backgroundColor: '#b0134f' },
+  modeButtonText: { color: '#d8b8c8', fontSize: 9, fontWeight: '900', letterSpacing: .8 },
+  modeButtonTextActive: { color: '#fff' },
+  activityPanel: { gap: 12, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#652944', backgroundColor: '#1b0a16' },
+  activityList: { gap: 6 },
+  activityRow: { flexDirection: 'row', gap: 10, alignItems: 'center', padding: 9, borderRadius: 11, borderWidth: 1, borderColor: '#44263b', backgroundColor: '#1d111b' },
+  activityIndex: { width: 22, color: '#8fddff', fontSize: 10, fontWeight: '900' },
+  activityLabel: { color: '#fff', fontSize: 11, fontWeight: '900' },
+  activityDetail: { color: '#b98ca4', fontSize: 9, lineHeight: 13 },
+  activityChip: { minWidth: 76, paddingHorizontal: 7, paddingVertical: 4, alignItems: 'center', borderRadius: 7 },
+  activityChipCloud: { backgroundColor: '#174760' },
+  activityChipLocal: { backgroundColor: '#493547' },
+  activityChipProduction: { backgroundColor: '#b0134f' },
+  activityChipText: { color: '#fff', fontSize: 7, fontWeight: '900', letterSpacing: .6 },
+  activityFoot: { color: '#8f7181', fontSize: 9, lineHeight: 14 },
+  rosterPanel: { gap: 10, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: '#4b3148', backgroundColor: '#140b15' },
+  rosterRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 9, borderTopWidth: 1, borderTopColor: '#3a2334' },
+  rosterName: { color: '#fff8fc', fontSize: 12, fontWeight: '900' },
+  rosterPersona: { color: '#d0a2b9', fontSize: 10, fontWeight: '600' },
+  rosterMeta: { color: '#a77891', fontSize: 9 },
+  rosterStats: { alignItems: 'flex-end', gap: 2, maxWidth: 170 },
+  rosterStat: { color: '#8fddff', fontSize: 10, fontWeight: '900' },
+  rosterStatMeta: { color: '#8f7181', fontSize: 8, textAlign: 'right' },
+  rosterFailures: { gap: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#3a2334' },
+  rosterError: { color: '#ff9ebf', fontSize: 9, fontWeight: '800', lineHeight: 13 },
+});

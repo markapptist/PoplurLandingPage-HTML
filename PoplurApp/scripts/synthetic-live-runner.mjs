@@ -1053,11 +1053,24 @@ export function createSyntheticLiveRunner({
       clay = await clayFrame(actor);
     }
     if (!actor.likedPostIds.has(post.id) && actor.policy.state.likesGiven < LIVE_MAX_LIKES_PER_ACTOR) {
-      const like = clay.getByRole('button', { name: /Increase this post.s radius by one/i }).first();
       const response = actor.page.waitForResponse(response => response.url().includes('/recordPostEngagement')
         && response.request().postDataJSON()?.data?.kind === 'like'
         && response.request().postDataJSON()?.data?.postId === post.id.replace(/^firestore:/, ''), { timeout: 20_000 });
-      await activateControl(like, 'Increase post radius');
+      // The rail's like button sits in a frame the shell can remount between
+      // resolving it and pressing it; activateControl's DOM click then hangs
+      // on a detached node until APP_TIMEOUT_MS. Press with bounded attempts,
+      // re-resolving the frame each time, the way the permission cards are
+      // answered.
+      let pressed = false;
+      for (let attempt = 0; attempt < 3 && !pressed; attempt += 1) {
+        const like = (await clayFrame(actor)).getByRole('button', { name: /Increase this post.s radius by one/i }).first();
+        pressed = await like.click({ timeout: 8_000 }).then(() => true).catch(async () => (
+          like.evaluate(element => { element.scrollIntoView({ block: 'center', inline: 'center' }); element.click(); }, undefined, { timeout: 8_000 })
+            .then(() => true).catch(() => false)
+        ));
+        if (!pressed) await sleep(500);
+      }
+      if (!pressed) throw new Error('The like button could not be pressed.');
       const result = await response;
       const body = await result.json();
       if (!result.ok() || body.error) throw new Error(body.error?.message || 'The server refused the tester like.');

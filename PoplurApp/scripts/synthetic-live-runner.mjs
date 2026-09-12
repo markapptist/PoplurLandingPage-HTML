@@ -2,6 +2,15 @@ import { installSyntheticCallMedia } from './synthetic-call-media.mjs';
 import { LIVE_OWNER_UID, LIVE_CALL_INTERVAL_MS, LIVE_MAX_CALLS_PER_ACTOR, LIVE_CALL_RING_MS, LIVE_CALL_CONNECTED_MS } from './synthetic-social-contract.mjs';
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/** The approved creative the actors' fake camera plays, in place of Chrome's
+ *  built-in green test pattern. Built by build-fake-camera-source.mjs from an
+ *  officialContent post; absent means the cohort must not publish at all. */
+const APPROVED_CAPTURE_FILE = fileURLToPath(
+  new URL('./fake-camera/approved-capture.y4m', import.meta.url),
+);
 import {
   LIVE_ACTIVITIES,
   LIVE_DM_MESSAGES,
@@ -277,6 +286,7 @@ export function createSyntheticLiveRunner({
   fixturePath,
   readCredentials,
   cloudRunnerEnabled,
+  cloudRunnerAllowlist = async () => null,
   callIngest,
   verdictLog = process.env.POPLUR_ONBOARDING_VERDICT_LOG !== '0',
 }) {
@@ -605,7 +615,19 @@ export function createSyntheticLiveRunner({
         const location = window.__poplurNativeLocation;
         return Number(location?.latitude) === expected.latitude && Number(location?.longitude) === expected.longitude;
       }, { latitude: home.latitude, longitude: home.longitude }, { timeout: APP_TIMEOUT_MS });
-      await moveCubeTo(clay, 'feed');
+      await moveCubeTo(clay, 'feed').catch(async error => {
+        // The cube is the tab navigator; when it never appears the failure
+        // reads as a bare selector timeout. Say what the home frame was
+        // actually showing (12 Sep: every actor timed out here after signing
+        // in, with nothing in the log to tell a stuck splash from a crash).
+        const screen = await visibleClayScreen(clay).catch(() => null);
+        const visible = await clay.evaluate(() => document.body?.innerText?.replace(/\s+/g, ' ').slice(0, 400) || '')
+          .catch(() => '(frame evaluate failed)');
+        log(`${actor.actorId} cube diagnostics screen=${screen || '(none)'} url=${clay.url().slice(0, 160)}`);
+        log(`${actor.actorId} visible="${visible}"`);
+        log(`${actor.actorId} console=${actor.consoleTail.slice(-6).join(' ¶ ') || '(none)'}`);
+        throw error;
+      });
       actor.signedInAtMs = Date.now();
       actor.currentScreen = 'feed';
       log(`${actor.actorId} signed in as ${identity.email} at ${home.place} (${home.latitude}, ${home.longitude})`);
@@ -1228,6 +1250,17 @@ export function createSyntheticLiveRunner({
       }
       await Promise.all([access(chromePath, fsConstants.X_OK), access(fixturePath, fsConstants.R_OK)]);
       const credentials = await readCredentials();
+      // Fail closed. If the approved creative is missing, Chrome silently
+      // falls back to synthesising its own frames, and the cohort publishes
+      // that to production instead — which is exactly how the green capture
+      // shipped. No approved source, no session.
+      if (!existsSync(APPROVED_CAPTURE_FILE)) {
+        throw new Error(
+          `The approved fake-camera creative is missing at ${APPROVED_CAPTURE_FILE}. `
+          + 'Run scripts/build-fake-camera-source.mjs before starting the live cohort; '
+          + 'the actors must never publish Chrome\'s synthesised capture.',
+        );
+      }
       runtime.browser = await chromium.launch({
         executablePath: chromePath,
         headless: true,
@@ -1237,14 +1270,33 @@ export function createSyntheticLiveRunner({
           '--disable-background-networking', '--disable-component-update', '--disable-default-apps',
           '--disable-features=MediaRouter', '--disable-sync', '--no-first-run',
           '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required',
+          // What the actors' camera actually sees. Without this Chrome
+          // synthesises its own capture — a flat green field with a spinning
+          // wedge — and every post the cohort publishes carries THAT as its
+          // creative, on production, under a real account. Sixty-eight of them
+          // reached the live map before this was caught (5 Sep 2026).
+          // The frames come from the same approved pool the radius lab draws
+          // on: officialContent, the licensed demo creatives the owner signed
+          // off. Regenerate with scripts/build-fake-camera-source.mjs.
+          `--use-file-for-fake-video-capture=${APPROVED_CAPTURE_FILE}`,
         ],
       });
       runtime.enabled = true;
       nextOwnerCallAtMs = Date.now() + 60_000;
+      const allowlist = await cloudRunnerAllowlist().catch(() => null);
       try {
         for (const credential of credentials) {
           if (runtime.epoch !== epoch) throw new LiveStoppedError();
           const actor = actors.get(credential.actorId);
+          if (allowlist && !allowlist.has(credential.actorId)) {
+            // Not this generation's actor: skip it rather than sign it in and
+            // watch the cloud refuse its session.
+            actor.status = 'paused';
+            actor.action = 'not-allowlisted';
+            actor.lastError = '';
+            log(`${actor.actorId} skipped: not allowlisted by the cloud for this generation`);
+            continue;
+          }
           try {
             await signInActor(actor, credential, epoch);
             await startCloudSession(actor);

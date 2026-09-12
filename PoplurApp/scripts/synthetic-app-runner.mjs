@@ -134,6 +134,7 @@ const liveRunner = createSyntheticLiveRunner({
   fixturePath: LIVE_FIXTURE_PATH,
   readCredentials: () => readCredentials(),
   cloudRunnerEnabled: () => cloudRunnerEnabled(),
+  cloudRunnerAllowlist: () => cloudRunnerAllowlist(),
   callIngest: (actor, payload) => callIngest(actor, payload),
 });
 let commandQueue = Promise.resolve();
@@ -248,14 +249,29 @@ async function fetchJSON(url, options, timeoutMs = NETWORK_TIMEOUT_MS) {
  * that the shared production switch is enabled, satisfying the hard rule that
  * an explicit local Start command alone can never create browser contexts.
  */
-async function cloudRunnerEnabled() {
+async function cloudRunnerState() {
   if (!DESK_CREDENTIAL) throw new Error('POPLUR_TEST_CONTROL_TOKEN is required before the runner can check the production pause switch.');
-  const result = await fetchJSON(CONTROL_FUNCTION_URL, {
+  return fetchJSON(CONTROL_FUNCTION_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ data: { action: 'runner', accessCode: DESK_CREDENTIAL } }),
   });
+}
+
+async function cloudRunnerEnabled() {
+  const result = await cloudRunnerState();
   return result.enabled === true;
+}
+
+/** The actor ids the cloud allowlists for this generation. An actor the
+ *  cloud has not allowlisted cannot open a session there, so signing it in
+ *  only burns a 75 s timeout and fails the run's tail (12 Sep:
+ *  sim-biz-fashion-008 did exactly that on every start). Null when the
+ *  cloud sends no list, so an older function never blocks a start. */
+async function cloudRunnerAllowlist() {
+  const result = await cloudRunnerState();
+  if (!Array.isArray(result.actors)) return null;
+  return new Set(result.actors.filter(actor => actor && actor.active === true && typeof actor.actorId === 'string').map(actor => actor.actorId));
 }
 
 async function readCredentials() {

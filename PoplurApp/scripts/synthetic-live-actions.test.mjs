@@ -204,6 +204,22 @@ test('live policy admits the shell’s first-run profile a bounded number of tim
   assert.equal(createLiveCohortNetworkPolicy(identity(), RUN).inspect(foreign).allow, false);
 });
 
+test('live policy admits the surface label the web shell sends, and nothing else on the wire', () => {
+  // 12 Sep: engagements carry surface ∈ {feed, map, profile, unknown}; the
+  // runner blocked every one of them until the exact-shape rule knew the key.
+  const policy = bound();
+  const engage = extra => policy.inspect({
+    method: 'POST', url: LIVE_ENGAGEMENT_FUNCTION_URL,
+    postData: JSON.stringify({ data: { postId: 'post-0123456789abcdef', eventId: `evt_${Object.values(extra).join('_') || 'bare'}_000001`, kind: 'view', ...extra } }),
+    headers: { authorization: 'Bearer id-token-1' },
+  });
+  assert.equal(engage({ surface: 'feed' }).allow, true);
+  assert.equal(engage({ surface: 'unknown' }).allow, true);
+  assert.equal(engage({}).allow, true, 'the old three-key shape still passes');
+  assert.equal(engage({ surface: 'widget' }).allow, false, 'an unlisted surface is refused');
+  assert.equal(engage({ surface: 'feed', text: 'hi' }).allow, false, 'no fifth key rides along');
+});
+
 test('live policy admits views and likes as the actor, once per event, up to the like cap', () => {
   const policy = bound();
   const engage = (kind, eventId, token = 'id-token-1') => policy.inspect({

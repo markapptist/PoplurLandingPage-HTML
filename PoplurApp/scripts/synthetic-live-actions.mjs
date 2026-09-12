@@ -1008,10 +1008,14 @@ export function createLiveCohortNetworkPolicy(identity, runId) {
       const data = body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 1 ? body.data : null;
       const keys = data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data) : [];
       const kind = data?.kind;
-      const exact = keys.length === 3 && keys.every(key => ['postId', 'eventId', 'kind'].includes(key))
+      // The web shell labels each engagement with the surface it came from
+      // (12 Sep); the server accepts exactly these four values and nothing
+      // else may ride on the wire.
+      const surfaceOk = !('surface' in data) || ['feed', 'map', 'profile', 'unknown'].includes(data.surface);
+      const exact = keys.length >= 3 && keys.length <= 4 && keys.every(key => ['postId', 'eventId', 'kind', 'surface'].includes(key))
         && typeof data.postId === 'string' && /^[a-zA-Z0-9_-]{6,128}$/.test(data.postId)
         && typeof data.eventId === 'string' && /^[a-zA-Z0-9_-]{6,128}$/.test(data.eventId)
-        && LIVE_ENGAGEMENT_KINDS.has(kind);
+        && LIVE_ENGAGEMENT_KINDS.has(kind) && surfaceOk;
       if (!exact) return { allow: false, kind: 'live-engagement-blocked', reason: 'Engagement is not an exact view or like.' };
       const fresh = !state.engagementEvents.has(data.eventId);
       if (kind === 'like' && fresh && state.likesGiven >= LIVE_MAX_LIKES_PER_ACTOR) {

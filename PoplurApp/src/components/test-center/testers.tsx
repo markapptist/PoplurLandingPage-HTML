@@ -1,7 +1,27 @@
+import { Fragment, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { BetaDailySeries, BetaTesterPost, BetaTesterRow, PostHistory } from '@/services/testControl';
+import { CauseLegend, Label } from './primitives';
 import { SessionFact } from './simulation';   // the drill facts reuse the monitor's fact tile until C8 swaps in `Fact`
-import { CAUSE_COLOR, PRESENCE_LABEL, ago, dayLabel, km, share, stamp } from './theme';
+import { C, CAUSE_COLOR, PRESENCE_LABEL, S, ago, dayLabel, km, share, stamp } from './theme';
+
+/** Which host opened the ledger drill-down. A post open under a tester row is
+ *  not also selected in Latest pops or the Algorithm desk; re-opening it from
+ *  another host only switches the origin, so the fetch (keyed on the post id
+ *  alone) is not repeated (spec decision 12). */
+export type DrillOrigin = 'testers' | 'pops' | 'radius';
+export type DrillState = {
+  openPostId: string | null;
+  origin: DrillOrigin | null;
+  history: PostHistory | null;
+  state: 'idle' | 'loading' | 'error';
+  open: (postId: string, origin: DrillOrigin) => void;
+};
+/** A tester's pops, fetched on expand when the dashboard ships counts only
+ *  (`row.posts` empty, `postCount` > 0 — spec decision 20). */
+export type LazyPops = { state: 'loading' | 'ready' | 'error'; posts: BetaTesterPost[] };
+/** The ledger shows its newest rows by default; the rest is one press away. */
+const LEDGER_DEFAULT_ROWS = 12;
 
 /** One column per calendar day: how many people joined and how many pops were
  *  dropped. Real counts draw solid; the simulation's share sits behind them in
@@ -46,7 +66,7 @@ export function DailyStrip({ series }: { series: BetaDailySeries }) {
   </View>;
 }
 
-export function TesterTable({ rows, daily, expandedUid, expandedPosts, onToggle, openPostId, onOpenPost }: { rows: BetaTesterRow[]; daily: BetaDailySeries; expandedUid: string | null; expandedPosts: BetaTesterPost[] | null; onToggle: (uid: string) => void; openPostId: string | null; onOpenPost: (postId: string) => void }) {
+export function TesterTable({ rows, daily, expandedUid, onToggle, lazy, onRetry, drill }: { rows: BetaTesterRow[]; daily: BetaDailySeries; expandedUid: string | null; onToggle: (row: BetaTesterRow) => void; lazy: Record<string, LazyPops>; onRetry: (uid: string) => void; drill: DrillState }) {
   const online = rows.filter(row => row.presence === 'online').length;
   const people = rows.filter(row => !row.synthetic);
   const peoplePosts = people.reduce((sum, row) => sum + row.postCount, 0);
@@ -54,30 +74,46 @@ export function TesterTable({ rows, daily, expandedUid, expandedPosts, onToggle,
   return <View>
     <DailyStrip series={daily} />
     <Text style={styles.tableSummary}>{online} online · {people.length} testers ({rows.length - people.length} simulation accounts) · {peoplePosts} pops by testers ({allPosts - peoplePosts} by the simulation)</Text>
-    <View style={[styles.tableRow, styles.tableHead]}><Text style={[styles.th, styles.colName]}>TESTER</Text><Text style={[styles.th, styles.colStatus]}>STATUS</Text><Text style={[styles.th, styles.colWhen]}>SIGNED UP</Text><Text style={[styles.th, styles.colNum]}>POSTS</Text><Text style={[styles.th, styles.colWhen]}>LAST POST</Text></View>
+    <View style={[styles.tableRow, styles.tableHead]}><Text style={[styles.th, styles.colName]}>TESTER</Text><Text style={[styles.th, styles.colStatus]}>STATUS</Text><Text style={[styles.th, styles.colWhen]}>SIGNED UP</Text><Text style={[styles.th, styles.colNum]}>POPS</Text><Text style={[styles.th, styles.colWhen]}>LAST POP</Text></View>
     {rows.map(row => {
       const expanded = expandedUid === row.uid;
-      return <View key={row.uid}>
-        <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => onToggle(row.uid)} style={[styles.tableRow, expanded && styles.tableRowOpen]}>
+      // A Fragment, not a wrapper View: the expansion is the next DOM sibling
+      // of the row that opened it, so the pops sit directly under their tester.
+      return <Fragment key={row.uid}>
+        <Pressable accessibilityRole="button" aria-expanded={expanded} onPress={() => onToggle(row)} style={[styles.tableRow, expanded && styles.tableRowOpen]}>
           <View style={styles.colName}><Text style={styles.name} numberOfLines={1}>{row.label}</Text><Text style={styles.meta} numberOfLines={1}>{row.username ? `@${row.username}` : row.uid.slice(0, 8)}{row.accountType !== 'user' ? ` · ${row.accountType}` : ''}{row.platform ? ` · ${row.platform}` : ''}</Text></View>
           <View style={[styles.colStatus, styles.row]}><View style={[styles.statusDot, row.presence === 'online' ? styles.statusLive : row.presence === 'away' ? styles.statusAway : styles.statusNone]} /><Text style={styles.cell}>{row.presence === 'online' ? (row.screen ? row.screen.replace(/-/g, ' ') : row.presenceSource === 'lease' ? 'IN APP' : 'LIVE') : row.presence === 'away' ? ago(row.lastActivityAtMs) : PRESENCE_LABEL.unknown}</Text></View>
           <Text style={[styles.cell, styles.colWhen]}>{stamp(row.signedUpAtMs)}</Text>
           <Text style={[styles.cell, styles.colNum]}>{row.postCount}</Text>
           <Text style={[styles.cell, styles.colWhen]}>{row.lastPostedAtMs ? ago(row.lastPostedAtMs) : '—'}</Text>
         </Pressable>
-        {expanded && (() => {
-          const posts = expandedPosts ?? (row.posts.length ? row.posts : null);
-          if (posts === null) return <Text style={[styles.copy, styles.postList]}>{row.postCount ? 'Loading posts…' : 'No posts yet.'}</Text>;
-          if (!posts.length) return <Text style={[styles.copy, styles.postList]}>No posts yet.</Text>;
-          return <View style={styles.postList}>{posts.map(post => <PostRow key={post.id} post={post} open={openPostId === post.id} onPress={() => onOpenPost(post.id)} />)}</View>;
-        })()}
-      </View>;
+        {expanded && <PopList row={row} lazy={lazy[row.uid] ?? null} drill={drill} onRetry={onRetry} />}
+      </Fragment>;
     })}
   </View>;
 }
 
+/** The expansion under a tester row. `row.posts` is the list while the server
+ *  still ships summaries; otherwise the lazily fetched result, with its
+ *  loading / error states. The drill-down renders inside this list, directly
+ *  under the pop that opened it (spec §4.10, §5). */
+export function PopList({ row, lazy, drill, onRetry }: { row: BetaTesterRow; lazy: LazyPops | null; drill: DrillState; onRetry: (uid: string) => void }) {
+  const list = row.posts.length ? row.posts : lazy?.posts ?? [];
+  const lazyState = row.posts.length ? null : lazy;
+  if (lazyState?.state === 'loading') return <View style={[styles.postList, styles.postState]}><ActivityIndicator color={C.pop} /><Text style={styles.copy}>Loading pops…</Text></View>;
+  if (lazyState?.state === 'error') return <View style={[styles.postList, styles.postState]}><Text style={styles.copy}>Pops could not be loaded.</Text><Pressable accessibilityRole="button" onPress={() => onRetry(row.uid)} style={S.button}><Label>RETRY</Label></Pressable></View>;
+  if (!list.length) return <Text style={[styles.copy, styles.postList]}>No pops yet.</Text>;
+  return <View style={styles.postList}>{list.map(post => {
+    const open = drill.openPostId === post.id && drill.origin === 'testers';
+    return <Fragment key={post.id}>
+      <PostRow post={post} open={open} onPress={() => drill.open(post.id, 'testers')} />
+      {open && <PostDrilldown key={post.id} postId={post.id} history={drill.history} state={drill.state} />}
+    </Fragment>;
+  })}</View>;
+}
+
 export function PostRow({ post, open, onPress }: { post: BetaTesterPost; open: boolean; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ selected: open }} onPress={onPress} style={[styles.postRow, open && styles.postRowOpen]}>
+  return <Pressable accessibilityRole="button" aria-selected={open} onPress={onPress} style={[styles.postRow, open && styles.postRowOpen]}>
     <Text style={styles.postKind}>{post.mediaType === 'video' ? 'VIDEO' : post.mediaCount > 1 ? `CAROUSEL ×${post.mediaCount}` : 'PHOTO'}</Text>
     <View style={styles.flex}><Text style={styles.cell} numberOfLines={1}>{post.caption || post.id}</Text><Text style={styles.meta}>{stamp(post.createdAtMs)}{post.channelId ? ` · ${post.channelId}` : ''}{post.coarse ? ` · ${post.coarse.latitude.toFixed(3)}, ${post.coarse.longitude.toFixed(3)}` : ''}</Text></View>
     <Text style={styles.postRadius}>{km(post.radiusMeters)}</Text>
@@ -91,25 +127,44 @@ export function RadiusBars({ history }: { history: PostHistory['history'] }) {
 }
 
 export function PostDrilldown({ postId, history, state }: { postId: string; history: PostHistory | null; state: 'idle' | 'loading' | 'error' }) {
+  // In-memory only; the drill-down is keyed by post id at its call site, so a
+  // different post always opens on the 12 newest.
+  const [showAll, setShowAll] = useState(false);
   if (state === 'loading' || (!history && state === 'idle')) return <View style={styles.drill}><ActivityIndicator color="#5af0a4" /><Text style={styles.copy}>Loading the radius ledger for {postId}…</Text></View>;
   if (state === 'error' || !history) return <View style={styles.drill}><Text style={styles.copy}>That post&apos;s ledger could not be read.</Text></View>;
   const first = history.history[0];
   const last = history.history[history.history.length - 1];
   const peak = history.history.reduce((best, entry) => entry.radiusMeters > best.radiusMeters ? entry : best, first ?? { radiusMeters: 0, atMs: 0 });
   const where = history.exact ?? history.coarse;
+  const total = history.history.length;
+  const newestFirst = history.history.slice().reverse();
+  const ledger = showAll ? newestFirst : newestFirst.slice(0, LEDGER_DEFAULT_ROWS);
   return <View style={styles.drill}>
     <Text style={styles.drillTitle}>{history.caption || history.postId}</Text>
     <Text style={styles.meta}>Posted {stamp(history.createdAtMs)}{history.channelId ? ` · ${history.channelId}` : ''} · {history.mediaType === 'video' ? 'video' : history.mediaCount > 1 ? `carousel ×${history.mediaCount}` : 'photo'}</Text>
     <Text style={styles.meta}>{where ? `${history.exact ? 'Dropped at' : 'Near'} ${where.latitude.toFixed(5)}, ${where.longitude.toFixed(5)}` : 'Location hidden'}{history.locationVisibility ? ` · ${history.locationVisibility}` : ''}</Text>
+    <Text style={styles.meta}>Seed {km(history.seedRadiusMeters)} · earned {km(history.organicRadiusMeters)}</Text>
     <View style={styles.drillFacts}>
       <SessionFact label="STARTED" value={first ? km(first.radiusMeters) : km(history.seedRadiusMeters)} />
       <SessionFact label="NOW" value={km(history.radiusMeters)} />
       <SessionFact label="PEAK" value={peak.radiusMeters ? `${km(peak.radiusMeters)} · ${ago(peak.atMs)}` : '—'} />
       <SessionFact label="GROWTH" value={first && last ? `${last.radiusMeters >= first.radiusMeters ? '+' : '−'}${km(Math.abs(last.radiusMeters - first.radiusMeters))}` : '—'} />
     </View>
-    {!history.history.length ? <Text style={styles.copy}>No radius changes recorded yet — the ledger starts with the post&apos;s first engagement.</Text> : <>
+    {!total ? <Text style={styles.copy}>No radius changes recorded yet — the ledger starts with the post&apos;s first engagement.</Text> : <>
       <RadiusBars history={history.history} />
-      {history.history.slice().reverse().map(entry => <View key={entry.id} style={styles.ledgerRow}>
+      <CauseLegend />
+      <View style={styles.ledgerHead}>
+        <Text style={styles.meta}>{showAll ? `All ${total} entries` : total > LEDGER_DEFAULT_ROWS ? `${LEDGER_DEFAULT_ROWS} newest of ${total}` : `${total} ${total === 1 ? 'entry' : 'entries'}`}</Text>
+        {total > LEDGER_DEFAULT_ROWS && <Pressable accessibilityRole="button" aria-expanded={showAll} onPress={() => setShowAll(current => !current)} style={S.button}><Text style={styles.cell}>{showAll ? `Show ${LEDGER_DEFAULT_ROWS} newest` : `Show all ${total}`}</Text></Pressable>}
+      </View>
+      <View style={styles.ledgerRow}>
+        <View style={styles.causeChipSpace} />
+        <Label style={styles.ledgerCause}>CAUSE</Label>
+        <Label style={styles.ledgerWhen}>WHEN</Label>
+        <Label style={styles.ledgerRadius}>RADIUS</Label>
+        <Label style={styles.ledgerChange}>CHANGE</Label>
+      </View>
+      {ledger.map(entry => <View key={entry.id} style={styles.ledgerRow}>
         <View style={[styles.causeChip, { backgroundColor: CAUSE_COLOR[entry.cause] ?? '#806476' }]} />
         <Text style={[styles.cell, styles.ledgerCause]}>{entry.cause}{entry.kind ? ` · ${entry.kind}` : ''}</Text>
         <Text style={[styles.cell, styles.ledgerWhen]}>{stamp(entry.atMs)}</Text>
@@ -133,6 +188,7 @@ const styles = StyleSheet.create({
   colNum: { flex: 0.6, textAlign: 'right' },
   statusNone: { backgroundColor: '#3d2130', borderWidth: 1, borderColor: '#806476' },
   postList: { paddingLeft: 12, paddingBottom: 6 },
+  postState: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
   postRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: '#3d2130' },
   postRowOpen: { backgroundColor: 'rgba(142, 197, 255, 0.08)' },
   postKind: { color: '#b98aa6', fontSize: 10, fontWeight: '800', letterSpacing: 1, width: 92 },
@@ -144,10 +200,13 @@ const styles = StyleSheet.create({
   barCol: { flex: 1, minWidth: 3, maxWidth: 14, justifyContent: 'flex-end' },
   bar: { width: '100%', borderRadius: 2 },
   ledgerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5, borderTopWidth: 1, borderTopColor: '#3d2130' },
+  ledgerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 4 },
   causeChip: { width: 8, height: 8, borderRadius: 4 },
+  causeChipSpace: { width: 8 },
   ledgerCause: { flex: 1.6 },
   ledgerWhen: { flex: 1.4 },
   ledgerRadius: { flex: 1, textAlign: 'right' },
+  ledgerChange: { flex: 1, textAlign: 'right' },
   delta: { flex: 1, textAlign: 'right', fontSize: 12, fontWeight: '800' },
   deltaUp: { color: '#5af0a4' },
   deltaDown: { color: '#ff8a6b' },

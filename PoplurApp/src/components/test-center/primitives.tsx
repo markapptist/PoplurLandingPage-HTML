@@ -21,10 +21,10 @@ export function Dot({ state }: { state: 'online' | 'away' | 'none' | 'connecting
 /** A signed radius quantity: ▲ grows, ▼ shrinks, · flat. Never a bare `+`,
  *  which is reserved for simulation counts. `tone="sim"` is the only way a
  *  signed simulation value is rendered: prefixed `sim` and painted whole. */
-export function Delta({ meters, tone = 'real' }: { meters: number; tone?: 'real' | 'sim' }) {
+export function Delta({ meters, tone = 'real', size = 'cell' }: { meters: number; tone?: 'real' | 'sim'; size?: 'cell' | 'metric' }) {
   const glyph = meters > 0 ? '▲' : meters < 0 ? '▼' : '·';
   const color = tone === 'sim' ? C.sim : meters > 0 ? C.pop : meters < 0 ? C.decay : C.away;
-  return <Text style={[P.delta, { color }]}>{tone === 'sim' ? 'sim ' : ''}{glyph} {km(Math.abs(meters))}</Text>;
+  return <Text style={[size === 'metric' ? T.metricValue : P.delta, { color }]}>{tone === 'sim' ? 'sim ' : ''}{glyph} {km(Math.abs(meters))}</Text>;
 }
 
 /** A labelled value inside a card: drill facts, the Algorithm facts row. */
@@ -55,7 +55,7 @@ export function Tile({ label, value, sim, meta }: { label: string; value: ReactN
 export function Section<Id extends string = string>({ id, title, meta, right, frame = 'card', innerRef, onLayout, children }: {
   id: Id;
   title: string;
-  meta?: string;
+  meta?: ReactNode;
   right?: ReactNode;
   frame?: 'card' | 'none';
   innerRef?: (id: Id, node: View | null) => void;
@@ -82,15 +82,18 @@ export function SectionNav<Id extends string = string>({ sections, onSelect, sim
   onToggleSim: () => void;
   onLayout?: (height: number) => void;
 }) {
-  return <View onLayout={onLayout ? event => onLayout(event.nativeEvent.layout.height) : undefined} style={P.nav}>
+  return <View nativeID="section-nav" onLayout={onLayout ? event => onLayout(event.nativeEvent.layout.height) : undefined} style={P.nav}>
     {sections.map(section => <Pressable key={section.id} accessibilityRole="button" onPress={() => onSelect(section.id)} style={S.chip}><Label style={P.chipText}>{section.chip}</Label></Pressable>)}
     <View style={P.navSpacer} />
-    <Pressable accessibilityRole="switch" accessibilityState={{ checked: simShown }} onPress={onToggleSim} style={[S.chip, simShown && S.chipOn]}><Label style={P.chipText}>SIM ROWS<Text style={T.simText}> +{simCount}</Text></Label></Pressable>
+    <Pressable accessibilityRole="switch" aria-checked={simShown} onPress={onToggleSim} style={[S.chip, simShown && S.chipOn]}><Label style={P.chipText}>SIM ROWS<Text style={T.simText}> +{simCount}</Text></Label></Pressable>
   </View>;
 }
 
-/** Page header: the name, whether the link is live, and the one manual reload. */
-export function Header({ state, updatedAtMs, loading, onRefresh }: { state: 'connecting' | 'live' | 'offline'; updatedAtMs: number; loading: boolean; onRefresh: () => void }) {
+/** Page header: the name and whether the link is live. There is no refresh
+ *  control (owner decision 12 Sep): the page is live by construction — SSE
+ *  frames, with the 15 s poll running only while the stream is down — so the
+ *  dot turning `away` is the whole story and the poll keeps it current. */
+export function Header({ state, updatedAtMs }: { state: 'connecting' | 'live' | 'offline'; updatedAtMs: number }) {
   const dot = state === 'live' ? 'online' : state === 'connecting' ? 'connecting' : 'away';
   const link = state === 'live' ? 'Live' : state === 'connecting' ? 'Connecting' : 'Offline';
   return <View style={P.header}>
@@ -98,7 +101,6 @@ export function Header({ state, updatedAtMs, loading, onRefresh }: { state: 'con
     <View style={P.headerRight}>
       <View style={P.headerLink}><Dot state={dot} /><Text style={T.meta}>{link} · updated {clockSeconds(updatedAtMs)}</Text></View>
       <Text style={T.meta}>Private · local owner view</Text>
-      <Pressable accessibilityRole="button" accessibilityState={{ busy: loading }} onPress={onRefresh} style={S.buttonPrimary}><Label style={P.buttonText}>{loading ? 'SYNCING' : 'REFRESH'}</Label></Pressable>
     </View>
   </View>;
 }
@@ -119,7 +121,7 @@ export function Fold({ id, title, status, tone, open, onToggle, right, children 
 }) {
   return <View nativeID={id} style={P.fold}>
     <View style={P.foldHeader}>
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={onToggle} style={P.foldPress}>
+      <Pressable accessibilityRole="button" aria-expanded={open} onPress={onToggle} style={P.foldPress}>
         <Text style={P.foldGlyph}>{open ? '▾' : '▸'}</Text>
         <View style={P.titleCopy}><Text style={T.panelTitle}>{title}</Text><Text numberOfLines={2} style={[T.meta, tone === 'live' ? P.toneLive : tone === 'warn' ? P.toneWarn : null]}>{status}</Text></View>
       </Pressable>
@@ -132,7 +134,7 @@ export function Fold({ id, title, status, tone, open, onToggle, right, children 
 /** The in-place simulation affordance: hidden rows never look vanished
  *  because their counts stay on this row, bound to the same switch. */
 export function GroupRow({ count, noun, pops, open, onToggle }: { count: number; noun: string; pops?: number; open: boolean; onToggle: () => void }) {
-  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: open }} onPress={onToggle} style={P.groupRow}>
+  return <Pressable accessibilityRole="switch" aria-checked={open} onPress={onToggle} style={P.groupRow}>
     <Label style={P.groupText}>SIMULATION · {count} {noun}{pops !== undefined ? ` · ${pops} pops` : ''} {open ? '▾' : '▸'}</Label>
   </Pressable>;
 }
@@ -167,7 +169,6 @@ const P = StyleSheet.create({
   header: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, paddingTop: 16 },
   headerRight: { alignItems: 'flex-end', gap: 4 },
   headerLink: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  buttonText: { color: '#fff' },
   fold: { gap: 8 },
   foldHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   foldPress: { flex: 1, minWidth: 0, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10 },

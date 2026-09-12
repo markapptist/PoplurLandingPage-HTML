@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   readOwnerDashboard,
@@ -8,7 +8,7 @@ import {
   subscribeOwnerDashboard,
   type BetaDashboard,
   type BetaMapCell,
-  type BetaTesterPost,
+  type BetaTesterRow,
   type PostHistory,
   type RealtimeFeedPost,
   type RealtimePublicPost,
@@ -17,7 +17,7 @@ import AlgorithmDesk from '@/components/AlgorithmDesk';
 import RadiusLab from '@/components/radius-lab';
 import { SurfaceSyncBoard } from '@/components/test-center/diagnostics';
 import { ActualSessionMonitor, PersonaCard } from '@/components/test-center/simulation';
-import { PostDrilldown, TesterTable } from '@/components/test-center/testers';
+import { TesterTable, type DrillOrigin, type DrillState, type LazyPops } from '@/components/test-center/testers';
 import { WEB_ONLY, ago, clock, words } from '@/components/test-center/theme';
 import { WorldMap } from '@/components/test-center/world-map';
 
@@ -29,43 +29,58 @@ const EMPTY_MAP_CELLS: BetaMapCell[] = [];
 export default function TestControlScreen() {
   const [dashboard, setDashboard] = useState<BetaDashboard | null>(null); const [loading, setLoading] = useState(true); const [notice, setNotice] = useState<string | null>(null);
   const [deskRealtimeState, setDeskRealtimeState] = useState<'connecting' | 'live' | 'offline'>('connecting');
-  // The tester table's drill-down. Expanding a tester is local; opening a post
-  // fetches its radius ledger through the proxy on demand rather than shipping
-  // every post's history inside every live frame.
+  // The ledger drill-down. Opening a post fetches its radius ledger through
+  // the proxy on demand rather than shipping every post's history inside every
+  // live frame. One post is open at a time, tagged with the host that opened
+  // it, so re-opening it from another host switches the origin without a
+  // second `postHistory` call (the fetch is keyed on the id alone).
   const [expandedTester, setExpandedTester] = useState<string | null>(null);
-  const [openPostId, setOpenPostId] = useState<string | null>(null);
-  const [postHistory, setPostHistory] = useState<PostHistory | null>(null);
-  const [postHistoryState, setPostHistoryState] = useState<'idle' | 'loading' | 'error'>('idle');
-  const openPost = useCallback((postId: string) => {
-    setOpenPostId(current => current === postId ? null : postId);
+  const [opened, setOpened] = useState<{ postId: string; origin: DrillOrigin } | null>(null);
+  const openPostId = opened?.postId ?? null;
+  const openPost = useCallback((postId: string, origin: DrillOrigin) => {
+    setOpened(current => current?.postId === postId && current.origin === origin ? null : { postId, origin });
   }, []);
-  // Tester rows arrive with an empty posts[] (the dashboard counts, it no
-  // longer reads every post); a row's posts load when it is expanded and are
-  // refetched when its last-post stamp moves.
-  const [testerPosts, setTesterPosts] = useState<Record<string, { atMs: number; posts: BetaTesterPost[] | null }>>({});
-  const expandedRow = dashboard?.testers.find(row => row.uid === expandedTester) ?? null;
-  const expandedStamp = expandedRow?.lastPostedAtMs ?? 0;
+  const closeDrill = useCallback(() => setOpened(null), []);
+  // The fetched ledger is written only inside the promise callbacks; loading
+  // and history are derived from whether it belongs to the open post, so
+  // closing needs no clearing (spec §4.3, the lint-clean form).
+  const [fetched, setFetched] = useState<{ postId: string; history: PostHistory | null; state: 'idle' | 'error' } | null>(null);
   useEffect(() => {
-    if (!expandedTester) return;
-    const cached = testerPosts[expandedTester];
-    if (cached && cached.atMs === expandedStamp && cached.posts !== null) return;
+    if (!openPostId) return;
     let cancelled = false;
-    setTesterPosts(current => ({ ...current, [expandedTester]: { atMs: expandedStamp, posts: null } }));
-    readTesterPosts(expandedTester)
-      .then(posts => { if (!cancelled) setTesterPosts(current => ({ ...current, [expandedTester]: { atMs: expandedStamp, posts } })); })
-      .catch(() => { if (!cancelled) setTesterPosts(current => ({ ...current, [expandedTester]: { atMs: expandedStamp, posts: [] } })); });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expandedTester, expandedStamp]);
-  useEffect(() => {
-    if (!openPostId) { setPostHistory(null); setPostHistoryState('idle'); return; }
-    let cancelled = false;
-    setPostHistoryState('loading');
     readPostHistory(openPostId)
-      .then(history => { if (!cancelled) { setPostHistory(history); setPostHistoryState('idle'); } })
-      .catch(() => { if (!cancelled) setPostHistoryState('error'); });
+      .then(history => { if (!cancelled) setFetched({ postId: openPostId, history, state: 'idle' }); })
+      .catch(() => { if (!cancelled) setFetched({ postId: openPostId, history: null, state: 'error' }); });
     return () => { cancelled = true; };
   }, [openPostId]);
+  const drill = useMemo<DrillState>(() => ({
+    openPostId,
+    origin: opened?.origin ?? null,
+    history: fetched?.postId === openPostId ? fetched.history : null,
+    state: !openPostId ? 'idle' : fetched?.postId !== openPostId ? 'loading' : fetched.state,
+    open: openPost,
+  }), [openPostId, opened?.origin, fetched, openPost]);
+  const openRadiusPost = useCallback((postId: string) => openPost(postId, 'radius'), [openPost]);
+  // Tester rows arrive with an empty posts[] (the dashboard counts, it no
+  // longer reads every post); a row's pops are fetched once, on the expand
+  // that first needs them, and cached for the page's life. Every write here
+  // happens in a handler or a promise callback, never in an effect.
+  const [lazyPops, setLazyPops] = useState<Record<string, LazyPops>>({});
+  const requested = useRef(new Set<string>());
+  const loadPops = useCallback((uid: string) => {
+    requested.current.add(uid);
+    setLazyPops(current => ({ ...current, [uid]: { state: 'loading', posts: [] } }));
+    readTesterPosts(uid)
+      .then(posts => setLazyPops(current => ({ ...current, [uid]: { state: 'ready', posts } })))
+      .catch(() => setLazyPops(current => ({ ...current, [uid]: { state: 'error', posts: [] } })));
+  }, []);
+  const toggleTester = useCallback((row: BetaTesterRow) => {
+    const expanding = expandedTester !== row.uid;
+    setExpandedTester(expanding ? row.uid : null);
+    if (drill.origin === 'testers') closeDrill();
+    if (expanding && row.posts.length === 0 && row.postCount > 0 && !requested.current.has(row.uid)) loadPops(row.uid);
+  }, [expandedTester, drill.origin, closeDrill, loadPops]);
+  const retryPops = useCallback((uid: string) => { requested.current.delete(uid); loadPops(uid); }, [loadPops]);
   const refreshInFlight = useRef(false); const requestGeneration = useRef(0);
   const refresh = useCallback(async () => { if (refreshInFlight.current) return; refreshInFlight.current = true; const generation = ++requestGeneration.current; setLoading(true); try { const next = await readOwnerDashboard(); if (generation === requestGeneration.current) { setDashboard(next); setNotice(null); } } catch (error) { if (generation === requestGeneration.current) setNotice(error instanceof Error ? error.message : 'The local beta desk connection is unavailable.'); } finally { refreshInFlight.current = false; if (generation === requestGeneration.current) setLoading(false); } }, []);
   useEffect(() => subscribeOwnerDashboard(next => {
@@ -91,7 +106,7 @@ export default function TestControlScreen() {
   return <SafeAreaView style={styles.safe} edges={['top', 'bottom']}><ScrollView contentContainerStyle={[styles.page, WEB_ONLY.page]}>
     <View style={styles.broadcast}><View style={styles.broadcastLeft}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE BETA DESK</Text></View><Text style={styles.broadcastRight}>PRIVATE · LOCAL OWNER VIEW</Text></View>
     <View style={styles.header}><Text style={styles.brand}>POPLUR</Text><Text style={styles.title}>Beta Control Room</Text><Text style={styles.subtitle}>A newsroom view of the closed beta: Firestore-realtime public post regions, timing, radius movement, viral pace, runner signals and tester reports.</Text></View>
-    <View style={styles.headline}><View><Text style={styles.kicker}>THE BETA IN MOTION</Text><Text style={styles.roomTitle}>Global Situation Room</Text></View><Pressable onPress={refresh} style={styles.refresh}><Text style={styles.refreshText}>{loading ? 'SYNCING' : 'REFRESH'}</Text></Pressable></View>
+    <View style={styles.headline}><View><Text style={styles.kicker}>THE BETA IN MOTION</Text><Text style={styles.roomTitle}>Global Situation Room</Text></View></View>
     <WorldMap cells={realtimeCells} realtimeState={realtimeState} />
     <RadiusLab />
     <ActualSessionMonitor dashboard={dashboard} />
@@ -103,8 +118,8 @@ export default function TestControlScreen() {
       <Section title="The five isolated testing profiles" kicker="RUNNER PERSONAS"><View style={styles.personaGrid}>{!dashboard.runnerActors.length ? <Empty text="The beta runner manifest is loading." /> : dashboard.runnerActors.map(profile => <PersonaCard key={profile.id} profile={profile} />)}</View></Section>
       <Section title="Radius and virality desk" kicker="FIRESTORE REALTIME POST MOMENTUM">{!realtimePosts.length ? <Empty text="A published post with an approximate public area will appear here immediately." /> : realtimePosts.slice(0, 12).map(post => <View key={post.id} style={styles.listRow}><View style={styles.rate}><Text style={styles.rateValue}>{Math.round(post.viralPerHour)}</Text><Text style={styles.rateLabel}>/HR</Text></View><View style={styles.flex}><Text style={styles.name}>{post.label} · {post.place}</Text><Text style={styles.meta}>Posted {clock(post.postedAtMs)} · {post.initialRadiusKm.toFixed(1)} km → {post.radiusKm.toFixed(1)} km ({post.radiusDeltaKm >= 0 ? '+' : ''}{post.radiusDeltaKm.toFixed(1)} km)</Text></View><Text style={styles.when}>{ago(post.updatedAtMs || post.postedAtMs)}</Text></View>)}</Section>
       <Section title="What the live Feed is receiving" kicker="FIRESTORE REALTIME FEED CHANNELS">{!feedChannels.length ? <Empty text="The wiped Feed is empty. Channels will appear here at the same moment a published Firestore post reaches the app." /> : feedChannels.map(([channelId, counts]) => <View key={channelId} style={styles.listRow}><View style={styles.badge}><Text style={styles.badgeText}>{counts.total}</Text></View><View style={styles.flex}><Text style={styles.name}>{words(channelId)}</Text><Text style={styles.meta}>{counts.photos} photos · {counts.videos} videos · {counts.total - counts.photos - counts.videos} unclassified</Text></View><Text style={styles.when}>LIVE</Text></View>)}</Section>
-      <Section title="Every tester, live" kicker="TESTER TABLE">{!dashboard.testers.length ? <Empty text="No accounts yet." /> : <TesterTable rows={dashboard.testers} daily={dashboard.daily} expandedUid={expandedTester} expandedPosts={expandedTester ? testerPosts[expandedTester]?.posts ?? null : null} onToggle={uid => setExpandedTester(current => current === uid ? null : uid)} openPostId={openPostId} onOpenPost={openPost} />}{!!openPostId && <PostDrilldown postId={openPostId} history={postHistory} state={postHistoryState} />}</Section>
-      <AlgorithmDesk digest={dashboard.algorithm} refusal={dashboard.algorithmRefusal} openPostId={openPostId} onOpenPost={openPost} postHistory={postHistory} postHistoryState={postHistoryState} testers={dashboard.testers} />
+      <Section title="Every tester, live" kicker="TESTER TABLE">{!dashboard.testers.length ? <Empty text="No accounts yet." /> : <TesterTable rows={dashboard.testers} daily={dashboard.daily} expandedUid={expandedTester} onToggle={toggleTester} lazy={lazyPops} onRetry={retryPops} drill={drill} />}</Section>
+      <AlgorithmDesk digest={dashboard.algorithm} refusal={dashboard.algorithmRefusal} openPostId={drill.origin === 'radius' ? drill.openPostId : null} onOpenPost={openRadiusPost} postHistory={drill.history} postHistoryState={drill.state} testers={dashboard.testers} />
       <Section title="Who is testing right now" kicker="TESTER ACTIVITY">{!dashboard.rows.length ? <Empty text="No opted-in tester activity yet." /> : dashboard.rows.map(row => <View key={row.id} style={styles.listRow}><View style={[styles.statusDot, row.state === 'active' ? styles.statusLive : styles.statusAway]} /><View style={styles.flex}><Text style={styles.name}>{row.label}</Text><Text style={styles.meta}>{row.screen.replace(/-/g, ' ')} · {row.platform} · v{row.appVersion}</Text></View><Text style={styles.when}>{row.state === 'active' ? 'LIVE' : ago(row.lastActivityAtMs)}</Text></View>)}</Section>
       <Section title="Findings, wins and improvements" kicker="WHAT TESTERS ARE SAYING">{!dashboard.feedback.length ? <Empty text="Voluntary tester reports will land here." /> : dashboard.feedback.map(report => <View key={report.id} style={styles.report}><View style={styles.row}><Text style={styles.name}>{report.label}</Text><Text style={styles.when}>{ago(report.createdAtMs)}</Text></View>{!!report.finding && <Text style={styles.reportText}><Text style={styles.reportLabel}>FOUND </Text>{report.finding}</Text>}{!!report.liked && <Text style={styles.reportText}><Text style={styles.reportLabel}>LIKED </Text>{report.liked}</Text>}{!!report.improve && <Text style={styles.reportText}><Text style={styles.reportLabel}>IMPROVE </Text>{report.improve}</Text>}</View>)}</Section>
     </>}{!!notice && <Text style={styles.notice}>{notice}</Text>}
@@ -130,8 +145,6 @@ const styles = StyleSheet.create({
   headline: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 8 },
   kicker: { color: '#ff4aa3', fontSize: 10, fontWeight: '900', letterSpacing: 1.6 },
   roomTitle: { color: '#fff7fb', fontSize: 27, fontWeight: '900' },
-  refresh: { backgroundColor: '#ff2f91', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 2, borderColor: '#ff8ac5' },
-  refreshText: { color: '#fff', fontWeight: '900', fontSize: 10, letterSpacing: 1 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   metric: { flexGrow: 1, flexBasis: 190, minHeight: 112, padding: 15, justifyContent: 'space-between', borderWidth: 1, borderTopWidth: 3, borderColor: '#6b2548', borderTopColor: '#ff2f91', borderRadius: 18, backgroundColor: 'rgba(39,9,25,.93)', boxShadow: '0 10px 28px rgba(0,0,0,.25)' },
   metricLabel: { color: '#d29ab7', fontWeight: '900', fontSize: 10, letterSpacing: 1.1 },

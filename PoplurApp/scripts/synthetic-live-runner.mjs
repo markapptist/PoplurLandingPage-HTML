@@ -869,11 +869,26 @@ export function createSyntheticLiveRunner({
     // The TV's numbered stepper changes the channel immediately. The wheel
     // animates its selected option and may suspend paints in a background tab.
     const channelNumbers = { food: 101, live: 116, beauty: 103, sports: 104, modelling: 105, fashion: 106, music: 107, tech: 108, news: 109, french: 110, spanish: 111, shopping: 112, cartoon: 113, kids: 114, comedy: 115 };
-    const controls = clay.getByRole('group', { name: 'Channel and post controls', exact: true });
-    const readChannel = () => controls.evaluate(element => Array.from(element.children).find(child => child.tagName === 'SPAN')?.textContent?.trim());
+    // The feed's channel/post control is one of two things: the arrow
+    // cluster ("Channel and post controls", four buttons, the channel number in
+    // its first span) or, under GESTURE_NAVIGATION_TRIAL, the gesture dock
+    // ("Swipe controls. Up: Channel up. …", no buttons, arrow keys on the
+    // focused group, one readout span "113 · 1/1"). 12 Sep: the dock shipped
+    // and every engage step hung on the cluster's button for 75 s.
+    const controls = clay.getByRole('group', { name: /^(Channel and post controls|Swipe controls\.)/ }).first();
+    await controls.waitFor({ state: 'visible', timeout: 20_000 });
+    const isDock = await controls.evaluate(element => element.hasAttribute('data-poplur-gesture-navigation'));
+    const readChannel = () => controls.evaluate(element => {
+      const span = Array.from(element.querySelectorAll('span')).find(child => /^\d+/.test(child.textContent?.trim() || ''));
+      return span?.textContent?.trim().split(/\s*·\s*/)[0] || '';
+    }, undefined, { timeout: 10_000 });
+    const channelUp = async () => {
+      if (isDock) { await controls.focus(); await controls.press('ArrowUp'); }
+      else await activateControl(controls.getByRole('button', { name: 'Channel up', exact: true }), 'Channel up');
+    };
     let selected = await readChannel();
     for (let index = 0; index < 16 && selected !== String(channelNumbers[target.channel]); index += 1) {
-      await activateControl(controls.getByRole('button', { name: 'Channel up', exact: true }), 'Channel up');
+      await channelUp();
       await sleep(700);
       selected = await readChannel();
     }
@@ -887,9 +902,12 @@ export function createSyntheticLiveRunner({
       if (owner === LIVE_OWNER_UID) return { clay, id };
       if (id && seen.has(id)) break;
       if (id) seen.add(id);
-      const next = clay.getByRole('button', { name: 'Next post', exact: true }).first();
-      if (!await next.isVisible().catch(() => false)) break;
-      await activateControl(next, 'Next post');
+      if (isDock) { await controls.focus(); await controls.press('ArrowRight'); }
+      else {
+        const next = clay.getByRole('button', { name: 'Next post', exact: true }).first();
+        if (!await next.isVisible().catch(() => false)) break;
+        await activateControl(next, 'Next post');
+      }
       await sleep(500);
     }
     return null;

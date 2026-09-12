@@ -45,26 +45,40 @@ export const T = StyleSheet.create({
   simText: { color: C.sim, fontWeight: '600' },
 });
 
-/** Surfaces: one card, one nested panel, one open highlight, one row. */
+/** Surfaces: one card, one nested panel, one open highlight, one row. The
+ *  page is one column (spec §0): `safe` carries the gradient, `chrome` holds
+ *  the header and the tab bar, `scroll` is the viewport-bounded ScrollView
+ *  whose content container is `page` — the selected tab's panel only. */
 export const S = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
-  page: { flexGrow: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: 20, paddingBottom: 48, gap: 20 },
-  notice: { color: '#ffe8f3', backgroundColor: '#59132f', borderRadius: 12, padding: 12, fontSize: 12 },
+  chrome: { width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: 20 },
+  scroll: { flex: 1 },
+  page: { flexGrow: 1, width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 48, gap: 20 },
+  notice: { color: C.ink2, backgroundColor: '#59132f', borderRadius: 12, padding: 12, fontSize: 12 },
   card: { padding: 16, borderRadius: 14, borderWidth: 1, borderColor: C.edge, backgroundColor: C.surface, gap: 12 },
   panel: { padding: 12, borderRadius: 10, backgroundColor: C.panel, gap: 8 },
   open: { backgroundColor: C.openTint, borderLeftWidth: 3, borderLeftColor: C.pop },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.line },
-  rule: { height: 1, backgroundColor: C.line },
-  tile: { flexGrow: 1, flexBasis: 160, minHeight: 84, gap: 4, padding: 12, borderRadius: 10, backgroundColor: C.panel },
+  // Four across inside the card at 736: the card's border leaves 662 px, so
+  // the basis sits under 160 and the tiles grow to fill.
+  tile: { flexGrow: 1, flexBasis: 150, minHeight: 84, gap: 4, padding: 12, borderRadius: 10, backgroundColor: C.panel },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: C.line, backgroundColor: C.panel },
   chipOn: { borderColor: C.pop, backgroundColor: C.openTint },
+  // Secondary: panel fill + line border (mode picker, PREV / NEXT, Show more).
+  // Primary: the `now` fill — the one place pink means "do this now" (RUN…).
   button: { alignItems: 'center', paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: C.line, backgroundColor: C.panel },
   buttonPrimary: { alignItems: 'center', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, backgroundColor: C.now },
+  disabled: { opacity: 0.38 },
 });
 
 /** The one web-only style key. `backgroundImage` is not in RN's ViewStyle, so
- *  it lives outside the typed StyleSheet and is layered onto `S.page`. */
+ *  it lives outside the typed StyleSheet and is layered onto `S.safe` — the
+ *  root, so the gradient stays put while the panel scrolls under the chrome. */
 export const WEB_ONLY = { page: { backgroundImage: C.gradient } as unknown as ViewStyle };
+
+/** The dashboard ships the newest 160 public pops (`publicPosts`); every list
+ *  and radius sum drawn from them is that window, never a day, and says so. */
+export const PUBLIC_POPS_WINDOW = 160;
 
 export const ago = (time: number) => !time ? '—' : Date.now() - time < 12_000 ? 'NOW' : Date.now() - time < 3_600_000 ? `${Math.round((Date.now() - time) / 60_000)}m ago` : `${Math.round((Date.now() - time) / 3_600_000)}h ago`;
 export const clock = (time: number) => time ? new Date(time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';

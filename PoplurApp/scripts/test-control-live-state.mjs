@@ -1,3 +1,5 @@
+import { reportIndexFrame } from './algorithm-report-policy.mjs';
+
 export const emptyPublicSnapshot = () => ({ posts: [], cells: [], feed: [] });
 
 /** A foreground lease lasts two minutes (PRESENCE_LEASE_MS, fn/appPresence.ts:7). */
@@ -62,6 +64,12 @@ export function createLiveDashboardState() {
   let publicReady = false;
   // The digest watcher's last normalised document; null until seen (§4.2).
   let algorithm = null;
+  // The report-index watcher's last normalised document (reports design
+  // §5.1); null until seen. `reportsSeen` tells "no index yet" from "the
+  // watcher delivered and the document is absent", so the GET route reads the
+  // document at most once before the watcher speaks, never once per request.
+  let reports = null;
+  let reportsSeen = false;
   // The presence watcher's last lease set; null until its first snapshot.
   let presenceLeases = null;
   // The last private dashboard the cloud returned, so a local change (digest,
@@ -73,6 +81,8 @@ export function createLiveDashboardState() {
       publicSnapshot = emptyPublicSnapshot();
       publicReady = false;
       algorithm = null;
+      reports = null;
+      reportsSeen = false;
       presenceLeases = null;
       lastPrivate = null;
     },
@@ -85,6 +95,13 @@ export function createLiveDashboardState() {
       algorithm = digest && typeof digest === 'object' ? digest : null;
     },
     algorithm() { return algorithm; },
+    /** The normalised index document, or null when absent; a refusal shape passes through so the page can say why. */
+    acceptReports(index) {
+      reports = index && typeof index === 'object' ? index : null;
+      reportsSeen = true;
+    },
+    reports() { return reports; },
+    hasReports() { return reportsSeen; },
     acceptPresence(leases) {
       presenceLeases = (Array.isArray(leases) ? leases : [])
         .filter(lease => lease && typeof lease.uid === 'string' && lease.uid)
@@ -108,6 +125,8 @@ export function createLiveDashboardState() {
         publicMap: publicSnapshot.cells,
         publicFeed: publicSnapshot.feed,
         algorithm,
+        // ≤ 60 index rows; a body never rides the frame (reports design decision 18).
+        reports: reportIndexFrame(reports),
       };
     },
     /** Re-fold the last private dashboard; null until one has arrived (no broadcast). */

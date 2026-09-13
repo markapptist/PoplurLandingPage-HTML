@@ -94,6 +94,46 @@ test('recombine is null before any private dashboard, carries algorithm after ac
   assert.equal(state.combine(privateDashboard(), NOW).algorithm, null, 'after a reset the digest is re-accepted from the watcher, never remembered');
 });
 
+test('acceptReports folds the report index into the frame: ≤ 60 rows, never a body, refusal passed through, reset clears', () => {
+  const state = createLiveDashboardState();
+  assert.equal(state.hasReports(), false, 'nothing delivered yet');
+  assert.equal(state.reports(), null);
+  state.acceptPublic({ posts: [], cells: [], feed: [] });
+  assert.equal(state.combine(privateDashboard(), NOW).reports, null, 'no index yet reads as null');
+  const rows = Array.from({ length: 120 }, (_, offset) => ({
+    day: new Date(Date.UTC(2026, 8, 12 - offset, 12)).toISOString().slice(0, 10),
+    generatedAtMillis: NOW - offset * 86_400_000, digestVersion: 18, revision: 1, partial: false, backfilled: false, catchUp: false, trialOn: true, trialMultiplier: 5,
+    decision: 'none', knob: null, to: null, counts: { suggest: 0, verify: 0, hold: 0, insufficient: 7, fixed: 10 }, productionEpoch: '293c52c9', sourcePolicyVersion: '07b43286', bytes: 145_351, staleData: false,
+  }));
+  const index = { version: 1, lastReportedDay: '2026-09-12', updatedAtMillis: NOW, runId: 'run-2026-09-13T04-45', days: rows };
+  state.acceptReports(index);
+  assert.equal(state.hasReports(), true);
+  assert.equal(state.reports(), index, 'the full ≤ 120-row index is what GET /api/reports serves');
+  const frame = state.recombine(NOW);
+  assert.equal(frame.reports.days.length, 60, 'the frame carries the newest 60 rows');
+  assert.equal(frame.reports.days[0].day, '2026-09-12');
+  assert.equal(frame.reports.days[59].day, '2026-07-15');
+  assert.equal(frame.reports.lastReportedDay, '2026-09-12');
+  assert.equal(frame.reports.updatedAtMillis, NOW);
+  assert.equal(frame.reports.version, 1);
+  const serialized = JSON.stringify(frame.reports);
+  for (const bodyKey of ['evidence', 'verdicts', 'firstLine', 'sentence', 'metrics', 'checks', 'policy']) {
+    assert.ok(!serialized.includes(`"${bodyKey}"`), `a body never rides the frame (${bodyKey})`);
+  }
+  assert.equal(frame.generatedAtMs, NOW, 'the private part is untouched');
+  state.acceptReports({ version: 2, unsupportedVersion: true });
+  assert.deepEqual(state.recombine(NOW).reports, { version: 2, unsupportedVersion: true }, 'a refusal passes through so the page can say why');
+  state.acceptReports(null);
+  assert.equal(state.hasReports(), true, 'the watcher spoke: the document is absent, so no read is spent asking again');
+  assert.equal(state.recombine(NOW).reports, null);
+  state.acceptReports(index);
+  state.reset();
+  assert.equal(state.hasReports(), false);
+  assert.equal(state.reports(), null);
+  state.acceptPublic({ posts: [], cells: [], feed: [] });
+  assert.equal(state.combine(privateDashboard(), NOW).reports, null, 'after a reset the index is re-accepted from the watcher, never remembered');
+});
+
 test('combine without a public snapshot stores the private frame but returns null', () => {
   const state = createLiveDashboardState();
   assert.equal(state.combine(privateDashboard(), NOW), null);

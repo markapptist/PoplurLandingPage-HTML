@@ -20,8 +20,19 @@ import {
   normalizeAlgorithmDigest,
   ownerClassOf,
   postClass,
+  readsToCad,
   validateLedgerExportRequest,
 } from './algorithm-digest-policy.mjs';
+import {
+  REPORT_DAYS_COLLECTION,
+  REPORT_INDEX_DOC,
+  createReportCache,
+  isReportRefusal,
+  normalizeAlgorithmReport,
+  normalizeReportIndex,
+  parseReportDay,
+  reportRevisionListed,
+} from './algorithm-report-policy.mjs';
 import {
   createLiveDashboardState,
   createLiveRefreshScheduler,
@@ -51,6 +62,10 @@ const LIVE_REFRESH_MIN_MS = parseRefreshFloorMs(process.env.POPLUR_LIVE_REFRESH_
 // every minute; a lease that lapsed since is filtered at merge time.
 const PRESENCE_REISSUE_MS = 60_000;
 const ledgerReadBudget = createLedgerReadBudget();
+// Report bodies per day@revision for the process lifetime (reports design
+// §5.1): the first open of a day costs 1 read against the same 25k/day ledger
+// budget, every later open 0; a higher revision in the index evicts.
+const reportCache = createReportCache();
 let liveSignupTicker = null;
 // Set while the cloud switch is failing. Every reconnect re-earns LIVE with a
 // fresh dashboard call, so a failing upstream must not be hammered at the
@@ -295,6 +310,16 @@ function startLiveWatchers() {
       })));
       scheduleLocalBroadcast();
     };
+    // Tenth watcher: the daily report INDEX (1 read at attach, 1 per report
+    // day). Folded locally like the digest; the frame carries ≤ 60 rows and
+    // never a body — bodies are served by GET /api/reports/:day. An absent
+    // document (repo 1 not deployed yet) reads as `reports: null`.
+    const reportsChanged = snapshot => {
+      if (onboardingQuarantine) return;
+      liveState.acceptReports(normalizeReportIndex(snapshot.data() ?? null));
+      const frame = liveState.recombine();
+      if (frame) broadcastLiveDashboard(frame);
+    };
     liveWatchers = [
       firestore.collection('posts').orderBy('createdAt', 'desc').limit(160).onSnapshot(publicPostsChanged, failed),
       firestore.collection('testActivity').limit(100).onSnapshot(changed, failed),
@@ -305,6 +330,7 @@ function startLiveWatchers() {
       firestore.collection('testControl').doc('simulation').onSnapshot(changed, failed),
       firestore.collection('testControl').doc('algorithmDigest').onSnapshot(algorithmChanged, failed),
       startPresenceWatcher(firestore, presenceChanged, failed),
+      firestore.collection('testControl').doc('algorithmReports').onSnapshot(reportsChanged, failed),
     ];
     scheduleLiveDashboardRefresh(0);
   } catch {
@@ -706,6 +732,96 @@ async function applyLedgerExport(body, response, origin) {
   }
 }
 
+/** A report route's answer: the `{ result }` envelope plus the read count the ledger export already exposes. */
+function sendReportJSON(response, status, origin, body, reads) {
+  response.writeHead(status, {
+    ...responseHeaders(origin),
+    'access-control-expose-headers': 'x-poplur-ledger-reads',
+    'x-poplur-ledger-reads': String(reads),
+  });
+  response.end(JSON.stringify(body));
+}
+
+/** The 429 the ledger export answers with (reports design §5.1), for a one-read report fetch. */
+function refuseReportRead(response, origin, remaining) {
+  sendJSON(response, 429, origin, {
+    error: { message: 'That report read would exceed today\'s ledger read budget.' },
+    remaining,
+    estimate: { reads: 1, cad: readsToCad(1), reports: 1 },
+  });
+}
+
+/**
+ * GET /api/reports: the last normalised index — 0 reads while the watcher has
+ * delivered (the frame already carries its newest 60 rows; this is the full
+ * ≤ 120), one `doc.get()` charged to the budget when it has not spoken yet.
+ * Never starts the watchers: attaching all ten costs ≈ 460 reads.
+ */
+async function serveReportIndex(response, origin) {
+  if (onboardingQuarantine) {
+    sendJSON(response, 503, origin, { error: { message: 'Production reads are quarantined during first-user onboarding.' } });
+    return;
+  }
+  if (liveState.hasReports()) {
+    sendReportJSON(response, 200, origin, { result: liveState.reports() }, 0);
+    return;
+  }
+  const remaining = ledgerReadBudget.remaining(Date.now());
+  if (remaining < 1) { refuseReportRead(response, origin, remaining); return; }
+  try {
+    const snapshot = await getFirestore(adminApp()).doc(REPORT_INDEX_DOC).get();
+    ledgerReadBudget.charge(1, Date.now());
+    liveState.acceptReports(normalizeReportIndex(snapshot.data() ?? null));
+    sendReportJSON(response, 200, origin, { result: liveState.reports() }, 1);
+  } catch {
+    sendJSON(response, 502, origin, { error: { message: 'The report index could not be read from Poplur.' } });
+  }
+}
+
+/**
+ * GET /api/reports/:day: one report body from the Admin SDK, cached per
+ * day@revision (the revision from the index copy) for the process lifetime.
+ * A cache hit answers with `x-poplur-ledger-reads: 0`; a miss charges 1 read
+ * through the 25k/day ledger budget and answers 429 in its shape when nothing
+ * is left; a missing document is 404. A refusal shape (another schema major,
+ * unreadable evidence, oversize) is served as the result so the page can say
+ * why — never zero-filled.
+ */
+async function serveReport(day, response, origin) {
+  if (onboardingQuarantine) {
+    sendJSON(response, 503, origin, { error: { message: 'Production reads are quarantined during first-user onboarding.' } });
+    return;
+  }
+  const listed = reportRevisionListed(liveState.reports(), day);
+  const cached = reportCache.lookup(day, listed);
+  if (cached) {
+    sendReportJSON(response, 200, origin, { result: cached }, 0);
+    return;
+  }
+  const remaining = ledgerReadBudget.remaining(Date.now());
+  if (remaining < 1) { refuseReportRead(response, origin, remaining); return; }
+  // The read is charged once whatever happens after it: a get() that returned
+  // (a missing document included) was billed by Firestore.
+  let reads = 0;
+  try {
+    const snapshot = await getFirestore(adminApp()).doc(`${REPORT_DAYS_COLLECTION}/${day}`).get();
+    reads = 1;
+    if (!snapshot.exists) {
+      sendReportJSON(response, 404, origin, { error: { message: 'No report was written for that day.' } }, reads);
+      return;
+    }
+    const report = normalizeAlgorithmReport(snapshot.data() ?? null);
+    // A body is immutable per revision, so a refusal for one is as cacheable
+    // as the body; only a foreign schema major carries no revision to key on.
+    if (report && !(isReportRefusal(report) && report.unsupportedVersion)) reportCache.store(day, report.revision, report);
+    sendReportJSON(response, 200, origin, { result: report }, reads);
+  } catch {
+    sendJSON(response, 502, origin, { error: { message: 'The report could not be read from Poplur.' } });
+  } finally {
+    ledgerReadBudget.charge(reads, Date.now());
+  }
+}
+
 async function relayControl(body, response, origin) {
   const data = body?.data;
   if (!data || typeof data !== 'object' || !allowedActions.has(data.action)) {
@@ -780,6 +896,23 @@ const server = createServer(async (request, response) => {
       return;
     }
     await relayRunnerGET(`/frame/${encodeURIComponent(frameMatch[1])}${sequence == null ? '' : `?sequence=${encodeURIComponent(sequence)}`}`, response, origin);
+    return;
+  }
+  // Read-only report routes (reports design §5.1): behind the origin lock like
+  // everything above — `fetch` sends Origin, a bare address-bar GET does not.
+  if (request.method === 'GET' && requestURL.pathname === '/api/reports') {
+    await serveReportIndex(response, origin);
+    return;
+  }
+  const reportMatch = requestURL.pathname.match(/^\/api\/reports\/([^/]+)$/);
+  if (request.method === 'GET' && reportMatch) {
+    let day = null;
+    try { day = parseReportDay(decodeURIComponent(reportMatch[1])); } catch { day = null; }
+    if (!day) {
+      sendJSON(response, 400, origin, { error: { message: 'Report day must be YYYY-MM-DD.' } });
+      return;
+    }
+    await serveReport(day, response, origin);
     return;
   }
 

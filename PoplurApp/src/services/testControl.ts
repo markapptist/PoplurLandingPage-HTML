@@ -541,7 +541,8 @@ export type BetaAlgorithmDigest = {
   };
   intercept: {
     realized: { entries: number; distinctPosts: number; distinctActors: number };
-    opportunity: { pairs: number; postsWithAnyPair: number; realAccountsWithLocation: number };
+    /** `nearMissPairs`: pairs within 2 × reach on never-pumped posts (§2.3) — the seedReach finding's input, no rule reads it. */
+    opportunity: { pairs: number; nearMissPairs: number; postsWithAnyPair: number; realAccountsWithLocation: number };
   };
   curve: {
     passMinutes: number;
@@ -558,12 +559,366 @@ export type BetaAlgorithmDigest = {
  *  normaliser refused a foreign schema, or a document over the 512 KB guard. */
 export type BetaAlgorithmRefusal = { reason: 'unsupported-version' | 'oversize'; version: number | null; digestVersion: number | null };
 
+// ── Daily algorithm reports (algorithm-reports-design.md §1, §5.2) ─────────
+// These mirror the generator's exported types in
+// functions-digest/src/algorithmReportPolicy.ts / algorithmReportRules.ts —
+// the wire contract. Every figure arrives gated from the document; the page
+// never divides and never invents confidence (§1.7, §2.5).
+
+export type BetaReportKnobId = 'K1' | 'K2' | 'K3' | 'K4' | 'K5' | 'K6' | 'K7' | 'K8' | 'K9' | 'K10' | 'K11' | 'K12' | 'K13' | 'K14' | 'K15' | 'K16' | 'K17';
+export type BetaReportVerdictKind = 'insufficient' | 'hold' | 'suggest' | 'verify';
+export type BetaReportInsufficientReason = 'gate' | 'trial' | 'mixed-policy' | 'source-ahead' | 'drift' | 'unmeasured' | 'partial' | 'backfilled' | 'epoch-young' | 'kind-split-unavailable';
+export type BetaReportHoldReason = 'in-range' | 'invariant-capped' | 'concentration' | 'conflicting-evidence' | 'reversal-guard' | 'open' | 'cool-down'
+  | 'production-unverified' | 'deferred' | 'changed-recently' | 'owner-fixed' | 'paid' | 'simulation' | 'ui' | 'finding' | 'experiment-switch' | 'rank-only';
+export type BetaReportReason = BetaReportInsufficientReason | BetaReportHoldReason | 'farm-bound';
+export type BetaReportOutcome = 'adopted-in-source' | 'adopted-in-production' | 'changed-differently' | 'withdrawn' | 'open';
+export type BetaReportDecisionKind = 'suggest' | 'verify' | 'none';
+export type BetaReportVerdictCounts = { suggest: number; verify: number; hold: number; insufficient: number; fixed: number };
+export type BetaReportTrialClass = 'trial' | 'normal' | null;
+
+/** One row of the index document's `days` array (§1.8); the frame carries ≤ 60. */
+export type BetaReportIndexRow = {
+  day: string;
+  generatedAtMillis: number;
+  digestVersion: number;
+  revision: number;
+  partial: boolean;
+  backfilled: boolean;
+  catchUp: boolean;
+  trialOn: boolean;
+  trialMultiplier: number | null;
+  decision: BetaReportDecisionKind;
+  knob: BetaReportKnobId | null;
+  to: number | null;
+  counts: BetaReportVerdictCounts;
+  productionEpoch: string;
+  sourcePolicyVersion: string;
+  bytes: number;
+  /** An amendment refused because the rules changed since the day was written (§2.4). */
+  staleData: boolean;
+};
+
+export type BetaReportIndex = {
+  version: number;
+  lastReportedDay: string | null;
+  updatedAtMillis: number;
+  runId: string;
+  /** Newest first. */
+  days: BetaReportIndexRow[];
+};
+
+/** A named gate (`Gate` shape P:1195 with the label the row prints). */
+export type BetaReportGate = BetaAlgorithmGate & { id: string; label: string; note: string | null };
+
+export type BetaReportEvidenceCell = {
+  id: string;
+  value: number | string | boolean | null;
+  unit: string | null;
+  n: number | null;
+  numerator: number | null;
+  denominator: number | null;
+  label: string | null;
+};
+
+export type BetaReportSuggestion = {
+  from: number;
+  to: number;
+  step: number;
+  direction: 'lower' | 'raise';
+  ruleId: string;
+  rationale: string;
+  respects: string[];
+};
+
+/** The K7 curves (`curveBlock`) in the desk's own line shape, plus the two
+ *  cells the memo quotes ("1 km → 29.8 d today, → N d at 0.04"). */
+export type BetaReportCurve = BetaAlgorithmCurveLine & { medianTesterPeakDays: number | null; linearFloorMeters: number | null };
+
+export type BetaReportVerdictSummary = { verdict: BetaReportVerdictKind; reason: BetaReportReason; to: number | null };
+
+export type BetaReportVerdict = {
+  knob: BetaReportKnobId;
+  name: string;
+  tunable: boolean;
+  declaredValue: number | null;
+  unit: string | null;
+  seenValue: number | null;
+  seenN: number;
+  seenBasis: string;
+  /** = seenValue when seenN ≥ 30, else null (§1.5). */
+  productionPays: number | null;
+  where: string;
+  deploy: string[];
+  gates: BetaReportGate[];
+  evidence: BetaReportEvidenceCell[];
+  verdict: BetaReportVerdictKind;
+  reason: BetaReportReason;
+  reasonText: string;
+  rule: { id: string; text: string; inputs: Record<string, number | string | boolean | null> } | null;
+  arithmetic: string | null;
+  suggestion: BetaReportSuggestion | null;
+  deferred: { to: number; ruleId: string } | null;
+  curveAtSuggested: BetaReportCurve | null;
+  curveCurrent: BetaReportCurve | null;
+  frozenUntilDay: string | null;
+  previous: BetaReportVerdictSummary | null;
+  outcome: BetaReportOutcome | null;
+  outcomeNote: string | null;
+  openSinceDay: string | null;
+  withdrawnDay: string | null;
+};
+
+/** The six evidence-only findings (§1.5). Their fields differ per id, so the
+ *  shared scalars are typed and the rest is kept as bounded records. */
+export type BetaReportCheck = {
+  id: string;
+  status: string;
+  basis: string | null;
+  detail: string | null;
+  note: string | null;
+  text: string | null;
+  direction: string | null;
+  asOfCommit: string | null;
+  /** `drift` only: per kind seen vs declared, all actor classes. */
+  rows: Record<string, { seen: number | null; declared: number | null; n: number; status: string }>;
+  verify: string[];
+  awaitingDeploy: string[];
+  /** Every other numeric field of the check (ceilingMeters, violations, atWorld, labelledEntries, pairs, …). */
+  numbers: Record<string, number | null>;
+  worst: { postId: string; radiusMeters: number; ratePerPassSeen: number } | null;
+  claimsD30: BetaAlgorithmClaimStats | null;
+};
+
+export type BetaReportMetric = {
+  id: string;
+  value: number | null;
+  unit: string;
+  n: number | null;
+  gate: BetaReportGate | null;
+  window: string;
+  population: string;
+  basis: string;
+  numerator: number | null;
+  denominator: number | null;
+};
+
+export type BetaReportEpoch = {
+  id: string;
+  fromDay: string;
+  toDay: string;
+  days: number;
+  signature: { grants: Record<string, number>; trial: BetaReportTrialClass; trialMultiplier: number | null };
+  boundaryCause: 'grant' | 'trial' | 'window-start';
+  movedFields: string[];
+};
+
+export type BetaReportSignature = { view: number | null; like: number | null; comment: number | null; dislike: number | null; repeatBase: number | null; seedSeen: number | null };
+
+export type BetaReportKnobs = Omit<BetaAlgorithmDigest['knobs'], 'sourcePolicyVersion' | 'policySha256' | 'syncedAtMillis' | 'source'>;
+
+export type BetaReportHeadline = {
+  trialOnDay: boolean;
+  trialMultiplierOnDay: number | null;
+  switchAtRun: { enabled: boolean; multiplier: number | null };
+  trialSinceMillis: number | null;
+  boostedSinceMillis: number | null;
+  trialSeenOnDay: number | null;
+  trialClassOnDay: BetaReportTrialClass;
+  trialShareD30: number | null;
+  anchorsAtWorld: number;
+  anchorsEver: number;
+  worstAnchor: { postId: string; radiusMeters: number; ratePerPassSeen: number } | null;
+  coverage: {
+    complete: boolean;
+    postsBehindHorizon: number;
+    evicted: number;
+    entriesFoldedOnDay: number;
+    registeredPosts: { real: number; owner: number; review: number; official: number } | null;
+    nonLivePollLagRuns: number;
+    kindSplitSinceMillis: number | null;
+    trimmed: boolean;
+  };
+  cost: { readsOnDay: number | null; runsOnDay: number | null; cadOnDay: number | null; monthlyCadProjected: number | null };
+};
+
+export type BetaReportDecision = {
+  kind: BetaReportDecisionKind;
+  knob: BetaReportKnobId | null;
+  /** The one line of the SUGGESTION card — always "suggest …", never an imperative. */
+  sentence: string;
+  /** Literal: nothing is ever applied by a report. */
+  appliedByReport: false;
+  productionPays: { knob: BetaReportKnobId; value: number | null; n: number; basis: string } | null;
+  action: { where: string; from: number; to: number; unit: string | null; deploy: string[] } | null;
+  deferred: { knob: BetaReportKnobId; to: number; ruleId: string }[];
+  open: { knob: BetaReportKnobId; to: number; ruleId: string; openSinceDay: string; outcome: BetaReportOutcome | null; missedReports: number }[];
+  counts: BetaReportVerdictCounts;
+  ownerQuestion: string | null;
+};
+
+export type BetaReportPolicy = {
+  reportSchemaVersion: number;
+  digestSchema: number;
+  ruleSetVersion: string;
+  digestVersion: number;
+  runId: string;
+  source: {
+    knobs: BetaReportKnobs;
+    knobsHash: string;
+    sourcePolicyVersion: string;
+    sourceSignature: BetaReportSignature;
+    policySha256: string;
+    identitySha256: string;
+    syncedAtMillis: number;
+    knobsStale: boolean;
+    knobChangedDays: Record<string, string | null>;
+    lastSyncDay: string;
+    lastSyncNote: string;
+  };
+  production: {
+    observedPolicy: { version: string; since: number; complete: boolean | null } | null;
+    dayObservedPolicy: { version: string | null; earned: boolean };
+    dayObservedSignature: BetaReportSignature & { n: number };
+    rolling7dSignature: BetaReportSignature;
+    observedPolicySpanned: { d7: string[]; d30: string[]; after: string[] | null; note: string };
+    /** null (not false) while any signature field is null (§1.6). */
+    sourceMatchesObserved: boolean | null;
+  };
+  decay: {
+    switch: BetaAlgorithmDigest['switches']['decayTrial'];
+    dueDecayEnabled: boolean;
+    seenOnDay: { trialMultiplierSeen: number | null; byMode: BetaAlgorithmDecayModes; trialClass: BetaReportTrialClass };
+    declaredRatePerDay: number;
+    /** Always null: state holds no observed decay rate (decision 9). */
+    observedRatePerDay: null;
+    observedRateNote: string;
+  };
+  simulation: { simulationEnabled: boolean; runnerEnabled: boolean; dailySimulationEnabled: boolean; simulationOwnerUid: 'set' | 'unset' };
+  productionEpoch: string;
+};
+
+export type BetaReportPrevious = {
+  day: string;
+  runId: string;
+  revision: number;
+  productionEpoch: string;
+  sameEpoch: boolean;
+  gap: boolean;
+  changed: { id: string; from: number | null; to: number | null; delta: number | null; gateFlip: 'gained' | 'lost' | null }[];
+  verdictChanges: { knob: BetaReportKnobId; from: BetaReportVerdictSummary; to: BetaReportVerdictSummary }[];
+};
+
+export type BetaReportObservedGrant = BetaAlgorithmObservedGrant;
+export type BetaReportObserved = {
+  grants: { view: BetaReportObservedGrant; repeat: BetaReportObservedGrant; like: BetaReportObservedGrant; dislike: BetaReportObservedGrant; comment: BetaReportObservedGrant };
+  seedSeen: BetaReportObservedGrant;
+  boostSeen: { meters: BetaReportObservedGrant; hours: BetaReportObservedGrant };
+  sampleEntries: number;
+  clamped: number;
+  resync: number;
+};
+
+export type BetaReportWindow = BetaAlgorithmWindow & { spanned: string[] };
+export type BetaReportWindowName = 'd1' | 'd7' | 'd30' | 'before' | 'after';
+
+export type BetaReportPost = BetaAlgorithmPost & {
+  dayGain: { gr: number; go: number; gv: number; gs: number; gu: number; dl: number; dlr: number; vc: number } | null;
+  rk: { v: number; l: number; c: number; d: number } | null;
+  realGainD30: number;
+  lastRealAtMillis: number | null;
+  ageBucketAtD: 'lt7d' | 'd7to30' | 'gt30d' | null;
+};
+
+export type BetaReportChannel = BetaAlgorithmChannel & { dayGainMeters: number; d30GainMeters: number };
+
+export type BetaReportSnapshots = {
+  seedRest: BetaAlgorithmDigest['seedRest'];
+  claims: BetaAlgorithmDigest['claims'];
+  contamination: BetaAlgorithmDigest['contamination'] & { d7: { simulationOwnerUid: 'set' | 'unset' } };
+  intercept: BetaAlgorithmDigest['intercept'];
+  anchors: BetaAlgorithmDigest['anchors'] & { atWorld: number };
+  curve: BetaAlgorithmDigest['curve'];
+  questions: BetaAlgorithmDigest['questions'];
+  gaps: BetaAlgorithmGap[];
+};
+
+export type BetaReportEvidence = {
+  /** The raw published day row (uid map already stripped), kept faithful for the days CSV. */
+  day: Record<string, unknown>;
+  dayTyped: BetaAlgorithmDay;
+  windows: Record<BetaReportWindowName, BetaReportWindow | null>;
+  /** The raw window blocks in the same faithful form (window-only columns intact). */
+  windowsRaw: Partial<Record<BetaReportWindowName, Record<string, unknown>>>;
+  daysRaw: Record<string, unknown>[];
+  days: BetaAlgorithmDay[];
+  observedOnDay: BetaReportObserved;
+  observed7d: BetaReportObserved;
+  posts: BetaReportPost[];
+  channels: BetaReportChannel[];
+  /** null on a backfilled day (decision 12). */
+  snapshots: BetaReportSnapshots | null;
+  metrics: Record<string, BetaReportMetric>;
+};
+
+export type BetaReportCsvColumns = { verdicts: string[]; metrics: string[]; days: string[]; posts: string[]; identityPrefix: string[] };
+
+/** `testControl/algorithmReports/daily/{day}` (§1.2), normalised and bounded for the page. */
+export type BetaAlgorithmReport = {
+  version: 1;
+  digestSchema: number;
+  day: string;
+  timeZone: string;
+  dayStartMillis: number;
+  dayEndMillis: number;
+  runId: string;
+  digestVersion: number;
+  generatedAtMillis: number;
+  revision: number;
+  supersedes: { runId: string; generatedAtMillis: number; entriesOnDay: number } | null;
+  partial: boolean;
+  backfilled: boolean;
+  catchUp: boolean;
+  snapshotsAsOfMillis: number | null;
+  productionEpoch: string;
+  sourcePolicyVersion: string;
+  knobsHash: string;
+  ruleSetVersion: string;
+  trialOnDay: boolean;
+  trialMultiplierOnDay: number | null;
+  primarySuggestion: BetaReportKnobId | null;
+  verdictCounts: BetaReportVerdictCounts;
+  bytes: number;
+  firstLine: string;
+  headline: BetaReportHeadline;
+  decision: BetaReportDecision;
+  policy: BetaReportPolicy;
+  verdicts: BetaReportVerdict[];
+  checks: BetaReportCheck[];
+  previous: BetaReportPrevious | null;
+  previousUnavailable: 'amendment' | 'reset' | 'first-report' | null;
+  epochs: BetaReportEpoch[];
+  csvColumns: BetaReportCsvColumns;
+  evidence: BetaReportEvidence;
+};
+
+/** Why a report is null when a document exists: a foreign schema, the proxy's
+ *  oversize marker, or an `evidence` string that does not parse. Never zeros. */
+export type BetaReportRefusal = {
+  reason: 'unsupported-version' | 'oversize' | 'evidence';
+  version: number | null;
+  digestVersion: number | null;
+  day: string | null;
+  revision: number | null;
+};
+
 export type BetaDashboard = {
   generatedAtMs: number;
   /** Null until the hourly digest has published, or when it was refused
    *  (then `algorithmRefusal` says why — the page never renders zeros). */
   algorithm: BetaAlgorithmDigest | null;
   algorithmRefusal: BetaAlgorithmRefusal | null;
+  /** The report index the proxy watches (§5.1): ≤ 60 rows on the frame, never a body. */
+  reports: BetaReportIndex | null;
   testers: BetaTesterRow[];
   daily: BetaDailySeries;
   rows: TestActivityRow[];
@@ -1265,6 +1620,123 @@ const list = <T>(value: unknown, map: (item: unknown) => T | null, limit: number
   ? value.map(map).filter((item): item is T => item !== null).slice(0, limit)
   : [];
 
+/** The 15 synced knob values (P:76-81); the digest adds its stamp fields, the report's policy prints them bare. */
+const knobNumbers = (value: unknown): BetaReportKnobs => {
+  const knobs = record(value);
+  return {
+    firstViewMeters: meters(knobs.firstViewMeters),
+    likeMeters: meters(knobs.likeMeters),
+    dislikeMeters: signedMeters(knobs.dislikeMeters),
+    commentMeters: meters(knobs.commentMeters),
+    repeatViewBaseMeters: meters(knobs.repeatViewBaseMeters),
+    repeatViewMinMs: integer(knobs.repeatViewMinMs, 24 * 60 * 60 * 1_000),
+    repeatViewLifetimeMeters: meters(knobs.repeatViewLifetimeMeters),
+    decayPerDay: fraction(knobs.decayPerDay),
+    decayHalfLifeDays: metric(knobs.decayHalfLifeDays, 100_000),
+    decayFloorMeters: meters(knobs.decayFloorMeters),
+    maxRadiusMeters: meters(knobs.maxRadiusMeters),
+    syntheticStressHalfLifeHours: metric(knobs.syntheticStressHalfLifeHours, 100_000),
+    seedMeters: meters(knobs.seedMeters),
+    boostDefaultMeters: meters(knobs.boostDefaultMeters),
+    boostDefaultHours: metric(knobs.boostDefaultHours, 100_000),
+  };
+};
+
+const decayTrialSwitch = (value: unknown): BetaAlgorithmDigest['switches']['decayTrial'] => {
+  const trial = value && typeof value === 'object' ? record(value) : null;
+  return trial ? {
+    enabled: trial.enabled === true,
+    multiplier: metric(trial.multiplier, 100),
+    scope: text(trial.scope, 32),
+    effectiveAtMillis: timeMs(trial.effectiveAtMillis),
+    boostedEffectiveAtMillis: timeMs(trial.boostedEffectiveAtMillis),
+  } : null;
+};
+
+// The snapshot blocks the digest publishes and the report copies as of its
+// writing run (§1.7 `snapshots`): one normaliser each, shared by both.
+const seedRestBlock = (value: unknown): BetaAlgorithmDigest['seedRest'] => {
+  const seedRest = record(value);
+  return {
+    ...seedRestCounts(seedRest),
+    valid: seedRest.valid === true,
+    claimShareMedian: nullable(seedRest.claimShareMedian, 1_000_000),
+    peakOverClaim: percentiles(seedRest.peakOverClaim, 1_000_000),
+    timeToPeakHours: percentiles(seedRest.timeToPeakHours, 1_000_000),
+    owner: seedRestCounts(seedRest.owner),
+  };
+};
+
+const claimsBlock = (value: unknown): BetaAlgorithmDigest['claims'] => {
+  const claims = record(record(value).d30);
+  return { d30: { ...claimStats(claims), owner: claimStats(claims.owner) } };
+};
+
+const contaminationBlock = (value: unknown): BetaAlgorithmDigest['contamination'] => {
+  const contamination = record(record(value).d7);
+  return {
+    d7: {
+      syntheticMeters: signedMeters(contamination.syntheticMeters),
+      syntheticEntries: integer(contamination.syntheticEntries, 10_000_000),
+      ownerMeters: signedMeters(contamination.ownerMeters),
+      ownerEntries: integer(contamination.ownerEntries, 10_000_000),
+      reviewMeters: signedMeters(contamination.reviewMeters),
+      reviewEntries: integer(contamination.reviewEntries, 10_000_000),
+      posts: list(contamination.posts, item => {
+        const row = record(item);
+        const postId = text(row.postId, 120);
+        return postId ? { postId, syntheticMeters: signedMeters(row.syntheticMeters), ownerMeters: signedMeters(row.ownerMeters), share: fraction(row.share) } : null;
+      }, DIGEST_BOUNDS.contaminationPosts),
+    },
+  };
+};
+
+const interceptBlock = (value: unknown): BetaAlgorithmDigest['intercept'] => {
+  const intercept = record(value);
+  const realized = record(intercept.realized);
+  const opportunity = record(intercept.opportunity);
+  return {
+    realized: { entries: integer(realized.entries, 10_000_000), distinctPosts: integer(realized.distinctPosts), distinctActors: integer(realized.distinctActors) },
+    opportunity: {
+      pairs: integer(opportunity.pairs, 10_000_000),
+      nearMissPairs: integer(opportunity.nearMissPairs, 10_000_000),
+      postsWithAnyPair: integer(opportunity.postsWithAnyPair),
+      realAccountsWithLocation: integer(opportunity.realAccountsWithLocation),
+    },
+  };
+};
+
+const anchorsBlock = (value: unknown): BetaAlgorithmDigest['anchors'] => {
+  const anchors = record(value);
+  return {
+    worldMeters: meters(anchors.worldMeters) || WORLD_METERS,
+    everAtWorld: integer(anchors.everAtWorld),
+    rows: list(anchors.rows, anchorRow, DIGEST_BOUNDS.anchors),
+  };
+};
+
+const curveStats = (value: unknown, decayPerDay: number): BetaAlgorithmDigest['curve'] => {
+  const curve = record(value);
+  return {
+    passMinutes: integer(curve.passMinutes, 1_440) || 60,
+    normal: curveLine(curve.normal, decayPerDay),
+    normal65: curveLine(curve.normal65, decayPerDay),
+    trial: curve.trial && typeof curve.trial === 'object' ? curveLine(curve.trial, decayPerDay) : null,
+    stress: { halfLifeHours: metric(record(curve.stress).halfLifeHours, 100_000) },
+  };
+};
+
+const questionsBlock = (value: unknown, gates: BetaAlgorithmDigest['gates']): BetaAlgorithmDigest['questions'] => {
+  const questions = record(value);
+  return {
+    c: digestGate(questions.c, gates.minEvents),
+    d: digestGate(questions.d, gates.minPosts),
+    f: digestGate(questions.f, gates.minPosts),
+    h: digestGate(questions.h, gates.minChannelPosts),
+    i: digestGate(questions.i, gates.minPosts),
+  };
+};
+
 /** The schema version the digest declares, or null when nothing is published. */
 export const algorithmDigestVersion = (value: unknown): number | null => {
   if (!value || typeof value !== 'object') return null;
@@ -1307,22 +1779,12 @@ export const algorithmDigest = (value: unknown): BetaAlgorithmDigest | null => {
   const grants = record(observed.grants);
   const boostSeen = record(observed.boostSeen);
   const switches = record(digest.switches);
-  const trial = switches.decayTrial && typeof switches.decayTrial === 'object' ? record(switches.decayTrial) : null;
   const gates = record(digest.gates);
   const minEvents = integer(gates.minEvents, 10_000) || 30;
   const minPosts = integer(gates.minPosts, 10_000) || 8;
   const minChannelPosts = integer(gates.minChannelPosts, 10_000) || 5;
   const minActors = integer(gates.minActors, 10_000) || 2;
   const windows = record(digest.windows);
-  const anchors = record(digest.anchors);
-  const seedRest = record(digest.seedRest);
-  const claims = record(record(digest.claims).d30);
-  const contamination = record(record(digest.contamination).d7);
-  const intercept = record(digest.intercept);
-  const realized = record(intercept.realized);
-  const opportunity = record(intercept.opportunity);
-  const curve = record(digest.curve);
-  const questions = record(digest.questions);
   return {
     version: DIGEST_SCHEMA_VERSION,
     digestVersion: integer(digest.digestVersion, 1_000_000_000),
@@ -1383,21 +1845,7 @@ export const algorithmDigest = (value: unknown): BetaAlgorithmDigest | null => {
       timeZone: text(coverage.timeZone, 64) || 'America/Toronto',
     },
     knobs: {
-      firstViewMeters: meters(knobs.firstViewMeters),
-      likeMeters: meters(knobs.likeMeters),
-      dislikeMeters: signedMeters(knobs.dislikeMeters),
-      commentMeters: meters(knobs.commentMeters),
-      repeatViewBaseMeters: meters(knobs.repeatViewBaseMeters),
-      repeatViewMinMs: integer(knobs.repeatViewMinMs, 24 * 60 * 60 * 1_000),
-      repeatViewLifetimeMeters: meters(knobs.repeatViewLifetimeMeters),
-      decayPerDay: fraction(knobs.decayPerDay),
-      decayHalfLifeDays: metric(knobs.decayHalfLifeDays, 100_000),
-      decayFloorMeters: meters(knobs.decayFloorMeters),
-      maxRadiusMeters: meters(knobs.maxRadiusMeters),
-      syntheticStressHalfLifeHours: metric(knobs.syntheticStressHalfLifeHours, 100_000),
-      seedMeters: meters(knobs.seedMeters),
-      boostDefaultMeters: meters(knobs.boostDefaultMeters),
-      boostDefaultHours: metric(knobs.boostDefaultHours, 100_000),
+      ...knobNumbers(knobs),
       sourcePolicyVersion: text(knobs.sourcePolicyVersion, 16),
       policySha256: text(knobs.policySha256, 64),
       syncedAtMillis: timeMs(knobs.syncedAtMillis),
@@ -1422,13 +1870,7 @@ export const algorithmDigest = (value: unknown): BetaAlgorithmDigest | null => {
       runnerEnabled: switches.runnerEnabled === true,
       dailySimulationEnabled: switches.dailySimulationEnabled === true,
       simulationOwnerUid: text(switches.simulationOwnerUid, 128),
-      decayTrial: trial ? {
-        enabled: trial.enabled === true,
-        multiplier: metric(trial.multiplier, 100),
-        scope: text(trial.scope, 32),
-        effectiveAtMillis: timeMs(trial.effectiveAtMillis),
-        boostedEffectiveAtMillis: timeMs(trial.boostedEffectiveAtMillis),
-      } : null,
+      decayTrial: decayTrialSwitch(switches.decayTrial),
       dueDecayEnabled: switches.dueDecayEnabled === true,
       sampledAtMillis: timeMs(switches.sampledAtMillis),
     },
@@ -1438,54 +1880,759 @@ export const algorithmDigest = (value: unknown): BetaAlgorithmDigest | null => {
     days: list(digest.days, dayStat, 400).slice(-DIGEST_BOUNDS.days),
     channels: list(digest.channels, channelStat, DIGEST_BOUNDS.channels),
     posts: list(digest.posts, postSummary, DIGEST_BOUNDS.posts),
-    anchors: {
-      worldMeters: meters(anchors.worldMeters) || WORLD_METERS,
-      everAtWorld: integer(anchors.everAtWorld),
-      rows: list(anchors.rows, anchorRow, DIGEST_BOUNDS.anchors),
-    },
-    seedRest: {
-      ...seedRestCounts(seedRest),
-      valid: seedRest.valid === true,
-      claimShareMedian: nullable(seedRest.claimShareMedian, 1_000_000),
-      peakOverClaim: percentiles(seedRest.peakOverClaim, 1_000_000),
-      timeToPeakHours: percentiles(seedRest.timeToPeakHours, 1_000_000),
-      owner: seedRestCounts(seedRest.owner),
-    },
-    claims: { d30: { ...claimStats(claims), owner: claimStats(claims.owner) } },
-    contamination: {
-      d7: {
-        syntheticMeters: signedMeters(contamination.syntheticMeters),
-        syntheticEntries: integer(contamination.syntheticEntries, 10_000_000),
-        ownerMeters: signedMeters(contamination.ownerMeters),
-        ownerEntries: integer(contamination.ownerEntries, 10_000_000),
-        reviewMeters: signedMeters(contamination.reviewMeters),
-        reviewEntries: integer(contamination.reviewEntries, 10_000_000),
-        posts: list(contamination.posts, item => {
-          const row = record(item);
-          const postId = text(row.postId, 120);
-          return postId ? { postId, syntheticMeters: signedMeters(row.syntheticMeters), ownerMeters: signedMeters(row.ownerMeters), share: fraction(row.share) } : null;
-        }, DIGEST_BOUNDS.contaminationPosts),
-      },
-    },
-    intercept: {
-      realized: { entries: integer(realized.entries, 10_000_000), distinctPosts: integer(realized.distinctPosts), distinctActors: integer(realized.distinctActors) },
-      opportunity: { pairs: integer(opportunity.pairs, 10_000_000), postsWithAnyPair: integer(opportunity.postsWithAnyPair), realAccountsWithLocation: integer(opportunity.realAccountsWithLocation) },
-    },
-    curve: {
-      passMinutes: integer(curve.passMinutes, 1_440) || 60,
-      normal: curveLine(curve.normal, decayPerDay),
-      normal65: curveLine(curve.normal65, decayPerDay),
-      trial: curve.trial && typeof curve.trial === 'object' ? curveLine(curve.trial, decayPerDay) : null,
-      stress: { halfLifeHours: metric(record(curve.stress).halfLifeHours, 100_000) },
-    },
-    questions: {
-      c: digestGate(questions.c, minEvents),
-      d: digestGate(questions.d, minPosts),
-      f: digestGate(questions.f, minPosts),
-      h: digestGate(questions.h, minChannelPosts),
-      i: digestGate(questions.i, minPosts),
-    },
+    anchors: anchorsBlock(digest.anchors),
+    seedRest: seedRestBlock(digest.seedRest),
+    claims: claimsBlock(digest.claims),
+    contamination: contaminationBlock(digest.contamination),
+    intercept: interceptBlock(digest.intercept),
+    curve: curveStats(digest.curve, decayPerDay),
+    questions: questionsBlock(digest.questions, { minEvents, minPosts, minChannelPosts, minActors }),
     gaps: list(digest.gaps, digestGap, DIGEST_BOUNDS.gaps),
+  };
+};
+
+// ── Daily algorithm reports: normalisers (§5.2) ─────────────────────────────
+
+export const REPORT_SCHEMA_VERSION = 1;
+/** The brief's post gate (P:29): a rate over fewer tester posts is null on the page whatever the document says. */
+const REPORT_MIN_POSTS = 8;
+/** Gprod's floor (RULES.gates.minObserved): production is "seen paying" a grant only at n ≥ 30. */
+const REPORT_MIN_OBSERVED = 30;
+export const REPORT_BOUNDS = {
+  indexRows: 120, frameRows: 60, verdicts: 24, checks: 8, days: 30, posts: 50, channels: 13, metrics: 200, epochs: 8,
+  gates: 12, evidence: 32, deploy: 8, respects: 8, deferred: 8, open: 1, changed: 200, verdictChanges: 24, inputs: 32, columns: 400,
+  /** An `evidence` string past this is refused, never zero-filled (the generator's own field limit). */
+  evidenceBytes: 1_048_576,
+} as const;
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const KNOB_IDS: readonly BetaReportKnobId[] = ['K1', 'K2', 'K3', 'K4', 'K5', 'K6', 'K7', 'K8', 'K9', 'K10', 'K11', 'K12', 'K13', 'K14', 'K15', 'K16', 'K17'];
+const KNOB_ID_SET = new Set<string>(KNOB_IDS);
+const VERDICT_KINDS = new Set<string>(['insufficient', 'hold', 'suggest', 'verify']);
+const REASONS = new Set<string>([
+  'gate', 'trial', 'mixed-policy', 'source-ahead', 'drift', 'unmeasured', 'partial', 'backfilled', 'epoch-young', 'kind-split-unavailable',
+  'in-range', 'invariant-capped', 'concentration', 'conflicting-evidence', 'reversal-guard', 'open', 'cool-down', 'production-unverified', 'deferred',
+  'changed-recently', 'owner-fixed', 'paid', 'simulation', 'ui', 'finding', 'experiment-switch', 'rank-only', 'farm-bound',
+]);
+/** `fixed` in verdictCounts = hold rows with one of these reasons (§1.2, refuter 19). */
+const FIXED_REASONS = new Set<string>(['owner-fixed', 'paid', 'ui', 'simulation', 'rank-only', 'finding', 'experiment-switch']);
+const OUTCOMES = new Set<string>(['adopted-in-source', 'adopted-in-production', 'changed-differently', 'withdrawn', 'open']);
+const WINDOW_NAMES: readonly BetaReportWindowName[] = ['d1', 'd7', 'd30', 'before', 'after'];
+
+const dayKeyOrNull = (value: unknown): string | null => {
+  const day = text(value, 10);
+  return DAY_PATTERN.test(day) ? day : null;
+};
+const nullableInteger = (value: unknown, maximum = 1_000_000_000): number | null => {
+  const parsed = nullable(value, maximum);
+  return parsed === null ? null : Math.round(parsed);
+};
+/** A report value of any unit (metres, counts, ratios, CAD, days): signed, finite, bounded. */
+const reportNumber = (value: unknown): number | null => nullable(value, 1e15, true);
+const textList = (value: unknown, limit: number, maximum = 200): string[] => Array.isArray(value)
+  ? value.map(item => text(item, maximum)).filter(Boolean).slice(0, limit)
+  : [];
+const knobId = (value: unknown): BetaReportKnobId | null => {
+  const id = text(value, 4);
+  return KNOB_ID_SET.has(id) ? id as BetaReportKnobId : null;
+};
+const trialClassOf = (value: unknown): BetaReportTrialClass => value === 'trial' || value === 'normal' ? value : null;
+
+const RAW_BOUNDS = { depth: 6, keys: 160, items: 64, text: 160 } as const;
+/** A raw block kept for the CSV path (§4.2 flattens the published day rows
+ *  faithfully): bounded depth, keys and items, finite numbers, and the
+ *  state-only uid map dropped at any level — the identity discipline of
+ *  decision 8 holds on the page even if a document ever carried it. */
+const rawValue = (value: unknown, depth = 0): unknown => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.slice(0, RAW_BOUNDS.text);
+  if (depth >= RAW_BOUNDS.depth) return null;
+  if (Array.isArray(value)) return value.slice(0, RAW_BOUNDS.items).map(item => rawValue(item, depth + 1));
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, RAW_BOUNDS.keys)) {
+      if (key === 'realActorEntries') continue;
+      out[key] = key === 'simulationOwnerUid' ? (typeof child === 'string' && child && child !== 'unset' ? 'set' : 'unset') : rawValue(child, depth + 1);
+    }
+    return out;
+  }
+  return null;
+};
+const rawRecord = (value: unknown): Record<string, unknown> => rawValue(record(value)) as Record<string, unknown>;
+
+const reportGate = (value: unknown): BetaReportGate | null => {
+  const gate = record(value);
+  const id = text(gate.id, 24);
+  if (!id) return null;
+  // `sufficient` comes from the document alone (digestGate: a missing gate is never sufficient).
+  return { ...digestGate(gate, 0), id, label: text(gate.label, 240), note: text(gate.note, 200) || null };
+};
+
+const evidenceCell = (value: unknown): BetaReportEvidenceCell | null => {
+  const cell = record(value);
+  const id = text(cell.id, 64);
+  if (!id) return null;
+  const raw = cell.value;
+  return {
+    id,
+    value: typeof raw === 'number' ? (Number.isFinite(raw) ? raw : null) : typeof raw === 'boolean' ? raw : typeof raw === 'string' ? text(raw, 160) : null,
+    unit: text(cell.unit, 24) || null,
+    n: nullableInteger(cell.n),
+    numerator: reportNumber(cell.numerator),
+    denominator: reportNumber(cell.denominator),
+    label: text(cell.label, 200) || null,
+  };
+};
+
+const reportCurve = (value: unknown, ratePerDay: number): BetaReportCurve | null => {
+  if (!value || typeof value !== 'object') return null;
+  const block = record(value);
+  return {
+    ...curveLine(block, ratePerDay),
+    medianTesterPeakDays: nullable(record(block.daysToFloor).medianTesterPeak, 100_000),
+    linearFloorMeters: nullableMeters(block.linearFloorMeters),
+  };
+};
+
+const verdictSummary = (value: unknown): BetaReportVerdictSummary | null => {
+  const row = record(value);
+  const verdict = text(row.verdict, 16);
+  const reason = text(row.reason, 32);
+  if (!VERDICT_KINDS.has(verdict) || !REASONS.has(reason)) return null;
+  return { verdict: verdict as BetaReportVerdictKind, reason: reason as BetaReportReason, to: reportNumber(row.to) };
+};
+
+const reportSuggestion = (value: unknown): BetaReportSuggestion | null => {
+  const row = record(value);
+  const from = reportNumber(row.from);
+  const to = reportNumber(row.to);
+  const step = reportNumber(row.step);
+  const direction = row.direction === 'lower' || row.direction === 'raise' ? row.direction : null;
+  if (from === null || to === null || step === null || !direction) return null;
+  return { from, to, step, direction, ruleId: text(row.ruleId, 16), rationale: text(row.rationale, 400), respects: textList(row.respects, REPORT_BOUNDS.respects) };
+};
+
+/**
+ * One knob's verdict (§1.5). Defence in depth (§1.5, §5.2): `sufficient` is
+ * taken only from the document's gates, and a suggestion arriving under an
+ * insufficient gate — or on a row whose verdict is not `suggest`, or on a
+ * knob the catalogue marks untunable (§2.6) — is normalised to
+ * `insufficient/gate` with `suggestion: null`. The generator excludes
+ * `Gprod` from its own check; the page reads every gate, the conservative
+ * side (§2.5 `pre(K)` names `Gprod` in admissibility, and no generator path
+ * emits a suggest with it insufficient).
+ */
+const reportVerdict = (value: unknown): BetaReportVerdict | null => {
+  const row = record(value);
+  const knob = knobId(row.knob);
+  if (!knob) return null;
+  const tunable = row.tunable === true;
+  const gates = list(row.gates, reportGate, REPORT_BOUNDS.gates);
+  const seenValue = reportNumber(row.seenValue);
+  const seenN = integer(row.seenN, 10_000_000);
+  const rule = record(row.rule);
+  const declaredValue = reportNumber(row.declaredValue);
+  let verdict = text(row.verdict, 16);
+  let reason = text(row.reason, 32);
+  let reasonText = text(row.reasonText, 400);
+  let suggestion = reportSuggestion(row.suggestion);
+  let deferred = row.deferred && typeof row.deferred === 'object' && reportNumber(record(row.deferred).to) !== null
+    ? { to: reportNumber(record(row.deferred).to) as number, ruleId: text(record(row.deferred).ruleId, 16) }
+    : null;
+  const allSufficient = gates.every(gate => gate.sufficient);
+  const failing = gates.find(gate => !gate.sufficient) ?? null;
+  const demote = (why: string) => {
+    suggestion = null;
+    deferred = null;
+    verdict = 'insufficient';
+    reason = 'gate';
+    reasonText = failing ? `insufficient evidence — n = ${failing.n} · needs ${failing.minN} (${failing.id}) · ${why}` : `insufficient evidence — ${why}`;
+  };
+  if (!VERDICT_KINDS.has(verdict) || !REASONS.has(reason)) demote('unknown verdict shape dropped by the desk');
+  else if (suggestion && (verdict !== 'suggest' || !allSufficient || !tunable)) demote('a suggestion arrived under an insufficient gate and was dropped by the desk');
+  else if (verdict === 'suggest' && !suggestion) demote('a suggest verdict without a suggestion was dropped by the desk');
+  // A deferred value is a number of the knob's kind too: it stands only on a hold/deferred row whose gates all passed.
+  if (deferred && !(verdict === 'hold' && reason === 'deferred' && allSufficient && tunable)) deferred = null;
+  const inputs: Record<string, number | string | boolean | null> = {};
+  for (const [key, input] of Object.entries(record(rule.inputs)).slice(0, REPORT_BOUNDS.inputs)) {
+    const name = text(key, 64);
+    if (name) inputs[name] = typeof input === 'number' ? (Number.isFinite(input) ? input : null) : typeof input === 'boolean' ? input : typeof input === 'string' ? text(input, 120) : null;
+  }
+  const previous = verdictSummary(row.previous);
+  const outcome = text(row.outcome, 32);
+  return {
+    knob,
+    name: text(row.name, 64),
+    tunable,
+    declaredValue,
+    unit: text(row.unit, 12) || null,
+    seenValue,
+    seenN,
+    seenBasis: text(row.seenBasis, 120),
+    // Never "production pays X" below the observation floor, whatever the document printed.
+    productionPays: seenN >= REPORT_MIN_OBSERVED ? seenValue : null,
+    where: text(row.where, 300),
+    deploy: textList(row.deploy, REPORT_BOUNDS.deploy, 120),
+    gates,
+    evidence: list(row.evidence, evidenceCell, REPORT_BOUNDS.evidence),
+    verdict: verdict as BetaReportVerdictKind,
+    reason: reason as BetaReportReason,
+    reasonText,
+    rule: text(rule.id, 16) ? { id: text(rule.id, 16), text: text(rule.text, 400), inputs } : null,
+    arithmetic: text(row.arithmetic, 600) || null,
+    suggestion,
+    deferred,
+    curveAtSuggested: suggestion ? reportCurve(row.curveAtSuggested, suggestion.to) : null,
+    curveCurrent: reportCurve(row.curveCurrent, declaredValue ?? 0),
+    frozenUntilDay: dayKeyOrNull(row.frozenUntilDay),
+    previous,
+    outcome: OUTCOMES.has(outcome) ? outcome as BetaReportOutcome : null,
+    outcomeNote: text(row.outcomeNote, 200) || null,
+    openSinceDay: dayKeyOrNull(row.openSinceDay),
+    withdrawnDay: dayKeyOrNull(row.withdrawnDay),
+  };
+};
+
+/** The five counts from the normalised rows — a document whose counts
+ *  disagree with its verdicts is malformed, so the rows are the truth. */
+const verdictCountsOf = (verdicts: BetaReportVerdict[]): BetaReportVerdictCounts => {
+  const counts: BetaReportVerdictCounts = { suggest: 0, verify: 0, hold: 0, insufficient: 0, fixed: 0 };
+  for (const row of verdicts) {
+    if (row.verdict === 'hold') counts[FIXED_REASONS.has(row.reason) ? 'fixed' : 'hold'] += 1;
+    else counts[row.verdict] += 1;
+  }
+  return counts;
+};
+
+const CHECK_TEXT_KEYS = new Set(['id', 'status', 'basis', 'detail', 'note', 'text', 'direction', 'asOfCommit', 'rows', 'verify', 'awaitingDeploy', 'worst', 'claimsD30']);
+const reportCheck = (value: unknown): BetaReportCheck | null => {
+  const check = record(value);
+  const id = text(check.id, 24);
+  if (!id) return null;
+  const rows: BetaReportCheck['rows'] = {};
+  for (const [kind, entry] of Object.entries(record(check.rows)).slice(0, 8)) {
+    const row = record(entry);
+    const key = text(kind, 16);
+    if (key) rows[key] = { seen: nullableMeters(row.seen), declared: nullableMeters(row.declared), n: integer(row.n, 10_000_000), status: text(row.status, 24) };
+  }
+  const numbers: Record<string, number | null> = {};
+  for (const [key, field] of Object.entries(check)) {
+    if (CHECK_TEXT_KEYS.has(key) || (typeof field !== 'number' && field !== null)) continue;
+    const name = text(key, 40);
+    if (name) numbers[name] = reportNumber(field);
+  }
+  const worst = record(check.worst);
+  const claims = check.claimsD30 && typeof check.claimsD30 === 'object' ? claimStats(check.claimsD30) : null;
+  return {
+    id,
+    status: text(check.status, 24),
+    basis: text(check.basis, 200) || null,
+    detail: text(check.detail, 400) || null,
+    note: text(check.note, 200) || null,
+    text: text(check.text, 400) || null,
+    direction: text(check.direction, 200) || null,
+    asOfCommit: text(check.asOfCommit, 16) || null,
+    rows,
+    verify: textList(check.verify, 8, 120),
+    awaitingDeploy: textList(check.awaitingDeploy, 8, 24),
+    numbers,
+    worst: text(worst.postId, 120) ? { postId: text(worst.postId, 120), radiusMeters: meters(worst.radiusMeters), ratePerPassSeen: fraction(worst.ratePerPassSeen) } : null,
+    claimsD30: claims,
+  };
+};
+
+/** A metric row (§1.7): counts and metre sums keep their value with `n`; a
+ *  derived ratio or rate is null below its gate — in the document already,
+ *  and again here so no ungated rate can reach the page or a CSV. */
+const reportMetric = (value: unknown): BetaReportMetric | null => {
+  const row = record(value);
+  const id = text(row.id, 64);
+  if (!id) return null;
+  const gate = reportGate(row.gate);
+  const unit = text(row.unit, 24);
+  const derived = unit === 'ratio' || unit.includes('/');
+  return {
+    id,
+    value: gate && !gate.sufficient && derived ? null : reportNumber(row.value),
+    unit,
+    n: nullableInteger(row.n),
+    gate,
+    window: text(row.window, 16),
+    population: text(row.population, 24),
+    basis: text(row.basis, 200),
+    numerator: reportNumber(row.numerator),
+    denominator: reportNumber(row.denominator),
+  };
+};
+
+const reportEpoch = (value: unknown): BetaReportEpoch | null => {
+  const epoch = record(value);
+  const id = text(epoch.id, 16);
+  const fromDay = dayKeyOrNull(epoch.fromDay);
+  const toDay = dayKeyOrNull(epoch.toDay);
+  if (!id || !fromDay || !toDay) return null;
+  const signature = record(epoch.signature);
+  const cause = text(epoch.boundaryCause, 16);
+  return {
+    id,
+    fromDay,
+    toDay,
+    days: integer(epoch.days, 400),
+    signature: { grants: metricRecord(signature.grants), trial: trialClassOf(signature.trial), trialMultiplier: nullable(signature.trialMultiplier, 100) },
+    boundaryCause: cause === 'grant' || cause === 'trial' ? cause : 'window-start',
+    movedFields: textList(epoch.movedFields, 8, 24),
+  };
+};
+
+const signatureOf = (value: unknown): BetaReportSignature => {
+  const sig = record(value);
+  return { view: nullableMeters(sig.view), like: nullableMeters(sig.like), comment: nullableMeters(sig.comment), dislike: nullableMeters(sig.dislike), repeatBase: nullableMeters(sig.repeatBase), seedSeen: nullableMeters(sig.seedSeen) };
+};
+
+const observedBlock = (value: unknown): BetaReportObserved => {
+  const block = record(value);
+  const grants = record(block.grants);
+  const boost = record(block.boostSeen);
+  return {
+    grants: { view: observedGrant(grants.view), repeat: observedGrant(grants.repeat), like: observedGrant(grants.like), dislike: observedGrant(grants.dislike), comment: observedGrant(grants.comment) },
+    seedSeen: observedGrant(block.seedSeen),
+    boostSeen: { meters: observedGrant(boost.meters), hours: observedGrant(boost.hours) },
+    sampleEntries: integer(block.sampleEntries, 10_000_000),
+    clamped: integer(block.clamped, 10_000_000),
+    resync: integer(block.resync, 10_000_000),
+  };
+};
+
+/** A report window: the digest's window shape plus the report's own epoch
+ *  ids, with every rate re-gated on the page (refuter 21). */
+const reportWindow = (value: unknown): BetaReportWindow => {
+  const stats = windowStats(value);
+  const gateRates = (net: BetaAlgorithmNet) => {
+    for (const bucket of [net.byAge.lt7d, net.byAge.d7to30, net.byAge.gt30d, net.all]) if (bucket.posts < REPORT_MIN_POSTS) bucket.perPostDay = null;
+  };
+  gateRates(stats.netReal);
+  gateRates(stats.netOwner);
+  if (stats.viewWorth.cleanPosts < REPORT_MIN_POSTS) stats.viewWorth.views = null;
+  return { ...stats, spanned: textList(record(value).spanned, 16, 16) };
+};
+
+const typedDay = (raw: Record<string, unknown>, fallbackDay: string): BetaAlgorithmDay => dayStat(raw) ?? dayStat({ ...raw, day: fallbackDay }) as BetaAlgorithmDay;
+
+const reportPost = (value: unknown): BetaReportPost | null => {
+  const post = postSummary(value);
+  if (!post) return null;
+  const row = record(value);
+  const gain = row.dayGain && typeof row.dayGain === 'object' ? record(row.dayGain) : null;
+  const kinds = row.rk && typeof row.rk === 'object' ? record(row.rk) : null;
+  const bucket = text(row.ageBucketAtD, 8);
+  return {
+    ...post,
+    dayGain: gain ? { gr: signedMeters(gain.gr), go: signedMeters(gain.go), gv: signedMeters(gain.gv), gs: signedMeters(gain.gs), gu: signedMeters(gain.gu), dl: signedMeters(gain.dl), dlr: signedMeters(gain.dlr), vc: integer(gain.vc, 1_000_000_000) } : null,
+    rk: kinds ? { v: integer(kinds.v, 10_000_000), l: integer(kinds.l, 10_000_000), c: integer(kinds.c, 10_000_000), d: integer(kinds.d, 10_000_000) } : null,
+    realGainD30: signedMeters(row.realGainD30),
+    lastRealAtMillis: nullableTime(row.lastRealAtMillis),
+    ageBucketAtD: bucket === 'lt7d' || bucket === 'd7to30' || bucket === 'gt30d' ? bucket : null,
+  };
+};
+
+const reportChannel = (value: unknown): BetaReportChannel | null => {
+  const channel = channelStat(value);
+  if (!channel) return null;
+  const row = record(value);
+  return { ...channel, dayGainMeters: signedMeters(row.dayGainMeters), d30GainMeters: signedMeters(row.d30GainMeters) };
+};
+
+const reportSnapshots = (value: unknown, decayPerDay: number): BetaReportSnapshots | null => {
+  if (!value || typeof value !== 'object') return null;
+  const snapshots = record(value);
+  const contamination = contaminationBlock(snapshots.contamination);
+  const anchors = record(snapshots.anchors);
+  const uid = record(record(snapshots.contamination).d7).simulationOwnerUid;
+  return {
+    seedRest: seedRestBlock(snapshots.seedRest),
+    claims: claimsBlock(snapshots.claims),
+    // The owner uid never reaches the page: the generator masks it (decision 8) and this repeats the mask.
+    contamination: { d7: { ...contamination.d7, simulationOwnerUid: typeof uid === 'string' && uid && uid !== 'unset' ? 'set' : 'unset' } },
+    intercept: interceptBlock(snapshots.intercept),
+    anchors: { ...anchorsBlock(snapshots.anchors), atWorld: integer(anchors.atWorld) },
+    curve: curveStats(snapshots.curve, decayPerDay),
+    questions: questionsBlock(snapshots.questions, { minEvents: 30, minPosts: 8, minChannelPosts: 5, minActors: 2 }),
+    gaps: list(snapshots.gaps, digestGap, DIGEST_BOUNDS.gaps),
+  };
+};
+
+const columnList = (value: unknown): string[] => textList(value, REPORT_BOUNDS.columns, 120)
+  // No uid column can exist (publishedDay strips the map, test 20); refuse the key if a document ever carried it.
+  .filter(column => !column.startsWith('realActorEntries'));
+
+/** The schema version a report document declares, or null when nothing is published. */
+export const algorithmReportVersion = (value: unknown): number | null => {
+  if (!value || typeof value !== 'object') return null;
+  const version = record(value).version;
+  return typeof version === 'number' && Number.isFinite(version) ? version : 0;
+};
+
+/** The parsed `evidence` block: the document stores it as one JSON string
+ *  (§1.7); the proxy may forward it parsed. Null when it does not parse or
+ *  is over the field limit — a refusal, never zeros. */
+const reportEvidenceRaw = (value: unknown): Record<string, unknown> | null => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== 'string' || !value || value.length > REPORT_BOUNDS.evidenceBytes) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The proxy forwards a refused report as `{version, unsupportedVersion}` or
+ *  `{version, day, oversize}`; an `evidence` field that does not parse is a
+ *  refusal here as well (`algorithmDigestRefusal` pattern). */
+export const algorithmReportRefusal = (value: unknown): BetaReportRefusal | null => {
+  const version = algorithmReportVersion(value);
+  if (version === null) return null;
+  const raw = record(value);
+  const identity = {
+    digestVersion: typeof raw.digestVersion === 'number' && Number.isFinite(raw.digestVersion) ? integer(raw.digestVersion, 1_000_000_000) : null,
+    day: dayKeyOrNull(raw.day),
+    revision: typeof raw.revision === 'number' && Number.isFinite(raw.revision) ? integer(raw.revision, 1_000_000) : null,
+  };
+  if (version !== REPORT_SCHEMA_VERSION || raw.unsupportedVersion === true) return { reason: 'unsupported-version', version: version || null, ...identity };
+  if (raw.oversize === true) return { reason: 'oversize', version, ...identity };
+  if (!reportEvidenceRaw(raw.evidence)) return { reason: 'evidence', version, ...identity };
+  return null;
+};
+
+/**
+ * Normalises one report document for the page: a foreign schema, the oversize
+ * marker or an unparsable `evidence` yields null (the page says why, never
+ * zeros); arrays are sliced to the published bounds; every metre is clamped
+ * to the world; gates come only from the document; a suggestion under an
+ * insufficient gate is dropped and the decision card reconciled with it —
+ * while a card restating an EARLIER open suggestion (decision 15) keeps its
+ * knob whatever the row's verdict says today.
+ */
+export const algorithmReport = (value: unknown): BetaAlgorithmReport | null => {
+  if (algorithmReportVersion(value) !== REPORT_SCHEMA_VERSION || algorithmReportRefusal(value)) return null;
+  const doc = record(value);
+  const raw = reportEvidenceRaw(doc.evidence) as Record<string, unknown>;
+  const day = dayKeyOrNull(doc.day);
+  if (!day) return null;
+  const verdicts = list(doc.verdicts, reportVerdict, REPORT_BOUNDS.verdicts);
+  const counts = verdictCountsOf(verdicts);
+
+  // Decision (§1.4), reconciled with the normalised rows. The card keeps its
+  // knob in exactly two cases, the proxy normaliser's rule (§5.1
+  // `restatedOpen`): (a) the row still carries the suggestion the action
+  // names — the opening day; or (b) `open[]` restates a suggestion opened on
+  // an EARLIER day for that knob at the same `to` — the sticky primary of
+  // decision 15 / §2.5 R3, which the generator emits on every report until
+  // adoption or withdrawal while the row itself is `hold/open`,
+  // `insufficient/trial` (an open K7 under the trial) or `adopted-in-source`
+  // with Gprod false (awaiting its deploy): restated, never re-derived, so
+  // the card never alternates SUGGEST → NO SUGGESTION. Neither → a malformed
+  // card, demoted to `none`.
+  const decisionRaw = record(doc.decision);
+  const pays = record(decisionRaw.productionPays);
+  const action = record(decisionRaw.action);
+  const paysKnob = knobId(pays.knob);
+  const paysN = integer(pays.n, 10_000_000);
+  let kind: BetaReportDecisionKind = decisionRaw.kind === 'suggest' || decisionRaw.kind === 'verify' ? decisionRaw.kind : 'none';
+  let knob = kind === 'suggest' ? knobId(decisionRaw.knob) : null;
+  let sentence = text(decisionRaw.sentence, 800);
+  let open = list(decisionRaw.open, item => {
+    const row = record(item);
+    const id = knobId(row.knob);
+    const to = reportNumber(row.to);
+    const openSinceDay = dayKeyOrNull(row.openSinceDay);
+    const outcome = text(row.outcome, 32);
+    return id && to !== null && openSinceDay ? { knob: id, to, ruleId: text(row.ruleId, 16), openSinceDay, outcome: OUTCOMES.has(outcome) ? outcome as BetaReportOutcome : null, missedReports: integer(row.missedReports, 1_000) } : null;
+  }, REPORT_BOUNDS.open);
+  const primary = knob ? verdicts.find(row => row.knob === knob) ?? null : null;
+  const suggestion = primary?.verdict === 'suggest' ? primary.suggestion : null;
+  const actionFrom = reportNumber(action.from);
+  const actionTo = reportNumber(action.to);
+  const ownSuggestion = !!suggestion && actionFrom === suggestion.from && actionTo === suggestion.to;
+  // An entry opened THIS day is the row's own suggestion listed on the card, never a restatement.
+  const restatedOpen = !!primary && actionFrom !== null && actionTo !== null && open.some(item => item.knob === knob && item.openSinceDay < day && item.to === actionTo);
+  if (kind === 'suggest' && !ownSuggestion && !restatedOpen) {
+    const failing = primary?.gates.find(gate => !gate.sufficient) ?? null;
+    sentence = failing
+      ? `NO SUGGESTION TODAY. The document's suggestion${knob ? ` for ${knob}` : ''} arrived under an insufficient gate (${failing.id} ${failing.n}/${failing.minN}) and was dropped by the desk. Nothing is applied by this report.`
+      : `NO SUGGESTION TODAY. The document named ${knob ?? 'no knob'} but that row carries no admissible suggestion and no earlier open suggestion restates it — dropped by the desk. Nothing is applied by this report.`;
+    // The same-day open entry for the dropped knob is that row's suggestion and goes with it (the proxy's rule too).
+    open = open.filter(item => !(item.knob === knob && item.openSinceDay === day));
+    kind = 'none';
+    knob = null;
+  }
+  const decision: BetaReportDecision = {
+    kind,
+    knob,
+    sentence,
+    appliedByReport: false,
+    productionPays: paysKnob ? { knob: paysKnob, value: paysN >= REPORT_MIN_OBSERVED ? reportNumber(pays.value) : null, n: paysN, basis: text(pays.basis, 120) } : null,
+    // A kept card always has both numbers: on the opening day they equal the row's suggestion, and when
+    // restated they are the opening values (`declaredValue` has already moved once adopted in source).
+    action: kind === 'suggest' && actionFrom !== null && actionTo !== null
+      ? { where: text(action.where, 300), from: actionFrom, to: actionTo, unit: text(action.unit, 12) || null, deploy: textList(action.deploy, REPORT_BOUNDS.deploy, 120) }
+      : null,
+    deferred: list(decisionRaw.deferred, item => {
+      const row = record(item);
+      const id = knobId(row.knob);
+      const to = reportNumber(row.to);
+      const held = id ? verdicts.find(verdict => verdict.knob === id) : null;
+      return id && to !== null && held?.verdict === 'hold' && held.reason === 'deferred' ? { knob: id, to, ruleId: text(row.ruleId, 16) } : null;
+    }, REPORT_BOUNDS.deferred),
+    open,
+    counts,
+    ownerQuestion: text(decisionRaw.ownerQuestion, 300) || null,
+  };
+
+  const headline = record(doc.headline);
+  const switchAtRun = record(headline.switchAtRun);
+  const worst = record(headline.worstAnchor);
+  const coverage = record(headline.coverage);
+  const registered = coverage.registeredPosts && typeof coverage.registeredPosts === 'object' ? record(coverage.registeredPosts) : null;
+  const cost = record(headline.cost);
+  const policy = record(doc.policy);
+  const source = record(policy.source);
+  const production = record(policy.production);
+  const observedPolicy = production.observedPolicy && typeof production.observedPolicy === 'object' ? record(production.observedPolicy) : null;
+  const dayObservedPolicy = record(production.dayObservedPolicy);
+  const spanned = record(production.observedPolicySpanned);
+  const decay = record(policy.decay);
+  const seenOnDay = record(decay.seenOnDay);
+  const byMode = record(seenOnDay.byMode);
+  const simulation = record(policy.simulation);
+  const knobs = knobNumbers(source.knobs);
+  const knobChangedDays: Record<string, string | null> = {};
+  for (const [key, changed] of Object.entries(record(source.knobChangedDays)).slice(0, 32)) {
+    const name = text(key, 40);
+    if (name) knobChangedDays[name] = dayKeyOrNull(changed);
+  }
+  const previousRaw = doc.previous && typeof doc.previous === 'object' ? record(doc.previous) : null;
+  const previous: BetaReportPrevious | null = previousRaw && dayKeyOrNull(previousRaw.day) ? {
+    day: dayKeyOrNull(previousRaw.day) as string,
+    runId: text(previousRaw.runId, 80),
+    revision: integer(previousRaw.revision, 1_000_000) || 1,
+    productionEpoch: text(previousRaw.productionEpoch, 16),
+    sameEpoch: previousRaw.sameEpoch === true,
+    gap: previousRaw.gap === true,
+    changed: list(previousRaw.changed, item => {
+      const row = record(item);
+      const id = text(row.id, 64);
+      return id ? { id, from: reportNumber(row.from), to: reportNumber(row.to), delta: reportNumber(row.delta), gateFlip: row.gateFlip === 'gained' || row.gateFlip === 'lost' ? row.gateFlip : null } : null;
+    }, REPORT_BOUNDS.changed),
+    verdictChanges: list(previousRaw.verdictChanges, item => {
+      const row = record(item);
+      const id = knobId(row.knob);
+      const from = verdictSummary(row.from);
+      const to = verdictSummary(row.to);
+      return id && from && to ? { knob: id, from, to } : null;
+    }, REPORT_BOUNDS.verdictChanges),
+  } : null;
+  const unavailable = text(doc.previousUnavailable, 16);
+  const supersedes = doc.supersedes && typeof doc.supersedes === 'object' ? record(doc.supersedes) : null;
+
+  // Evidence (§1.7): raw day rows for the CSV, typed rows for rendering.
+  const dayRaw = rawRecord(raw.day);
+  const windowsRaw = record(raw.windows);
+  const windows = {} as Record<BetaReportWindowName, BetaReportWindow | null>;
+  const windowsKept: Partial<Record<BetaReportWindowName, Record<string, unknown>>> = {};
+  for (const name of WINDOW_NAMES) {
+    const block = windowsRaw[name];
+    windows[name] = block && typeof block === 'object' ? reportWindow(block) : null;
+    if (block && typeof block === 'object') windowsKept[name] = rawRecord(block);
+  }
+  const daysRaw = (Array.isArray(raw.days) ? raw.days : [])
+    .map(row => rawRecord(row))
+    .filter(row => dayKeyOrNull(row.day) !== null)
+    .sort((left, right) => String(left.day).localeCompare(String(right.day)))
+    .slice(-REPORT_BOUNDS.days);
+  const metrics: Record<string, BetaReportMetric> = {};
+  for (const entry of Object.values(record(raw.metrics)).slice(0, REPORT_BOUNDS.metrics)) {
+    const row = reportMetric(entry);
+    if (row) metrics[row.id] = row;
+  }
+  const columns = record(doc.csvColumns);
+
+  return {
+    version: REPORT_SCHEMA_VERSION,
+    digestSchema: integer(doc.digestSchema, 1_000),
+    day,
+    timeZone: text(doc.timeZone, 64) || 'America/Toronto',
+    dayStartMillis: timeMs(doc.dayStartMillis),
+    dayEndMillis: timeMs(doc.dayEndMillis),
+    runId: text(doc.runId, 80),
+    digestVersion: integer(doc.digestVersion, 1_000_000_000),
+    generatedAtMillis: timeMs(doc.generatedAtMillis),
+    revision: integer(doc.revision, 1_000_000) || 1,
+    supersedes: supersedes ? { runId: text(supersedes.runId, 80), generatedAtMillis: timeMs(supersedes.generatedAtMillis), entriesOnDay: integer(supersedes.entriesOnDay, 10_000_000) } : null,
+    partial: doc.partial === true,
+    backfilled: doc.backfilled === true,
+    catchUp: doc.catchUp === true,
+    snapshotsAsOfMillis: nullableTime(doc.snapshotsAsOfMillis),
+    productionEpoch: text(doc.productionEpoch, 16),
+    sourcePolicyVersion: text(doc.sourcePolicyVersion, 16),
+    knobsHash: text(doc.knobsHash, 16),
+    ruleSetVersion: text(doc.ruleSetVersion, 16),
+    trialOnDay: doc.trialOnDay === true,
+    trialMultiplierOnDay: nullable(doc.trialMultiplierOnDay, 100),
+    primarySuggestion: decision.kind === 'suggest' ? decision.knob : null,
+    verdictCounts: counts,
+    bytes: integer(doc.bytes, 100_000_000),
+    firstLine: text(doc.firstLine, 600),
+    headline: {
+      trialOnDay: headline.trialOnDay === true,
+      trialMultiplierOnDay: nullable(headline.trialMultiplierOnDay, 100),
+      switchAtRun: { enabled: switchAtRun.enabled === true, multiplier: nullable(switchAtRun.multiplier, 100) },
+      trialSinceMillis: nullableTime(headline.trialSinceMillis),
+      boostedSinceMillis: nullableTime(headline.boostedSinceMillis),
+      trialSeenOnDay: nullable(headline.trialSeenOnDay, 100),
+      trialClassOnDay: trialClassOf(headline.trialClassOnDay),
+      trialShareD30: nullable(headline.trialShareD30, 1),
+      anchorsAtWorld: integer(headline.anchorsAtWorld),
+      anchorsEver: integer(headline.anchorsEver),
+      worstAnchor: text(worst.postId, 120) ? { postId: text(worst.postId, 120), radiusMeters: meters(worst.radiusMeters), ratePerPassSeen: fraction(worst.ratePerPassSeen) } : null,
+      coverage: {
+        complete: coverage.complete === true,
+        postsBehindHorizon: integer(coverage.postsBehindHorizon),
+        evicted: integer(coverage.evicted),
+        entriesFoldedOnDay: integer(coverage.entriesFoldedOnDay, 10_000_000),
+        registeredPosts: registered ? { real: integer(registered.real), owner: integer(registered.owner), review: integer(registered.review), official: integer(registered.official) } : null,
+        nonLivePollLagRuns: integer(coverage.nonLivePollLagRuns, 1_000),
+        kindSplitSinceMillis: nullable(coverage.kindSplitSinceMillis, Number.MAX_SAFE_INTEGER),
+        trimmed: coverage.trimmed === true,
+      },
+      cost: { readsOnDay: nullableInteger(cost.readsOnDay), runsOnDay: nullableInteger(cost.runsOnDay, 100_000), cadOnDay: nullable(cost.cadOnDay, 1_000_000), monthlyCadProjected: nullable(cost.monthlyCadProjected, 1_000_000) },
+    },
+    decision,
+    policy: {
+      reportSchemaVersion: integer(policy.reportSchemaVersion, 1_000),
+      digestSchema: integer(policy.digestSchema, 1_000),
+      ruleSetVersion: text(policy.ruleSetVersion, 16),
+      digestVersion: integer(policy.digestVersion, 1_000_000_000),
+      runId: text(policy.runId, 80),
+      source: {
+        knobs,
+        knobsHash: text(source.knobsHash, 16),
+        sourcePolicyVersion: text(source.sourcePolicyVersion, 16),
+        sourceSignature: signatureOf(source.sourceSignature),
+        policySha256: text(source.policySha256, 64),
+        identitySha256: text(source.identitySha256, 64),
+        syncedAtMillis: timeMs(source.syncedAtMillis),
+        knobsStale: source.knobsStale === true,
+        knobChangedDays,
+        lastSyncDay: dayKeyOrNull(source.lastSyncDay) ?? '',
+        lastSyncNote: text(source.lastSyncNote, 120),
+      },
+      production: {
+        observedPolicy: observedPolicy ? { version: text(observedPolicy.version, 16), since: timeMs(observedPolicy.since), complete: typeof observedPolicy.complete === 'boolean' ? observedPolicy.complete : null } : null,
+        dayObservedPolicy: { version: text(dayObservedPolicy.version, 16) || null, earned: dayObservedPolicy.earned === true },
+        dayObservedSignature: { ...signatureOf(production.dayObservedSignature), n: integer(record(production.dayObservedSignature).n, 10_000_000) },
+        rolling7dSignature: signatureOf(production.rolling7dSignature),
+        observedPolicySpanned: {
+          d7: textList(spanned.d7, DIGEST_BOUNDS.policyVersions, 16),
+          d30: textList(spanned.d30, DIGEST_BOUNDS.policyVersions, 16),
+          after: Array.isArray(spanned.after) ? textList(spanned.after, DIGEST_BOUNDS.policyVersions, 16) : null,
+          note: text(spanned.note, 200),
+        },
+        sourceMatchesObserved: production.sourceMatchesObserved === true ? true : production.sourceMatchesObserved === false ? false : null,
+      },
+      decay: {
+        switch: decayTrialSwitch(decay.switch),
+        dueDecayEnabled: decay.dueDecayEnabled === true,
+        seenOnDay: {
+          trialMultiplierSeen: nullable(seenOnDay.trialMultiplierSeen, 100),
+          byMode: { normal: meters(byMode.normal), trial: meters(byMode.trial), stress: meters(byMode.stress), undetermined: meters(byMode.undetermined) },
+          trialClass: trialClassOf(seenOnDay.trialClass),
+        },
+        declaredRatePerDay: fraction(decay.declaredRatePerDay),
+        observedRatePerDay: null,
+        observedRateNote: text(decay.observedRateNote, 200),
+      },
+      simulation: {
+        simulationEnabled: simulation.simulationEnabled === true,
+        runnerEnabled: simulation.runnerEnabled === true,
+        dailySimulationEnabled: simulation.dailySimulationEnabled === true,
+        // Never the uid itself, whatever the document carries (decision 8).
+        simulationOwnerUid: typeof simulation.simulationOwnerUid === 'string' && simulation.simulationOwnerUid && simulation.simulationOwnerUid !== 'unset' ? 'set' : 'unset',
+      },
+      productionEpoch: text(policy.productionEpoch, 16),
+    },
+    verdicts,
+    checks: list(doc.checks, reportCheck, REPORT_BOUNDS.checks),
+    previous,
+    previousUnavailable: unavailable === 'amendment' || unavailable === 'reset' || unavailable === 'first-report' ? unavailable : null,
+    epochs: list(doc.epochs, reportEpoch, REPORT_BOUNDS.epochs),
+    csvColumns: {
+      verdicts: columnList(columns.verdicts),
+      metrics: columnList(columns.metrics),
+      days: columnList(columns.days),
+      posts: columnList(columns.posts),
+      identityPrefix: columnList(columns.identityPrefix),
+    },
+    evidence: {
+      day: dayRaw,
+      dayTyped: typedDay(dayRaw, day),
+      windows,
+      windowsRaw: windowsKept,
+      daysRaw,
+      days: daysRaw.map(row => typedDay(row, day)),
+      observedOnDay: observedBlock(raw.observedOnDay),
+      observed7d: observedBlock(raw.observed7d),
+      posts: list(raw.posts, reportPost, REPORT_BOUNDS.posts),
+      channels: list(raw.channels, reportChannel, REPORT_BOUNDS.channels),
+      snapshots: reportSnapshots(raw.snapshots, knobs.decayPerDay),
+      metrics,
+    },
+  };
+};
+
+const reportIndexRow = (value: unknown): BetaReportIndexRow | null => {
+  const row = record(value);
+  const day = dayKeyOrNull(row.day);
+  if (!day) return null;
+  const counts = record(row.counts);
+  return {
+    day,
+    generatedAtMillis: timeMs(row.generatedAtMillis),
+    digestVersion: integer(row.digestVersion, 1_000_000_000),
+    revision: integer(row.revision, 1_000_000) || 1,
+    partial: row.partial === true,
+    backfilled: row.backfilled === true,
+    catchUp: row.catchUp === true,
+    trialOn: row.trialOn === true,
+    trialMultiplier: nullable(row.trialMultiplier, 100),
+    decision: row.decision === 'suggest' || row.decision === 'verify' ? row.decision : 'none',
+    knob: row.decision === 'suggest' ? knobId(row.knob) : null,
+    to: row.decision === 'suggest' ? reportNumber(row.to) : null,
+    counts: { suggest: integer(counts.suggest, 100), verify: integer(counts.verify, 100), hold: integer(counts.hold, 100), insufficient: integer(counts.insufficient, 100), fixed: integer(counts.fixed, 100) },
+    productionEpoch: text(row.productionEpoch, 16),
+    sourcePolicyVersion: text(row.sourcePolicyVersion, 16),
+    bytes: integer(row.bytes, 100_000_000),
+    staleData: row.staleData === true,
+  };
+};
+
+/** The index document `testControl/algorithmReports` (§1.8) or the frame's
+ *  copy of it: rows typed, deduplicated by day, newest first, ≤ 120. */
+export const reportIndex = (value: unknown): BetaReportIndex | null => {
+  if (!value || typeof value !== 'object') return null;
+  const index = record(value);
+  const seen = new Set<string>();
+  const days = list(index.days, reportIndexRow, 10_000)
+    .filter(row => !seen.has(row.day) && seen.add(row.day))
+    .sort((left, right) => right.day.localeCompare(left.day))
+    .slice(0, REPORT_BOUNDS.indexRows);
+  return {
+    version: integer(index.version, 1_000),
+    lastReportedDay: dayKeyOrNull(index.lastReportedDay) ?? days[0]?.day ?? null,
+    updatedAtMillis: timeMs(index.updatedAtMillis),
+    runId: text(index.runId, 80),
+    days,
   };
 };
 
@@ -1501,6 +2648,7 @@ const dashboard = (value: unknown): BetaDashboard => {
     generatedAtMs: timeMs(result.generatedAtMs) || Date.now(),
     algorithm,
     algorithmRefusal: algorithm ? null : algorithmDigestRefusal(result.algorithm),
+    reports: result.reports ? reportIndex(result.reports) : null,
     daily: dailySeries(result.daily),
     testers: Array.isArray(result.testers)
       ? result.testers.map(testerRow).filter((row): row is BetaTesterRow => row !== null).slice(0, 1000)
@@ -1612,10 +2760,17 @@ export const LEDGER_EXPORT_POST_LIMIT = 50;
 const LEDGER_EXPORT_UNKNOWN_POST_READS = 501;
 const FIRESTORE_CAD_PER_READ = 0.05 / 100_000;
 
-const csvCell = (value: unknown): string => {
+/** RFC 4180 quoting with the proxy's formula guard (scripts/algorithm-digest-policy.mjs
+ *  `csvCell`): a text cell a spreadsheet would read as a formula — leading
+ *  `= + @ TAB CR`, or a `-` that does not start a number — gets a leading
+ *  apostrophe. Numbers and booleans are emitted bare (`true`/`false`). */
+export const csvCell = (value: unknown): string => {
   if (value === null || value === undefined) return '';
-  const raw = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return /[",\r\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  let cell = typeof value === 'string' ? value : JSON.stringify(value) ?? '';
+  if (/^[=+@\t\r]/.test(cell) || (/^-/.test(cell) && !/^-?\d/.test(cell))) cell = `'${cell}`;
+  return /[",\r\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
 };
 
 /** Nested digest rows flatten to dotted columns so a spreadsheet keeps every
@@ -1718,6 +2873,465 @@ export async function readLedgerExport(postIds: string[]): Promise<{ filename: s
   saveBlob(blob, filename);
   return { filename, bytes: blob.size };
 }
+
+// ── Daily algorithm reports: readers (§5.1–§5.2) ────────────────────────────
+
+const OWNER_REPORTS = 'http://127.0.0.1:8096/api/reports';
+
+/** The proxy's 429: a report body costs 1 read through the same 25k/day ledger budget as the export. */
+export class ReportReadRefused extends Error {
+  readonly remaining: number;
+  constructor(remaining: number) {
+    super(`The proxy refused the report: only ${remaining.toLocaleString()} reads are left in today's budget.`);
+    this.remaining = remaining;
+  }
+}
+
+export type ReportRead = {
+  report: BetaAlgorithmReport | null;
+  refusal: BetaReportRefusal | null;
+  /** From `x-poplur-ledger-reads`: 0 when the proxy served its cache. */
+  reads: number;
+};
+
+const unwrapResult = (body: unknown): unknown => {
+  const wrapped = record(body);
+  return wrapped.result && typeof wrapped.result === 'object' ? wrapped.result : body;
+};
+
+/** One report body by day: GET through `fetch` (which sends the Origin header
+ *  the proxy's lock requires). 404 → null; 429 → `ReportReadRefused`. 1 read
+ *  the first time a `day@revision` is opened, 0 thereafter (proxy cache). */
+export async function readReport(day: string): Promise<ReportRead | null> {
+  if (!DAY_PATTERN.test(day)) throw new Error('A report day is YYYY-MM-DD.');
+  const response = await fetch(`${OWNER_REPORTS}/${day}`, { headers: { accept: 'application/json' } });
+  if (response.status === 404) return null;
+  if (response.status === 429) {
+    const body = record(await response.json().catch(() => ({})));
+    throw new ReportReadRefused(integer(body.remaining, LEDGER_EXPORT_DAY_READS));
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as CallableBody<unknown>;
+    throw new Error(body.error?.message || 'The report is unavailable.');
+  }
+  const raw = unwrapResult(await response.json());
+  const report = algorithmReport(raw);
+  return { report, refusal: report ? null : algorithmReportRefusal(raw), reads: integer(response.headers.get('x-poplur-ledger-reads') ?? 0, 1_000) };
+}
+
+/** The index the proxy watches (0 reads once its watcher has delivered). */
+export async function readReportIndex(): Promise<BetaReportIndex | null> {
+  const response = await fetch(OWNER_REPORTS, { headers: { accept: 'application/json' } });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as CallableBody<unknown>;
+    throw new Error(body.error?.message || 'The report index is unavailable.');
+  }
+  return reportIndex(unwrapResult(await response.json()));
+}
+
+export type ReportRangeEstimate = { reports: number; reads: number; cad: number; leftToday: number };
+
+/** `EXPORT RANGE · metrics`: each listed day not already in the route cache is one read (§4.2). */
+export const estimateReportRange = (days: string[], cachedDays: Iterable<string>): ReportRangeEstimate => {
+  const cached = new Set(cachedDays);
+  const wanted = Array.from(new Set(days.filter(day => DAY_PATTERN.test(day))));
+  const reads = wanted.filter(day => !cached.has(day)).length;
+  return { reports: wanted.length, reads, cad: reads * FIRESTORE_CAD_PER_READ, leftToday: Math.max(0, LEDGER_EXPORT_DAY_READS - reads) };
+};
+
+// ── Daily algorithm reports: pure page helpers (§3.1, §3.3, §3.5) ───────────
+
+export const REPORT_TIME_ZONE = 'America/Toronto';
+/** The report for D lands at 00:45 Toronto of D+1 at the scheduler's phase (§2.1). */
+export const REPORT_EXPECTED_AT = '00:45';
+/** From this Toronto hour on, a missing report for yesterday is an alarm (decision 21). */
+export const REPORT_STALE_AFTER_HOUR = 2;
+const KNOB_SHORT: Record<BetaReportKnobId, string> = {
+  K1: 'first view', K2: 'like', K3: 'comment', K4: 'dislike', K5: 'repeat base', K6: 'repeat interval', K7: 'decay', K8: 'dust floor', K9: 'seed floor',
+  K10: 'claim ceiling', K11: 'slider step', K12: 'boost default', K13: 'world ceiling', K14: 'trial switch', K15: 'stress t½', K16: 'feed weights', K17: 'sim shape',
+};
+
+/** `Sep 12` from a `YYYY-MM-DD` key, zone-free (the key already is the Toronto day). */
+export const reportDayLabel = (day: string): string => {
+  const [, month, date] = day.split('-').map(Number);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return month >= 1 && month <= 12 && date >= 1 ? `${months[month - 1]} ${date}` : day;
+};
+
+/** A knob value as the memo prints it: metres with a thousands separator, the decay rate per day. */
+export const reportKnobValue = (knob: BetaReportKnobId | null, value: number | null): string => {
+  if (value === null) return '—';
+  if (knob === 'K7') return `${value} /day`;
+  return `${value.toLocaleString('en-CA')} m`;
+};
+
+const dayPlus = (day: string, days: number): string => {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days, 12)).toISOString().slice(0, 10);
+};
+
+/** The zone's day key and hour for an instant (`en-CA` prints `YYYY-MM-DD`). */
+const zonedParts = (now: number, timeZone: string): { day: string; hour: number } => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now));
+    const part = (type: string) => parts.find(item => item.type === type)?.value ?? '';
+    const day = `${part('year')}-${part('month')}-${part('day')}`;
+    return { day: DAY_PATTERN.test(day) ? day : new Date(now).toISOString().slice(0, 10), hour: Number(part('hour')) || 0 };
+  } catch {
+    const date = new Date(now);
+    return { day: date.toISOString().slice(0, 10), hour: date.getUTCHours() };
+  }
+};
+
+/** The chips no reader may miss (decision 20), identical in list, document, PDF and CSV. */
+export const reportChips = (row: { revision: number; partial: boolean; backfilled: boolean; catchUp: boolean; trialOn: boolean; trialMultiplier: number | null; staleData?: boolean }): string[] => {
+  const chips: string[] = [];
+  if (row.trialOn) chips.push(`TRIAL ×${row.trialMultiplier ?? '?'}`);
+  if (row.revision > 1) chips.push(`REV ${row.revision}`);
+  if (row.backfilled) chips.push('BACKFILL');
+  if (row.catchUp) chips.push('CATCH-UP');
+  if (row.partial) chips.push('PARTIAL');
+  if (row.staleData) chips.push('STALE DATA');
+  return chips;
+};
+
+export const reportChipsOf = (report: BetaAlgorithmReport): string[] => reportChips({
+  revision: report.revision, partial: report.partial, backfilled: report.backfilled, catchUp: report.catchUp, trialOn: report.trialOnDay, trialMultiplier: report.trialMultiplierOnDay,
+});
+
+export type ReportsStatus = { text: string; caption: string; tone: 'live' | 'warn' | 'off' };
+
+/**
+ * The Reports tab's status in the `labStatus` shape (§3.1): the newest row's
+ * day and its decision in the verb form (`suggests …`, never an imperative,
+ * never "applied"), the trial chip while it ran, and the operational alarm
+ * `stale — expected 00:45` when the newest day is behind what the hourly
+ * digest should have written by now (yesterday from 02:00 Toronto on; the
+ * day before that earlier in the night, when yesterday's is not yet due).
+ */
+export const reportsStatus = (index: BetaReportIndex | null, now = Date.now(), timeZone = REPORT_TIME_ZONE): ReportsStatus => {
+  const newest = index?.days[0] ?? null;
+  if (!newest) return { text: 'no reports yet · written by the hourly digest at the first complete run after Toronto midnight', caption: 'none yet', tone: 'off' };
+  const { day: today, hour } = zonedParts(now, timeZone);
+  const expected = dayPlus(today, hour >= REPORT_STALE_AFTER_HOUR ? -1 : -2);
+  const stale = newest.day < expected;
+  const label = reportDayLabel(newest.day);
+  const head = newest.decision === 'verify' ? { text: 'VERIFY drift', tone: 'warn' as const }
+    : newest.decision === 'suggest' && newest.knob ? { text: `suggests ${newest.knob} ${KNOB_SHORT[newest.knob]} → ${reportKnobValue(newest.knob, newest.to)}`, tone: 'warn' as const }
+      : newest.trialOn ? { text: `TRIAL ×${newest.trialMultiplier ?? '?'}`, tone: 'warn' as const }
+        : { text: 'no suggestion', tone: 'off' as const };
+  const chips = reportChips(newest).filter(chip => !chip.startsWith('TRIAL'));
+  const detail = [`${newest.counts.insufficient} insufficient`, `${newest.counts.fixed} fixed`, ...chips];
+  const alarm = `stale — expected ${REPORT_EXPECTED_AT}`;
+  return {
+    text: `${label} · ${head.text} · ${detail.join(' · ')}${stale ? ` · ${alarm} (newest ${newest.day})` : ''}`,
+    caption: stale ? alarm : `${label} · ${head.text}`,
+    tone: stale ? 'warn' : head.tone,
+  };
+};
+
+export type BetaReportStamp = {
+  day: string; revision: number; digestVersion: number; generatedAtMillis: number; productionEpoch: string; sourcePolicyVersion: string;
+  knobsHash: string; ruleSetVersion: string; trialOnDay: boolean; trialMultiplierOnDay: number | null; chips: string[];
+};
+export type BetaReportMetricCompare = {
+  id: string; unit: string; window: string; population: string;
+  a: BetaReportMetric | null; b: BetaReportMetric | null;
+  /** b − a, null when either side is null (the page never invents a number). */
+  delta: number | null;
+  /** A gate flip renders as its own chip so a number appearing is never read as a number moving. */
+  gateFlip: 'gained' | 'lost' | null;
+  presence: 'both' | 'a' | 'b';
+};
+export type BetaReportVerdictCompare = { knob: BetaReportKnobId; name: string; a: (BetaReportVerdictSummary & { reasonText: string }) | null; b: (BetaReportVerdictSummary & { reasonText: string }) | null; changed: boolean };
+export type BetaReportComparison = {
+  /** Two schemas cannot be compared: the `algorithmDigestRefusal` grammar. */
+  refusal: { reason: 'unsupported-version'; version: number | null; digestVersion: number | null } | null;
+  a: BetaReportStamp; b: BetaReportStamp;
+  /** The stamp fields that differ — non-empty means "a difference is a change of policy, not of behaviour; compare epochs, not days". */
+  policyChanged: ('productionEpoch' | 'knobsHash' | 'ruleSetVersion')[];
+  verdicts: BetaReportVerdictCompare[];
+  metrics: BetaReportMetricCompare[];
+};
+
+const reportStamp = (report: BetaAlgorithmReport): BetaReportStamp => ({
+  day: report.day, revision: report.revision, digestVersion: report.digestVersion, generatedAtMillis: report.generatedAtMillis, productionEpoch: report.productionEpoch,
+  sourcePolicyVersion: report.sourcePolicyVersion, knobsHash: report.knobsHash, ruleSetVersion: report.ruleSetVersion, trialOnDay: report.trialOnDay,
+  trialMultiplierOnDay: report.trialMultiplierOnDay, chips: reportChipsOf(report),
+});
+const verdictTo = (row: BetaReportVerdict): number | null => row.suggestion?.to ?? row.deferred?.to ?? null;
+
+/** Two reports side by side (§3.5): the same metric ids with deltas and gate
+ *  flips, the verdict table per knob, and the policy stamp differences.
+ *  Pure and client-side; both inputs are already normalised. */
+export const compareReports = (a: BetaAlgorithmReport, b: BetaAlgorithmReport): BetaReportComparison => {
+  const stamps = { a: reportStamp(a), b: reportStamp(b) };
+  if (a.version !== b.version || a.digestSchema !== b.digestSchema) {
+    return { refusal: { reason: 'unsupported-version', version: b.version, digestVersion: b.digestSchema }, ...stamps, policyChanged: [], verdicts: [], metrics: [] };
+  }
+  const policyChanged = (['productionEpoch', 'knobsHash', 'ruleSetVersion'] as const).filter(key => a[key] !== b[key]);
+  const summary = (row: BetaReportVerdict | undefined) => row ? { verdict: row.verdict, reason: row.reason, to: verdictTo(row), reasonText: row.reasonText } : null;
+  const knobs = [...a.verdicts.map(row => row.knob), ...b.verdicts.map(row => row.knob)].filter((knob, index, all) => all.indexOf(knob) === index);
+  const verdicts = knobs.map(knob => {
+    const left = a.verdicts.find(row => row.knob === knob);
+    const right = b.verdicts.find(row => row.knob === knob);
+    const av = summary(left);
+    const bv = summary(right);
+    return { knob, name: right?.name ?? left?.name ?? '', a: av, b: bv, changed: !av || !bv || av.verdict !== bv.verdict || av.reason !== bv.reason || av.to !== bv.to };
+  });
+  const ids = [...Object.keys(a.evidence.metrics), ...Object.keys(b.evidence.metrics)].filter((id, index, all) => all.indexOf(id) === index);
+  const metrics = ids.map((id): BetaReportMetricCompare => {
+    const left = a.evidence.metrics[id] ?? null;
+    const right = b.evidence.metrics[id] ?? null;
+    const both = !!left && !!right;
+    const flipped = both && left.gate && right.gate && left.gate.sufficient !== right.gate.sufficient;
+    return {
+      id,
+      unit: right?.unit ?? left?.unit ?? '',
+      window: right?.window ?? left?.window ?? '',
+      population: right?.population ?? left?.population ?? '',
+      a: left,
+      b: right,
+      delta: left?.value != null && right?.value != null ? Math.round((right.value - left.value) * 10_000) / 10_000 : null,
+      gateFlip: flipped ? (right.gate?.sufficient ? 'gained' : 'lost') : null,
+      presence: both ? 'both' : left ? 'a' : 'b',
+    };
+  });
+  return { refusal: null, ...stamps, policyChanged, verdicts, metrics };
+};
+
+// ── Daily algorithm reports: fixed-column CSVs, client-side, 0 reads (§4.2) ─
+
+/** The identity prefix every report CSV row begins with (the generator's `CSV_IDENTITY_PREFIX`). */
+export const REPORT_CSV_IDENTITY_PREFIX: readonly string[] = Object.freeze([
+  'reportDay', 'reportRunId', 'reportRevision', 'reportSchemaVersion', 'productionEpoch', 'sourcePolicyVersion', 'knobsHash', 'ruleSetVersion',
+  'trialOnDay', 'trialMultiplierOnDay', 'trialSeenOnDay', 'sourceMatchesObserved', 'partial', 'backfilled', 'catchUp', 'coverageComplete', 'appliedByReport',
+  'productionPaysKnob', 'productionPaysValue', 'firstLine',
+]);
+/** The generator's column lists, used only when a document ships none (the document's copy wins). */
+const REPORT_VERDICTS_CSV_COLUMNS: readonly string[] = Object.freeze([
+  'knob', 'name', 'tunable', 'declaredValue', 'unit', 'seenValue', 'seenN', 'seenBasis', 'productionPays', 'verdict', 'reason', 'reasonText', 'ruleId', 'direction',
+  'from', 'to', 'step', 'arithmetic', 'gateIds', 'gateN', 'gateMinN', 'gateSufficient', 'evidenceIds', 'respects', 'where', 'deploy', 'previousVerdict', 'previousTo',
+  'outcome', 'openSinceDay', 'withdrawnDay', 'frozenUntilDay',
+]);
+const REPORT_METRICS_CSV_COLUMNS: readonly string[] = Object.freeze([
+  'id', 'window', 'population', 'unit', 'value', 'n', 'numerator', 'denominator', 'gate.n', 'gate.minN', 'gate.sufficient', 'gate.basis', 'previous.from', 'previous.delta', 'previous.gateFlip',
+]);
+const REPORT_POSTS_CSV_COLUMNS: readonly string[] = Object.freeze([
+  'postId', 'cls', 'ownerClass', 'channelId', 'createdAtMillis', 'seedMeters', 'currentMeters', 'organicMeters', 'boostMeters', 'peakMeters', 'peakAtMillis', 'entries',
+  'realGain', 'ownerGain', 'reviewGain', 'syntheticGain', 'unknownGain', 'decayLoss', 'decayLossRealShare', 'decayModeSeen', 'clean', 'viewCount', 'firstRealEngagementAtMillis',
+  'lastAtMillis', 'lastCause', 'atClaim', 'expired', 'deletedAtMillis', 'day', 'gr', 'go', 'gv', 'gs', 'gu', 'dl', 'dlr', 'vc', 'realGainD30', 'rkView', 'rkLike', 'rkComment',
+  'rkDislike', 'lastRealAtMillis', 'ageBucketAtD',
+]);
+const WINDOW_ONLY_COLUMNS = ['netReal.', 'netOwner.', 'viewWorth.', 'spanned', 'observedPolicySpanned', 'days'];
+
+/** Exactly `columns`, in order, whatever the rows carry: no dynamic column
+ *  discovery, so column order never depends on which report is exported first. */
+export const csvFixed = (columns: readonly string[], rows: Record<string, unknown>[]): string => [
+  columns.map(csvCell).join(','),
+  ...rows.map(row => columns.map(column => csvCell(row[column])).join(',')),
+].join('\r\n');
+
+/** Dotted cells for a raw block: nested numbers become plain columns, arrays join with `|` (objects inside as JSON). */
+const flattenCells = (value: unknown, prefix = '', into: Record<string, unknown> = {}): Record<string, unknown> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) flattenCells(child, prefix ? `${prefix}.${key}` : key, into);
+  } else if (Array.isArray(value)) {
+    into[prefix] = value.map(item => (item && typeof item === 'object' ? JSON.stringify(item) : String(item))).join('|');
+  } else {
+    into[prefix] = value;
+  }
+  return into;
+};
+const joined = (values: unknown[]): string => values.map(item => (item === null || item === undefined ? '' : String(item))).join('|');
+
+/** The identity cells of one report — `appliedByReport` is the literal false. */
+export const reportIdentity = (report: BetaAlgorithmReport): Record<string, unknown> => ({
+  reportDay: report.day,
+  reportRunId: report.runId,
+  reportRevision: report.revision,
+  reportSchemaVersion: report.version,
+  productionEpoch: report.productionEpoch,
+  sourcePolicyVersion: report.sourcePolicyVersion,
+  knobsHash: report.knobsHash,
+  ruleSetVersion: report.ruleSetVersion,
+  trialOnDay: report.trialOnDay,
+  trialMultiplierOnDay: report.trialMultiplierOnDay,
+  trialSeenOnDay: report.headline.trialSeenOnDay,
+  sourceMatchesObserved: report.policy.production.sourceMatchesObserved,
+  partial: report.partial,
+  backfilled: report.backfilled,
+  catchUp: report.catchUp,
+  coverageComplete: report.headline.coverage.complete,
+  appliedByReport: false,
+  productionPaysKnob: report.decision.productionPays?.knob ?? null,
+  productionPaysValue: report.decision.productionPays?.value ?? null,
+  firstLine: report.firstLine,
+});
+const identityColumns = (report: BetaAlgorithmReport): string[] => report.csvColumns.identityPrefix.length ? report.csvColumns.identityPrefix : [...REPORT_CSV_IDENTITY_PREFIX];
+const tableColumns = (report: BetaAlgorithmReport, table: 'verdicts' | 'metrics' | 'posts'): string[] => {
+  const shipped = report.csvColumns[table];
+  if (shipped.length) return shipped;
+  return [...(table === 'verdicts' ? REPORT_VERDICTS_CSV_COLUMNS : table === 'metrics' ? REPORT_METRICS_CSV_COLUMNS : REPORT_POSTS_CSV_COLUMNS)];
+};
+const withIdentity = (report: BetaAlgorithmReport, columns: string[]): string[] => [...identityColumns(report), ...columns];
+
+const verdictCells = (row: BetaReportVerdict): Record<string, unknown> => ({
+  knob: row.knob,
+  name: row.name,
+  tunable: row.tunable,
+  declaredValue: row.declaredValue,
+  unit: row.unit,
+  seenValue: row.seenValue,
+  seenN: row.seenN,
+  seenBasis: row.seenBasis,
+  productionPays: row.productionPays,
+  verdict: row.verdict,
+  reason: row.reason,
+  reasonText: row.reasonText,
+  ruleId: row.suggestion?.ruleId ?? row.deferred?.ruleId ?? row.rule?.id ?? null,
+  direction: row.suggestion?.direction ?? null,
+  from: row.suggestion?.from ?? null,
+  to: verdictTo(row),
+  step: row.suggestion?.step ?? null,
+  arithmetic: row.arithmetic,
+  gateIds: joined(row.gates.map(gate => gate.id)),
+  gateN: joined(row.gates.map(gate => gate.n)),
+  gateMinN: joined(row.gates.map(gate => gate.minN)),
+  gateSufficient: joined(row.gates.map(gate => gate.sufficient)),
+  evidenceIds: joined(row.evidence.map(cell => cell.id)),
+  respects: joined(row.suggestion?.respects ?? []),
+  where: row.where,
+  deploy: joined(row.deploy),
+  previousVerdict: row.previous ? `${row.previous.verdict}/${row.previous.reason}` : null,
+  previousTo: row.previous?.to ?? null,
+  outcome: row.outcome,
+  openSinceDay: row.openSinceDay,
+  withdrawnDay: row.withdrawnDay,
+  frozenUntilDay: row.frozenUntilDay,
+});
+
+const metricCells = (report: BetaAlgorithmReport, metric: BetaReportMetric): Record<string, unknown> => {
+  const previous = report.previous?.changed.find(change => change.id === metric.id) ?? null;
+  return {
+    id: metric.id,
+    window: metric.window,
+    population: metric.population,
+    unit: metric.unit,
+    value: metric.value,
+    n: metric.n,
+    numerator: metric.numerator,
+    denominator: metric.denominator,
+    'gate.n': metric.gate?.n ?? null,
+    'gate.minN': metric.gate?.minN ?? null,
+    'gate.sufficient': metric.gate?.sufficient ?? null,
+    'gate.basis': metric.gate?.basis ?? null,
+    'previous.from': previous?.from ?? null,
+    'previous.delta': previous?.delta ?? null,
+    'previous.gateFlip': previous?.gateFlip ?? null,
+  };
+};
+
+const postCells = (report: BetaAlgorithmReport, post: BetaReportPost): Record<string, unknown> => {
+  const { dayGain, rk, realGainD30, lastRealAtMillis, ageBucketAtD, ...summary } = post;
+  return {
+    ...summary,
+    day: report.day,
+    gr: dayGain?.gr ?? null, go: dayGain?.go ?? null, gv: dayGain?.gv ?? null, gs: dayGain?.gs ?? null, gu: dayGain?.gu ?? null, dl: dayGain?.dl ?? null, dlr: dayGain?.dlr ?? null, vc: dayGain?.vc ?? null,
+    realGainD30,
+    rkView: rk?.v ?? null, rkLike: rk?.l ?? null, rkComment: rk?.c ?? null, rkDislike: rk?.d ?? null,
+    lastRealAtMillis,
+    ageBucketAtD,
+  };
+};
+
+/** The days columns when a document ships none: the flattened raw rows plus the window-only columns, the generator's order. */
+const daysColumnsOf = (report: BetaAlgorithmReport): string[] => {
+  if (report.csvColumns.days.length) return report.csvColumns.days;
+  const columns = new Set<string>(['row']);
+  for (const row of report.evidence.daysRaw) for (const column of Object.keys(flattenCells(row))) columns.add(column);
+  for (const block of Object.values(report.evidence.windowsRaw)) for (const column of Object.keys(flattenCells(block))) columns.add(column);
+  return [...columns].filter(column => !column.startsWith('realActorEntries')).sort((left, right) => {
+    const wl = WINDOW_ONLY_COLUMNS.some(prefix => left.startsWith(prefix)) ? 1 : 0;
+    const wr = WINDOW_ONLY_COLUMNS.some(prefix => right.startsWith(prefix)) ? 1 : 0;
+    return wl - wr || left.localeCompare(right);
+  });
+};
+
+export type ReportCsvTable = 'verdicts' | 'metrics' | 'days' | 'posts';
+export const reportCsvFilename = (report: BetaAlgorithmReport, table: ReportCsvTable): string => `poplur-report-${report.day}${report.revision > 1 ? `-r${report.revision}` : ''}-${table}.csv`;
+export const reportCompareFilename = (a: BetaAlgorithmReport, b: BetaAlgorithmReport): string => `poplur-report-${a.day}-vs-${b.day}.csv`;
+export const reportsRangeFilename = (reports: BetaAlgorithmReport[]): string => {
+  const days = reports.map(report => report.day).sort();
+  return `poplur-reports-${days[0] ?? 'none'}_${days[days.length - 1] ?? 'none'}-metrics.csv`;
+};
+
+/** `…-verdicts.csv`: one row per knob, the identity prefix first. */
+export const reportVerdictsCsv = (report: BetaAlgorithmReport): string => {
+  const identity = reportIdentity(report);
+  return csvFixed(withIdentity(report, tableColumns(report, 'verdicts')), report.verdicts.map(row => ({ ...identity, ...verdictCells(row) })));
+};
+
+/** `…-metrics.csv`: one row per metric id, "since yesterday" beside it. */
+export const reportMetricsCsv = (report: BetaAlgorithmReport): string => {
+  const identity = reportIdentity(report);
+  return csvFixed(withIdentity(report, tableColumns(report, 'metrics')), Object.values(report.evidence.metrics).map(metric => ({ ...identity, ...metricCells(report, metric) })));
+};
+
+/** `…-days.csv`: the 30 raw published day rows flattened faithfully (`row`
+ *  = `day`), then the window rows in the same columns plus the window-only
+ *  ones (`row` = `window`, the window's name in `day`) — never the typed
+ *  `BetaAlgorithmDay`, whose window reuse zero-fills and collapses fields. */
+export const reportDaysCsv = (report: BetaAlgorithmReport): string => {
+  const identity = reportIdentity(report);
+  const rows: Record<string, unknown>[] = report.evidence.daysRaw.map(row => ({ ...identity, ...flattenCells(row), row: 'day' }));
+  for (const name of WINDOW_NAMES) {
+    const block = report.evidence.windowsRaw[name];
+    if (block) rows.push({ ...identity, ...flattenCells(block), row: 'window', day: name });
+  }
+  return csvFixed(withIdentity(report, daysColumnsOf(report)), rows);
+};
+
+/** `…-posts.csv`: one row per post on the day (the 28 summary columns + the day's fold cells). */
+export const reportPostsCsv = (report: BetaAlgorithmReport): string => {
+  const identity = reportIdentity(report);
+  return csvFixed(withIdentity(report, tableColumns(report, 'posts')), report.evidence.posts.map(post => ({ ...identity, ...postCells(report, post) })));
+};
+
+const COMPARE_SIDE_COLUMNS = ['value', 'n', 'numerator', 'denominator', 'gate.n', 'gate.minN', 'gate.sufficient'];
+/** `poplur-report-<A>-vs-<B>.csv`: the metrics file with `a.*`, `b.*`, `delta`, `gateFlip`; both identities prefixed. */
+export const reportCompareCsv = (a: BetaAlgorithmReport, b: BetaAlgorithmReport): string => {
+  const comparison = compareReports(a, b);
+  const identity = { ...Object.fromEntries(Object.entries(reportIdentity(a)).map(([key, cell]) => [`a.${key}`, cell])), ...Object.fromEntries(Object.entries(reportIdentity(b)).map(([key, cell]) => [`b.${key}`, cell])) };
+  const columns = [
+    ...identityColumns(a).map(column => `a.${column}`), ...identityColumns(b).map(column => `b.${column}`),
+    'id', 'window', 'population', 'unit', ...COMPARE_SIDE_COLUMNS.map(column => `a.${column}`), ...COMPARE_SIDE_COLUMNS.map(column => `b.${column}`), 'delta', 'gateFlip', 'presence',
+  ];
+  const side = (prefix: 'a' | 'b', metric: BetaReportMetric | null): Record<string, unknown> => ({
+    [`${prefix}.value`]: metric?.value ?? null, [`${prefix}.n`]: metric?.n ?? null, [`${prefix}.numerator`]: metric?.numerator ?? null, [`${prefix}.denominator`]: metric?.denominator ?? null,
+    [`${prefix}.gate.n`]: metric?.gate?.n ?? null, [`${prefix}.gate.minN`]: metric?.gate?.minN ?? null, [`${prefix}.gate.sufficient`]: metric?.gate?.sufficient ?? null,
+  });
+  return csvFixed(columns, comparison.metrics.map(metric => ({
+    ...identity, id: metric.id, window: metric.window, population: metric.population, unit: metric.unit, ...side('a', metric.a), ...side('b', metric.b),
+    delta: metric.delta, gateFlip: metric.gateFlip, presence: metric.presence,
+  })));
+};
+
+/** `poplur-reports-<first>_<last>-metrics.csv`: every report's metric rows
+ *  under one fixed header (the oldest report's columns), so the columns are
+ *  stable whatever order the reports were fetched in. */
+export const reportsRangeCsv = (reports: BetaAlgorithmReport[]): string => {
+  const ordered = [...reports].sort((left, right) => left.day.localeCompare(right.day) || left.revision - right.revision);
+  if (!ordered.length) return csvFixed([...REPORT_CSV_IDENTITY_PREFIX, ...REPORT_METRICS_CSV_COLUMNS], []);
+  const columns = withIdentity(ordered[0], tableColumns(ordered[0], 'metrics'));
+  const rows: Record<string, unknown>[] = [];
+  for (const report of ordered) {
+    const identity = reportIdentity(report);
+    for (const metric of Object.values(report.evidence.metrics)) rows.push({ ...identity, ...metricCells(report, metric) });
+  }
+  return csvFixed(columns, rows);
+};
 
 /**
  * The owner-only loopback proxy listens to the private Firestore collections

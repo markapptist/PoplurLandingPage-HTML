@@ -64,7 +64,7 @@ export function TodayStrip({ testers, daily, posts, statusLine, runner }: {
       <Tile label="ONLINE NOW" value={connected ? onlineValue : '—'} meta={connected ? onlineMeta : 'connecting'} />
       <Tile label="NEW TESTERS" value={latestDay ? latestDay.signups - latestDay.syntheticSignups : '—'} sim={latestDay?.syntheticSignups} meta={latestDay ? `${dayLabel(latestDay.day)} · ${signups7} in 7 days` : seriesMeta} />
       <Tile label="POPS DROPPED" value={latestDay ? latestDay.posts - latestDay.syntheticPosts : '—'} sim={latestDay?.syntheticPosts} meta={latestDay ? `${dayLabel(latestDay.day)} · ${pops7} in 7 days${daily?.postsComplete ? '' : ' · earliest days under-count'}` : seriesMeta} />
-      <Tile label="RADIUS MOVED" value={connected ? <Delta meters={realNetKm * 1000} size="metric" /> : '—'} sim={connected ? <Delta meters={simNetKm * 1000} tone="sim" /> : undefined} meta={`newest ${PUBLIC_POPS_WINDOW} public pops · net`} />
+      <Tile label="RADIUS MOVED" value={connected ? <Delta meters={realNetKm * 1000} size="metric" onSlab /> : '—'} sim={connected ? <Delta meters={simNetKm * 1000} tone="sim" onSlab /> : undefined} meta={`newest ${PUBLIC_POPS_WINDOW} public pops · net`} />
     </View>
     <Text numberOfLines={2} style={T.meta}>{statusLine}</Text>
   </View>;

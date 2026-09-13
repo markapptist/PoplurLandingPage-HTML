@@ -133,5 +133,5 @@ const styles = StyleSheet.create({
   surfaceName: { color: C.ink },
   toneLive: { color: C.pop },
   toneOff: { color: C.ink4 },
-  report: { gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line },
+  report: { gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairlineSoft },
 });

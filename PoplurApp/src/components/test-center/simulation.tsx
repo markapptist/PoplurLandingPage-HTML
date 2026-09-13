@@ -77,6 +77,12 @@ export function SessionAnalytics({ analytics }: { analytics: BetaRunnerAnalytics
 
 const pageIsVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
+/** The runner Switch stays the native control; on web its on-state thumb is
+ *  RNW's Material teal unless `activeThumbColor` — a web-only prop, absent
+ *  from RN's types — says otherwise. The thumb is ink in both states; the
+ *  track is the clay fill on, the soft hairline off. */
+const SWITCH_WEB_PROPS = { activeThumbColor: C.ink } as object;
+
 export function ActualRunnerFrameImage({ actorId, frame, frameKey, actor, onUnavailable }: { actorId: string; frame: SyntheticRunnerFrame; frameKey: string; actor: string; onUnavailable: (key: string) => void }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -167,7 +173,7 @@ export function SimulationBody({ dashboard, runner, events, panels }: { dashboar
   };
 
   return <View style={styles.body}>
-    <View style={[S.card, styles.runnerControl]}><View style={styles.flex}><Label>{cohortModeLabel(modeChoice)}</Label><Text style={T.panelTitle}>{firstUserActive ? 'Unavailable while first-user journey runs' : commandBusy ? 'Changing runner state safely…' : s?.enabled ? (activeCohortMode === 'five-actor-live' ? 'Runner is on · the five users are using the app' : 'Runner is on') : 'Runner is off'}</Text><Text style={T.body}>{s?.enabled ? (activeCohortMode === 'five-actor-live' ? 'Live use: the five beta accounts are signed in to the real app, posting and liking. Turn this off before app maintenance; stopping clears every local frame.' : 'Turn this off before app maintenance. Stopping clears every local frame.') : modeChoice === 'five-actor-live' ? 'Live use signs the five beta accounts in to the real app shell, publishes real posts tagged synthetic, and views and likes other testers’ posts so radius grows toward you.' : firstUserMode ? 'Starting the original five-person cohort will replace the recorded first-user replay.' : 'The original five-person cohort is unchanged and cannot overlap the first-user journey.'}</Text><Text style={[T.meta, dashboard?.runnerEnabled ? styles.toneLive : styles.toneOff]}>{cloudGate(dashboard)}{dashboard ? dashboard.runnerEnabled ? ' · the local runner still reports its own state here' : ' · no synthetic browser events are accepted, so a local Start pauses' : ' · the desk is not connected'}</Text></View><View style={styles.modePicker}>{(['five-actor-readonly', 'five-actor-live'] as SyntheticCohortMode[]).map(mode => { const active = modeChoice === mode; return <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: active, disabled: Boolean(activeCohortMode) || commandBusy }} disabled={Boolean(activeCohortMode) || commandBusy} onPress={() => setModeChoice(mode)} style={[S.button, active && S.chipOn]}><Label style={active && styles.buttonLabelOn}>{mode === 'five-actor-live' ? 'LIVE USE · POSTS' : 'READ-ONLY'}</Label></Pressable>; })}</View><Switch accessibilityLabel="Start or stop the isolated synthetic runner" disabled={commandBusy || !s || firstUserActive} onValueChange={enabled => { void toggleRunner(enabled); }} thumbColor={C.ink} trackColor={{ false: C.lineSoft, true: C.now }} value={!firstUserMode && s?.enabled === true} /></View>
+    <View style={[S.card, styles.runnerControl]}><View style={styles.flex}><Label>{cohortModeLabel(modeChoice)}</Label><Text style={T.panelTitle}>{firstUserActive ? 'Unavailable while first-user journey runs' : commandBusy ? 'Changing runner state safely…' : s?.enabled ? (activeCohortMode === 'five-actor-live' ? 'Runner is on · the five users are using the app' : 'Runner is on') : 'Runner is off'}</Text><Text style={T.body}>{s?.enabled ? (activeCohortMode === 'five-actor-live' ? 'Live use: the five beta accounts are signed in to the real app, posting and liking. Turn this off before app maintenance; stopping clears every local frame.' : 'Turn this off before app maintenance. Stopping clears every local frame.') : modeChoice === 'five-actor-live' ? 'Live use signs the five beta accounts in to the real app shell, publishes real posts tagged synthetic, and views and likes other testers’ posts so radius grows toward you.' : firstUserMode ? 'Starting the original five-person cohort will replace the recorded first-user replay.' : 'The original five-person cohort is unchanged and cannot overlap the first-user journey.'}</Text><Text style={[T.meta, dashboard?.runnerEnabled ? styles.toneLive : styles.toneOff]}>{cloudGate(dashboard)}{dashboard ? dashboard.runnerEnabled ? ' · the local runner still reports its own state here' : ' · no synthetic browser events are accepted, so a local Start pauses' : ' · the desk is not connected'}</Text></View><View style={styles.modePicker}>{(['five-actor-readonly', 'five-actor-live'] as SyntheticCohortMode[]).map(mode => { const active = modeChoice === mode; return <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: active, disabled: Boolean(activeCohortMode) || commandBusy }} disabled={Boolean(activeCohortMode) || commandBusy} onPress={() => setModeChoice(mode)} style={[S.button, active && S.chipOn]}><Label style={active && styles.buttonLabelOn}>{mode === 'five-actor-live' ? 'LIVE USE · POSTS' : 'READ-ONLY'}</Label></Pressable>; })}</View><Switch {...SWITCH_WEB_PROPS} accessibilityLabel="Start or stop the isolated synthetic runner" disabled={commandBusy || !s || firstUserActive} onValueChange={enabled => { void toggleRunner(enabled); }} thumbColor={C.ink} trackColor={{ false: C.hairlineSoft, true: C.clayFaceFill }} value={!firstUserMode && s?.enabled === true} /></View>
     <View style={S.card}>
       <View style={styles.panelHeading}><View><Label>JOURNEYS · ONE SHOT EACH</Label><Text style={T.panelTitle}>Journeys</Text></View><Text style={T.meta}>{firstUserMode ? `${isolatedFirstUserMode ? 'emulator' : 'shared tester'} · ${firstUserComplete ? 'complete' : s?.status ?? ''}` : 'none recorded this session'}</Text></View>
       <View style={[S.row, styles.journey]}>
@@ -354,7 +360,7 @@ const styles = StyleSheet.create({
   // A column, sized for the longest tile word (`SPORTS`) at 10 px: the mark
   // above the avatar tile letters, nothing overlapping. Simulation fill: the
   // five accounts are the simulation.
-  personaAvatar: { width: 60, height: 48, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: C.simFill, borderWidth: 1, borderColor: C.sim },
+  personaAvatar: { width: 60, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: C.simFill, borderWidth: 1, borderColor: C.sim },
   personaMark: { fontSize: 18, lineHeight: 22 },
   personaTile: { color: C.ink, lineHeight: 12 },
   pill: { minWidth: 140, alignItems: 'center' },
@@ -368,11 +374,12 @@ const styles = StyleSheet.create({
   column: { flexGrow: 1, flexShrink: 1, flexBasis: 380, minWidth: 0, gap: 12 },
   panelHeading: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' },
   // 300 wide (was 420): the 9:16 placeholder is 533 px tall instead of 747.
-  // The near-black is the phone's screen, not a surface tone.
-  frameViewport: { width: '100%', maxWidth: 300, aspectRatio: 9 / 16, alignSelf: 'center', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: C.edge, backgroundColor: '#070407' },
-  actualFrame: { width: '100%', height: '100%', backgroundColor: '#070407' },
-  frameLoading: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: '#070407' },
-  framePlaceholder: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, backgroundColor: C.bg },
+  // The phone's screen is the page black behind a hairline frame — the one
+  // surface here that is not glass, because a frame is a picture of a phone.
+  frameViewport: { width: '100%', maxWidth: 300, aspectRatio: 9 / 16, alignSelf: 'center', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: C.hairline, backgroundColor: C.ground },
+  actualFrame: { width: '100%', height: '100%', backgroundColor: C.ground },
+  frameLoading: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: C.ground },
+  framePlaceholder: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, backgroundColor: C.ground },
   placeholderCopy: { maxWidth: 280, textAlign: 'center' },
   replayControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   replayButton: { minWidth: 70 },
@@ -383,12 +390,12 @@ const styles = StyleSheet.create({
   analyticsGroup: { flexGrow: 1, flexShrink: 1, flexBasis: 300, minWidth: 0, gap: 8 },
   analyticsRow: { gap: 4 },
   analyticsLabelRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  analyticsTrack: { height: 7, overflow: 'hidden', borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.04)' },
+  analyticsTrack: { height: 7, overflow: 'hidden', borderRadius: 6, backgroundColor: C.ghost },
   analyticsFill: { height: '100%', borderRadius: 6, backgroundColor: C.simFill },
   modePicker: { flexDirection: 'row', gap: 6 },
   activityPanel: { gap: 12 },
   activityIndex: { width: 22, color: C.ink4 },
   activityChip: { minWidth: 76, alignItems: 'center', paddingVertical: 4 },
   rosterStats: { alignItems: 'flex-end', gap: 2, maxWidth: 170 },
-  rosterFailures: { gap: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line },
+  rosterFailures: { gap: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.hairlineSoft },
 });

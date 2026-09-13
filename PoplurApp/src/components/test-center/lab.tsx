@@ -42,6 +42,8 @@ const styles = StyleSheet.create({
   panel: { gap: 12 },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   strip: { flex: 1, minWidth: 0 },
+  // The link is the kicker's pink, heavy, with its arrow — never the people
+  // blue, which means humans and nothing else.
   link: { paddingVertical: 8 },
-  linkText: { color: C.people, fontWeight: '700' },
+  linkText: { color: C.ink3, fontWeight: '800', letterSpacing: 0.2 },
 });

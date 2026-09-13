@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Head from 'expo-router/head';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -19,8 +20,8 @@ import { useDeskPanels, useRadiusLabSummary, useSyntheticRunnerState, useUrlTab 
 import { LabPanel, labStatus } from '@/components/test-center/lab';
 import { Connecting, Header, Section, Strip, TabBar } from '@/components/test-center/primitives';
 import { SimulationBody, simulationStatus, type SimEvent } from '@/components/test-center/simulation';
-import { DailyStrip, PopsList, TesterTable, type DrillOrigin, type DrillState, type LazyPops } from '@/components/test-center/testers';
-import { S, T, WEB_ONLY, clock } from '@/components/test-center/theme';
+import { DailyStrip, PopsList, TesterTable, mergeRunnerPresence, type DrillOrigin, type DrillState, type LazyPops } from '@/components/test-center/testers';
+import { ROOT_CSS, S, T, WEB_ONLY, clock } from '@/components/test-center/theme';
 import { AlgorithmSection, LatestPopsPreview, TodayStrip, splitRadius, todayStatusLine } from '@/components/test-center/today';
 import { WorldMap } from '@/components/test-center/world-map';
 
@@ -60,6 +61,7 @@ export default function TestControlScreen() {
   // a switch. Only rendering — plus the frame poll and the Lab widget's own
   // subscription, which live inside their tab bodies — unmounts with a tab.
   const runner = useSyntheticRunnerState();
+  const testersLive = useMemo(() => mergeRunnerPresence(dashboard?.testers ?? [], runner.state), [dashboard?.testers, runner.state]);
   const labSummary = useRadiusLabSummary(tab !== 'lab');
   // The ledger drill-down. Opening a post fetches its radius ledger through
   // the proxy on demand rather than shipping every post's history inside every
@@ -174,12 +176,12 @@ export default function TestControlScreen() {
       case 'today': return <>
         {!dashboard && <Connecting loading={loading} />}
         <Section id="today" title="Today" meta={dashboard ? `as of ${clock(dashboard.generatedAtMs)} · days roll at midnight ${dashboard.daily.timeZone.replace('_', ' ')}` : 'connecting'}>
-          <TodayStrip testers={dashboard?.testers ?? null} daily={dashboard?.daily ?? null} posts={dashboard?.publicPosts ?? null} statusLine={todayStatusLine({ latestReal, simulationCount: (dashboard?.publicPosts ?? []).filter(post => post.synthetic).length, simulationLive: runner.state?.status === 'live' })} />
+          <TodayStrip testers={dashboard ? testersLive : null} daily={dashboard?.daily ?? null} posts={dashboard?.publicPosts ?? null} runner={runner.state} statusLine={todayStatusLine({ latestReal, simulationCount: (dashboard?.publicPosts ?? []).filter(post => post.synthetic).length, simulationLive: runner.state?.status === 'live' })} />
         </Section>
         <Section id="daily" title="Joining and dropping, per day">{dashboard ? <DailyStrip series={dashboard.daily} /> : <Text style={T.body}>Connecting…</Text>}</Section>
         <LatestPopsPreview posts={latestPops} showSim={panels.open.showSimRows} drill={drill} onSeeAll={seeAllPops} />
       </>;
-      case 'testers': return !dashboard ? <Connecting loading={loading} /> : <TesterTable rows={dashboard.testers} counts={dashboard.counts} expandedUid={expandedTester} onToggle={toggleTester} lazy={lazyPops} onRetry={retryPops} showSim={panels.open.showSimRows} onToggleSim={toggleSimRows} drill={drill} />;
+      case 'testers': return !dashboard ? <Connecting loading={loading} /> : <TesterTable rows={testersLive} counts={dashboard.counts} expandedUid={expandedTester} onToggle={toggleTester} lazy={lazyPops} onRetry={retryPops} showSim={panels.open.showSimRows} onToggleSim={toggleSimRows} drill={drill} />;
       case 'pops': return !dashboard ? <Connecting loading={loading} /> : <PopsList posts={latestPops} showSim={panels.open.showSimRows} onToggleSim={toggleSimRows} drill={drill} />;
       // The map owns its tab, so it is taller than the long page's 280 (spec §0).
       case 'map': return <>
@@ -206,7 +208,11 @@ export default function TestControlScreen() {
     }
   })();
 
+  // The body takes the app's font and ground while this route is focused
+  // (spec §0b: the font stack on the root); RNW's Text never inherits it, so
+  // every text style in `theme.ts` carries the stack as well.
   return <SafeAreaView style={[S.safe, WEB_ONLY.page]} edges={['top', 'bottom']}>
+    <Head><style>{ROOT_CSS}</style></Head>
     <View style={S.chrome}>
       <Header state={deskRealtimeState} updatedAtMs={dashboard?.generatedAtMs ?? 0} />
       <TabBar tabs={tabs} selected={tab} onSelect={selectTab} simSwitch={simSwitch} />

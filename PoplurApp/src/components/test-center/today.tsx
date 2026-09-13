@@ -1,9 +1,10 @@
 import { Fragment, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { BetaDailyCount, BetaDailySeries, BetaTesterRow, RealtimePublicPost } from '@/services/testControl';
+import type { SyntheticRunnerState } from '@/services/syntheticRunner';
 import { Delta, Empty, Fact, Section, Tile } from './primitives';
 import { PopRow, PostDrilldown, type DrillState } from './testers';
-import { C, PUBLIC_POPS_WINDOW, S, T, ago, dayLabel, km } from './theme';
+import { C, FONT, PUBLIC_POPS_WINDOW, S, T, ago, dayLabel, km } from './theme';
 
 /** The Today preview of Latest pops: a glance, not the list. */
 const PREVIEW_ROWS = 5;
@@ -16,10 +17,14 @@ const latestDayOf = (days: BetaDailyCount[]): BetaDailyCount | null => days.leng
 
 /** The four daily answers before any scroll: real number big, simulation
  *  `+N` beside it. Everything is `—` until the desk is connected. */
-export function TodayStrip({ testers, daily, posts, statusLine }: {
+export function TodayStrip({ testers, daily, posts, statusLine, runner }: {
   testers: BetaTesterRow[] | null;
   daily: BetaDailySeries | null;
   posts: RealtimePublicPost[] | null;
+  /** The local runner's own state (8097, no cloud in between): its live
+   *  actors are in the app right now whatever the cloud's copy of their
+   *  sessions says. */
+  runner: SyntheticRunnerState | null;
   statusLine: string;
 }) {
   const connected = !!testers && !!daily && !!posts;
@@ -27,9 +32,26 @@ export function TodayStrip({ testers, daily, posts, statusLine }: {
   // (owner, 12 Sep: "they should be online and being active within the app").
   // The tile's big number is everyone online; the meta line keeps the split.
   const allTesters = testers?.length ?? 0;
-  const onlineAll = testers?.filter(row => row.presence === 'online').length ?? 0;
-  const onlineSim = testers?.filter(row => row.presence === 'online' && row.synthetic).length ?? 0;
-  const onlineMeta = `of ${allTesters} testers · in the app now${onlineSim ? ` · ${onlineSim} simulation` : ''}`;
+  // Online = the cloud's presence rows ∪ the local runner's live actors
+  // (actorId is the actor's uid, so nobody counts twice). The runner is the
+  // authority for its own actors: the cloud's session copy goes quiet when
+  // the event pipeline hiccups, and the tile must not read 0 while five
+  // browsers are driving the app.
+  const onlineUids = new Set((testers ?? []).filter(row => row.presence === 'online').map(row => row.uid));
+  const runnerLive = runner?.status === 'live' ? runner.actors.filter(actor => actor.status === 'live') : [];
+  for (const actor of runnerLive) onlineUids.add(actor.actorId);
+  const onlineAll = onlineUids.size;
+  const simUids = new Set((testers ?? []).filter(row => row.synthetic).map(row => row.uid));
+  for (const actor of runnerLive) simUids.add(actor.actorId);
+  const onlineSim = [...onlineUids].filter(uid => simUids.has(uid)).length;
+  // OWNER RULE 12 Sep: "it should never say 0 users online." The beta is never
+  // empty — the simulation lives in the app — so a zero is a fault to name,
+  // not a number to print: say which link is down.
+  const runnerNote = !runner ? 'runner link down' : runner.status === 'live' ? null : `runner ${runner.status}`;
+  const onlineValue = onlineAll > 0 ? onlineAll : (runnerNote ?? 'no signal');
+  const onlineMeta = onlineAll > 0
+    ? `of ${allTesters} testers · in the app now${onlineSim ? ` · ${onlineSim} simulation` : ''}`
+    : runnerNote ? 'nobody is being counted — start the simulation from the Simulation tab' : 'presence and the runner both report nobody — check the Simulation tab';
   const latestDay = daily ? latestDayOf(daily.days) : null;
   const last7 = daily ? [...daily.days].sort((a, b) => b.day.localeCompare(a.day)).slice(0, 7) : [];
   const signups7 = last7.reduce((sum, day) => sum + day.signups - day.syntheticSignups, 0);
@@ -39,7 +61,7 @@ export function TodayStrip({ testers, daily, posts, statusLine }: {
   const simNetKm = posts?.filter(post => post.synthetic).reduce((sum, post) => sum + post.radiusDeltaKm, 0) ?? 0;
   return <View style={styles.strip}>
     <View style={styles.tiles}>
-      <Tile label="ONLINE NOW" value={connected ? onlineAll : '—'} meta={connected ? onlineMeta : 'connecting'} />
+      <Tile label="ONLINE NOW" value={connected ? onlineValue : '—'} meta={connected ? onlineMeta : 'connecting'} />
       <Tile label="NEW TESTERS" value={latestDay ? latestDay.signups - latestDay.syntheticSignups : '—'} sim={latestDay?.syntheticSignups} meta={latestDay ? `${dayLabel(latestDay.day)} · ${signups7} in 7 days` : seriesMeta} />
       <Tile label="POPS DROPPED" value={latestDay ? latestDay.posts - latestDay.syntheticPosts : '—'} sim={latestDay?.syntheticPosts} meta={latestDay ? `${dayLabel(latestDay.day)} · ${pops7} in 7 days${daily?.postsComplete ? '' : ' · earliest days under-count'}` : seriesMeta} />
       <Tile label="RADIUS MOVED" value={connected ? <Delta meters={realNetKm * 1000} size="metric" /> : '—'} sim={connected ? <Delta meters={simNetKm * 1000} tone="sim" /> : undefined} meta={`newest ${PUBLIC_POPS_WINDOW} public pops · net`} />
@@ -131,6 +153,9 @@ const styles = StyleSheet.create({
   factsMeta: { flexBasis: '100%' },
   up: { color: C.pop },
   down: { color: C.decay },
+  // A link is the kicker's pink, heavy, with its arrow — the app's `.fab`
+  // wordmark tone (`ClayNav.module.css`), never the people blue, which
+  // means humans and nothing else.
   seeAll: { paddingVertical: 4 },
-  seeAllText: { color: C.people, fontSize: 12, fontWeight: '700' },
+  seeAllText: { fontFamily: FONT, color: C.ink3, fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
 });

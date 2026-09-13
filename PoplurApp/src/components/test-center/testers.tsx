@@ -1,8 +1,9 @@
 import { Fragment, useState } from 'react';
+import type { SyntheticRunnerState } from '@/services/syntheticRunner';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { BetaDailySeries, BetaDashboardCounts, BetaTesterPost, BetaTesterRow, PostHistory, RealtimePublicPost } from '@/services/testControl';
 import { CauseLegend, Delta, Dot, Empty, Fact, GroupRow, Label, Num, Section, SimTag } from './primitives';
-import { C, CAUSE_COLOR, PRESENCE_LABEL, PUBLIC_POPS_WINDOW, S, T, ago, clock, dayLabel, km, share, stamp } from './theme';
+import { C, CAUSE_COLOR, FONT, PRESENCE_LABEL, PUBLIC_POPS_WINDOW, S, T, ago, clock, dayLabel, km, share, stamp } from './theme';
 
 /** Which host opened the ledger drill-down. A post open under a tester row is
  *  not also selected in Latest pops or the Algorithm desk; re-opening it from
@@ -74,6 +75,22 @@ export function DailyStrip({ series }: { series: BetaDailySeries }) {
  *  then the newest account (spec §4.8). Real and simulation rows are ranked
  *  the same way, each within its own group. */
 const PRESENCE_RANK: Record<BetaTesterRow['presence'], number> = { online: 0, away: 1, unknown: 2 };
+/** Fold the local runner's live actors into the cloud's tester rows: an actor
+ *  the runner says is live is online on the screen the runner reports,
+ *  whatever the cloud's (event-fed, sometimes quiet) session copy says. The
+ *  runner is the authority for its own browsers. Rows for uids the cloud does
+ *  not list are not invented. */
+export function mergeRunnerPresence(rows: BetaTesterRow[], runner: SyntheticRunnerState | null): BetaTesterRow[] {
+  if (!runner || runner.status !== 'live') return rows;
+  const live = new Map(runner.actors.filter(actor => actor.status === 'live').map(actor => [actor.actorId, actor]));
+  if (!live.size) return rows;
+  return rows.map(row => {
+    const actor = live.get(row.uid);
+    if (!actor || row.presence === 'online') return row;
+    return { ...row, presence: 'online', presenceSource: 'runner', screen: actor.currentScreen || row.screen, lastActivityAtMs: Math.max(row.lastActivityAtMs, runner.startedAtMs) };
+  });
+}
+
 export const byPresence = (a: BetaTesterRow, b: BetaTesterRow) => PRESENCE_RANK[a.presence] - PRESENCE_RANK[b.presence] || b.lastPostedAtMs - a.lastPostedAtMs || b.signedUpAtMs - a.signedUpAtMs;
 
 /** The Testers tab: the title row carries the two counts (real number, `+N`
@@ -139,14 +156,16 @@ function TesterRow({ row, expanded, onToggle, lazy, onRetry, drill }: { row: Bet
 /** The expansion under a tester row. `row.posts` is the list while the server
  *  still ships summaries; otherwise the lazily fetched result, with its
  *  loading / error states. The drill-down renders inside this list, directly
- *  under the pop that opened it (spec §4.10, §5). */
+ *  under the pop that opened it (spec §4.10, §5). The expansion is a nested
+ *  panel strip (the FeedTwin gradient), so the tester's pops read as one
+ *  tray under the row that opened them, whatever state they are in. */
 export function PopList({ row, lazy, drill, onRetry }: { row: BetaTesterRow; lazy: LazyPops | null; drill: DrillState; onRetry: (uid: string) => void }) {
   const list = row.posts.length ? row.posts : lazy?.posts ?? [];
   const lazyState = row.posts.length ? null : lazy;
-  if (lazyState?.state === 'loading') return <View style={[styles.postList, styles.postState]}><ActivityIndicator color={C.sync} /><Text style={T.body}>Loading pops…</Text></View>;
-  if (lazyState?.state === 'error') return <View style={[styles.postList, styles.postState]}><Text style={T.body}>Pops could not be loaded.</Text><Pressable accessibilityRole="button" onPress={() => onRetry(row.uid)} style={S.button}><Label>RETRY</Label></Pressable></View>;
-  if (!list.length) return <Text style={[T.body, styles.postList]}>No pops yet.</Text>;
-  return <View style={styles.postList}>{list.map(post => {
+  if (lazyState?.state === 'loading') return <View style={[S.panel, styles.postList, styles.postState]}><ActivityIndicator color={C.sync} /><Text style={T.body}>Loading pops…</Text></View>;
+  if (lazyState?.state === 'error') return <View style={[S.panel, styles.postList, styles.postState]}><Text style={T.body}>Pops could not be loaded.</Text><Pressable accessibilityRole="button" onPress={() => onRetry(row.uid)} style={S.button}><Label>RETRY</Label></Pressable></View>;
+  if (!list.length) return <View style={[S.panel, styles.postList, styles.postState]}><Empty text="No pops yet." /></View>;
+  return <View style={[S.panel, styles.postList]}>{list.map(post => {
     const open = drill.openPostId === post.id && drill.origin === 'testers';
     return <Fragment key={post.id}>
       <PostRow post={post} open={open} onPress={() => drill.open(post.id, 'testers')} />
@@ -215,7 +234,9 @@ export function PopsList({ posts, showSim, onToggleSim, drill }: { posts: Realti
   </Section>;
 }
 
-/** Radius over time, drawn with plain views: no chart dependency in this app. */
+/** Radius over time, drawn with plain views: no chart dependency in this app.
+ *  Every column is a glass track the cause-coloured bar rises in, so the
+ *  ledger's shape reads even where a bar is three pixels tall. */
 export function RadiusBars({ history }: { history: PostHistory['history'] }) {
   const peak = Math.max(1, ...history.map(entry => entry.radiusMeters));
   return <View style={styles.bars}>{history.map(entry => <View key={entry.id} style={styles.barCol}><View style={[styles.bar, { height: Math.max(3, Math.round((entry.radiusMeters / peak) * 72)), backgroundColor: CAUSE_COLOR[entry.cause] ?? C.away }]} /></View>)}</View>;
@@ -274,26 +295,29 @@ export function PostDrilldown({ postId, history, state }: { postId: string; hist
 }
 
 const styles = StyleSheet.create({
-  tableHead: { borderTopWidth: 0, paddingVertical: 4 },
+  // The head has no rule of its own: the first row's soft rule is the line the columns hang from.
+  tableHead: { borderTopWidth: 0, paddingTop: 2, paddingBottom: 6 },
   colName: { flex: 2.2, minWidth: 0 },
   colStatus: { flex: 1.4, minWidth: 0, gap: 2 },
   statusLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   colWhen: { flex: 1.2, minWidth: 0 },
   colNum: { flex: 0.6, textAlign: 'right' },
-  postList: { paddingLeft: 12, paddingBottom: 6 },
-  postState: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
-  // A pop row inside a tester's expansion: the row, on the softer rule.
-  postRow: { gap: 10, paddingVertical: 7, borderTopColor: C.lineSoft },
+  // The tray under an expanded tester: the nested panel, its rows meeting
+  // on their rules (no gap), a little room above and below.
+  postList: { gap: 0, marginTop: 8, marginBottom: 6, paddingVertical: 2 },
+  postState: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
+  // A pop row inside the tray; the first one's rule is the tray's own head.
+  postRow: { gap: 10, paddingVertical: 7 },
   postKind: { width: 92 },
   postRadius: { color: C.pop, fontWeight: '700' },
-  drill: { marginTop: 8 },
+  drill: { marginTop: 8, marginBottom: 8 },
   drillFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginVertical: 4 },
   // A long ledger has more columns than the panel is wide: the newest bars
   // stay in view and the oldest clip on the left, never the page's width.
   bars: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'flex-end', gap: 2, height: 76, marginVertical: 6, overflow: 'hidden' },
-  barCol: { flex: 1, minWidth: 3, maxWidth: 14, justifyContent: 'flex-end' },
+  barCol: { flex: 1, minWidth: 3, maxWidth: 14, height: '100%', justifyContent: 'flex-end', borderRadius: 2, backgroundColor: C.ghost, overflow: 'hidden' },
   bar: { width: '100%', borderRadius: 2 },
-  ledgerRow: { paddingVertical: 4, borderTopColor: C.lineSoft },
+  ledgerRow: { paddingVertical: 4 },
   ledgerHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   causeChip: { width: 8, height: 8, borderRadius: 4 },
   causeChipSpace: { width: 8 },
@@ -312,12 +336,12 @@ const styles = StyleSheet.create({
   dailyRow: { flexDirection: 'row', gap: 4 },
   dailyCol: { flex: 1, minWidth: 0, alignItems: 'center' },
   dailyBars: { flexDirection: 'row', gap: 2, height: 56, alignItems: 'flex-end', width: '100%' },
-  dailyTrack: { flex: 1, height: '100%', position: 'relative', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.04)', overflow: 'hidden' },
+  dailyTrack: { flex: 1, height: '100%', position: 'relative', borderRadius: 3, backgroundColor: C.ghost, overflow: 'hidden' },
   dailyBar: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
   dailyBarSignups: { backgroundColor: C.people },
   dailyBarPosts: { backgroundColor: C.pop },
   dailyBarSim: { backgroundColor: C.simFill },
-  dailyNum: { fontSize: 11, fontWeight: '700', marginTop: 4, fontVariant: ['tabular-nums'] },
+  dailyNum: { fontFamily: FONT, fontSize: 11, fontWeight: '700', marginTop: 4, fontVariant: ['tabular-nums'] },
   dailyNumSignups: { color: C.people },
   dailyNumPosts: { color: C.pop, marginTop: 1 },
   dailyDay: { marginTop: 3 },

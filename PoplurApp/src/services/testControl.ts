@@ -199,7 +199,7 @@ export type BetaTesterRow = {
   signedUpAtMs: number;
   lastSignInAtMs: number;
   presence: 'online' | 'away' | 'unknown';
-  presenceSource: 'lease' | 'heartbeat' | 'none';
+  presenceSource: 'lease' | 'heartbeat' | 'runner' | 'none';
   lastActivityAtMs: number;
   screen: string;
   platform: string;
@@ -888,7 +888,7 @@ const testerRow = (value: unknown): BetaTesterRow | null => {
     signedUpAtMs: timeMs(row.signedUpAtMs),
     lastSignInAtMs: timeMs(row.lastSignInAtMs),
     presence,
-    presenceSource: row.presenceSource === 'lease' || row.presenceSource === 'heartbeat' ? row.presenceSource : 'none',
+    presenceSource: row.presenceSource === 'lease' || row.presenceSource === 'heartbeat' || row.presenceSource === 'runner' ? row.presenceSource : 'none',
     lastActivityAtMs: timeMs(row.lastActivityAtMs),
     screen: text(row.screen, 40),
     platform: text(row.platform, 16),

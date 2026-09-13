@@ -918,6 +918,10 @@ export function createSyntheticLiveRunner({
       }
       await sleep(500);
     }
+    // Say so: a silent null here looked like a hang for a whole evening
+    // (12 Sep) while the actors were healthy and the owner's post simply was
+    // not on the channel.
+    log(`${actor.actorId} owner post ${target.id} not reached on channel ${target.channel} (${channelNumbers[target.channel]}); walked ${seen.size} posts`);
     return null;
   };
 
@@ -1062,7 +1066,7 @@ export function createSyntheticLiveRunner({
 
   const runEngageFlow = async actor => {
     let post = await findOwnerPost(actor);
-    if (!post) { actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS; return; }
+    if (!post) { log(`${actor.actorId} engage skipped: no owner post reachable; next try in ${Math.round(LIVE_ENGAGEMENT_INTERVAL_MS / 60_000)} min`); actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS; return; }
     actor.currentScreen = 'feed';
     actor.action = 'view-post';
     // A view requires the real image/video to be ready. Failed media is never

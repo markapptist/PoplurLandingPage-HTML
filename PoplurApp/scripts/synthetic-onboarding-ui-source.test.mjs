@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../src/app/test-control.tsx', import.meta.url), 'utf8');
+// The Simulation tab's body lives in components/test-center/simulation.tsx since the
+// 12 Sep tabbed rebuild; the route file only mounts it.
+const simulation = await readFile(new URL('../src/components/test-center/simulation.tsx', import.meta.url), 'utf8');
+const diagnostics = await readFile(new URL('../src/components/test-center/diagnostics.tsx', import.meta.url), 'utf8');
+// The Test Center's owner-facing copy spans the two operator tabs.
+const source = simulation + '\n' + diagnostics;
 const proxy = await readFile(new URL('./test-control-proxy.mjs', import.meta.url), 'utf8');
 const runner = await readFile(new URL('./synthetic-onboarding-runner.mjs', import.meta.url), 'utf8');
 
@@ -21,8 +26,12 @@ test('visible first-user signup uses the real welcome button listener without a 
 });
 
 test('completed first-user replay does not permanently disable five-actor mode', () => {
-  assert.match(source, /const firstUserActive = firstUserMode\s*&& \(runnerState\?\.status === 'starting' \|\| runnerState\?\.status === 'live'\)/);
-  assert.match(source, /disabled=\{commandBusy \|\| !runnerState \|\| firstUserActive\}/);
+  assert.match(source, /const firstUserActive = firstUserMode\s*&& \(s\?\.status === 'starting' \|\| s\?\.status === 'live'\)/);
+  // The journey buttons lock behind one derived guard that includes the
+  // active journey, never the mode alone (which would disable them forever
+  // after a completed replay).
+  assert.match(source, /const journeyLocked = commandBusy \|\| !s \|\| s\.enabled \|\| firstUserActive;/);
+  assert.match(source, /disabled=\{journeyLocked\}/);
   assert.match(source, /replace the recorded first-user replay/);
   assert.doesNotMatch(source, /disabled=\{commandBusy \|\| !runnerState \|\| firstUserMode\} onValueChange/);
 });

@@ -54,7 +54,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test-control:proxy": "node ./scripts/test-control-proxy.mjs",
-    "test-control:test": "node --test ./src/services/realtimePublicPosts.test.mjs ./scripts/synthetic-runner-actions.test.mjs ./scripts/synthetic-onboarding-actions.test.mjs ./scripts/synthetic-onboarding-ui-source.test.mjs ./scripts/synthetic-live-actions.test.mjs ./scripts/algorithm-digest-policy.test.mjs ./scripts/test-control-live-state.test.mjs ./src/services/testControl.test.mjs",
+    "test-control:test": "node --test ./src/services/realtimePublicPosts.test.mjs ./scripts/synthetic-runner-actions.test.mjs ./scripts/synthetic-onboarding-actions.test.mjs ./scripts/synthetic-onboarding-ui-source.test.mjs ./scripts/synthetic-live-actions.test.mjs ./scripts/algorithm-digest-policy.test.mjs ./scripts/algorithm-report-policy.test.mjs ./scripts/test-control-live-state.test.mjs ./src/services/testControl.test.mjs ./src/components/test-center/reports.test.mjs",
     "test-control:runner": "node ./scripts/synthetic-app-runner.mjs",
     "test-control:runner:test": "node --test ./scripts/synthetic-runner-actions.test.mjs ./scripts/synthetic-onboarding-actions.test.mjs ./scripts/synthetic-onboarding-ui-source.test.mjs ./scripts/synthetic-live-actions.test.mjs"
   },

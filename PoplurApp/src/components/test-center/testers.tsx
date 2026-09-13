@@ -6,10 +6,11 @@ import { CauseLegend, Delta, Dot, Empty, Fact, GroupRow, Label, Num, Section, Si
 import { C, CAUSE_COLOR, FONT, PRESENCE_LABEL, PUBLIC_POPS_WINDOW, S, T, ago, clock, dayLabel, km, share, stamp } from './theme';
 
 /** Which host opened the ledger drill-down. A post open under a tester row is
- *  not also selected in Latest pops or the Algorithm desk; re-opening it from
- *  another host only switches the origin, so the fetch (keyed on the post id
- *  alone) is not repeated (spec decision 12). */
-export type DrillOrigin = 'testers' | 'pops' | 'radius';
+ *  not also selected in Latest pops, the Algorithm desk or a report's post
+ *  list; re-opening it from another host only switches the origin, so the
+ *  fetch (keyed on the post id alone) is not repeated (spec decision 12;
+ *  `reports` is the Reports tab's memo, reports §3.1). */
+export type DrillOrigin = 'testers' | 'pops' | 'radius' | 'reports';
 export type DrillState = {
   openPostId: string | null;
   origin: DrillOrigin | null;

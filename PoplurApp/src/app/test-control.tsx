@@ -3,9 +3,12 @@ import Head from 'expo-router/head';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  ReportReadRefused,
   readOwnerDashboard,
   readPostHistory,
+  readReport,
   readTesterPosts,
+  reportsStatus,
   subscribeOwnerDashboard,
   type BetaDashboard,
   type BetaMapCell,
@@ -16,9 +19,10 @@ import {
 } from '@/services/testControl';
 import AlgorithmDesk from '@/components/AlgorithmDesk';
 import { DiagnosticsBody, FeedbackList, diagnosticsStatus, type FeedChannel } from '@/components/test-center/diagnostics';
-import { useDeskPanels, useRadiusLabSummary, useSyntheticRunnerState, useUrlTab } from '@/components/test-center/hooks';
+import { useDeskPanels, useRadiusLabSummary, useSyntheticRunnerState, useUrlState } from '@/components/test-center/hooks';
 import { LabPanel, labStatus } from '@/components/test-center/lab';
 import { Connecting, Header, Section, Strip, TabBar } from '@/components/test-center/primitives';
+import { ReportsTab, isReportDay, type ReportBodies, type ReportSlot } from '@/components/test-center/reports';
 import { SimulationBody, simulationStatus, type SimEvent } from '@/components/test-center/simulation';
 import { DailyStrip, PopsList, TesterTable, mergeRunnerPresence, type DrillOrigin, type DrillState, type LazyPops } from '@/components/test-center/testers';
 import { ROOT_CSS, S, T, WEB_ONLY, clock } from '@/components/test-center/theme';
@@ -43,17 +47,31 @@ const TABS = [
   { id: 'map', label: 'Map' },
   { id: 'feedback', label: 'Feedback' },
   { id: 'algorithm', label: 'Algorithm' },
+  { id: 'reports', label: 'Reports' },
   { id: 'simulation', label: 'Simulation' },
   { id: 'lab', label: 'Radius Lab' },
   { id: 'diagnostics', label: 'Diagnostics' },
 ] as const;
 type TabId = typeof TABS[number]['id'];
 const TAB_IDS: readonly TabId[] = TABS.map(tab => tab.id);
+/** The URL is the state (reports §3.2): `?tab=reports&day=A&vs=B`. A day
+ *  that is not `YYYY-MM-DD` reads as absent — the list view. */
+const URL_KEYS = ['tab', 'day', 'vs'] as const;
+const URL_VALIDATORS = { tab: (raw: string) => (TAB_IDS as readonly string[]).includes(raw), day: isReportDay, vs: isReportDay } as const;
+const URL_FALLBACKS = { tab: 'today' } as const;
 
 export default function TestControlScreen() {
   const [dashboard, setDashboard] = useState<BetaDashboard | null>(null); const [loading, setLoading] = useState(true); const [notice, setNotice] = useState<string | null>(null);
   const [deskRealtimeState, setDeskRealtimeState] = useState<'connecting' | 'live' | 'offline'>('connecting');
-  const [tab, selectTab] = useUrlTab(TAB_IDS, 'today');
+  const [url, selectUrl] = useUrlState(URL_KEYS, URL_VALIDATORS, URL_FALLBACKS);
+  const tab = url.tab as TabId;
+  // Leaving the Reports tab drops its `day`/`vs` from the URL so every other
+  // tab's address stays `?tab=<id>`; back restores the open report.
+  const selectTab = useCallback((next: TabId) => selectUrl(next === 'reports' ? { tab: next } : { tab: next, day: null, vs: null }), [selectUrl]);
+  const reportUrl = tab === 'reports' ? { day: url.day, vs: url.day ? url.vs : null } : { day: null, vs: null };
+  const openReport = useCallback((day: string) => selectUrl({ day, vs: null }), [selectUrl]);
+  const compareReport = useCallback((day: string | null) => selectUrl({ vs: day }), [selectUrl]);
+  const closeReport = useCallback(() => selectUrl({ day: null, vs: null }), [selectUrl]);
   const panels = useDeskPanels();
   // The route keeps every live source (spec §0): the stream, the fallback
   // poll, the runner's state poll and the Lab summary run whichever tab is
@@ -101,6 +119,36 @@ export default function TestControlScreen() {
     open: openPost,
   }), [openPostId, opened?.origin, fetched, openPost]);
   const openRadiusPost = useCallback((postId: string) => openPost(postId, 'radius'), [openPost]);
+  const openReportPost = useCallback((postId: string) => openPost(postId, 'reports'), [openPost]);
+  // The report bodies (reports §3.1, the `lazyPops` shape): one slot per day,
+  // keyed `day@revision` in `requestedReports` so a day is fetched once per
+  // revision — a return to the tab never refetches, and an index row whose
+  // `revision` moved invalidates its day. The effect only issues the fetch;
+  // every write happens in the promise callbacks, and `loading` is derived by
+  // the tab from a missing (or out-of-revision) slot.
+  const [reportBodies, setReportBodies] = useState<ReportBodies>({});
+  const requestedReports = useRef(new Map<string, string>());
+  const reportRows = dashboard?.reports?.days;
+  const reportRevision = useCallback((day: string) => reportRows?.find(row => row.day === day)?.revision ?? 0, [reportRows]);
+  const fetchReport = useCallback((day: string, revision: number) => {
+    requestedReports.current.set(day, `${day}@${revision}`);
+    readReport(day)
+      .then(read => setReportBodies(current => ({ ...current, [day]: read === null
+        ? { state: 'absent', report: null, refusal: null, revision, error: null }
+        : read.report ? { state: 'ready', report: read.report, refusal: null, revision: Math.max(revision, read.report.revision), error: null }
+          : { state: 'refused', report: null, refusal: read.refusal, revision, error: null } })))
+      .catch((error: unknown) => setReportBodies(current => ({ ...current, [day]: { state: 'error', report: null, refusal: null, revision, error: error instanceof ReportReadRefused ? error.message : error instanceof Error ? error.message : 'The report could not be read.' } satisfies ReportSlot })));
+  }, []);
+  useEffect(() => {
+    for (const day of [reportUrl.day, reportUrl.vs]) {
+      if (!day) continue;
+      const revision = reportRevision(day);
+      if (requestedReports.current.get(day) === `${day}@${revision}`) continue;
+      fetchReport(day, revision);
+    }
+  }, [reportUrl.day, reportUrl.vs, reportRevision, fetchReport]);
+  // RETRY re-issues a failed read for the revision the index lists now.
+  const retryReport = useCallback((day: string) => fetchReport(day, reportRevision(day)), [fetchReport, reportRevision]);
   // Tester rows arrive with an empty posts[] (the dashboard counts, it no
   // longer reads every post); a row's pops are fetched on the expand that
   // first needs them and cached against the row's pop stamp, so the same
@@ -168,7 +216,11 @@ export default function TestControlScreen() {
   const simulation = simulationStatus(runner, dashboard);
   const lab = labStatus(labSummary);
   const diagnostics = diagnosticsStatus({ state: deskRealtimeState, dashboard, posts: realtimePosts, feedPosts: realtimeFeedPosts, channels: feedChannels.length });
-  const tabs = useMemo(() => TABS.map(item => ({ ...item, caption: item.id === 'simulation' ? simulation.caption : item.id === 'lab' ? lab.caption : item.id === 'diagnostics' ? diagnostics.caption : undefined })), [simulation.caption, lab.caption, diagnostics.caption]);
+  // The frame's clock stands in for now: the stale alarm (`stale — expected
+  // 00:45`) is judged against the time the last frame arrived, which the
+  // stream (or the 15 s poll while it is down) keeps current.
+  const reports = reportsStatus(dashboard?.reports ?? null, dashboard?.generatedAtMs || undefined);
+  const tabs = useMemo(() => TABS.map(item => ({ ...item, caption: item.id === 'simulation' ? simulation.caption : item.id === 'lab' ? lab.caption : item.id === 'diagnostics' ? diagnostics.caption : item.id === 'reports' ? reports.caption : undefined })), [simulation.caption, lab.caption, diagnostics.caption, reports.caption]);
   const simSwitch = tab === 'testers' || tab === 'pops' ? { count: simAccounts, shown: panels.open.showSimRows, onToggle: toggleSimRows } : null;
 
   const panel = (() => {
@@ -196,6 +248,12 @@ export default function TestControlScreen() {
       case 'algorithm': return !dashboard ? <Connecting loading={loading} /> : <AlgorithmSection split={radiusSplit}>
         <AlgorithmDesk digest={dashboard.algorithm} refusal={dashboard.algorithmRefusal} openPostId={drill.origin === 'radius' ? drill.openPostId : null} onOpenPost={openRadiusPost} postHistory={drill.history} postHistoryState={drill.state} testers={dashboard.testers} />
       </AlgorithmSection>;
+      // The report is the desk's conclusion (reports §3.1): the index rides
+      // the frame (0 reads to list), a body is read once per day@revision.
+      case 'reports': return !dashboard ? <Connecting loading={loading} /> : <>
+        <Strip text={reports.text} tone={reports.tone} />
+        <ReportsTab index={dashboard.reports} open={reportUrl.day} vs={reportUrl.vs} bodies={reportBodies} onOpen={openReport} onCompare={compareReport} onClose={closeReport} onRetry={retryReport} drill={drill} onOpenPost={openReportPost} />
+      </>;
       case 'simulation': return <>
         <Strip text={simulation.text} tone={simulation.tone} />
         <SimulationBody dashboard={dashboard} runner={runner} events={simulationEvents} panels={panels} />

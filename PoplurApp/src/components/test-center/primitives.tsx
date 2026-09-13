@@ -34,6 +34,29 @@ export function Delta({ meters, tone = 'real', size = 'cell', style, onSlab = fa
   return <Text style={[size === 'metric' ? T.metricValue : P.delta, style, { color }]}>{tone === 'sim' ? 'sim ' : ''}{glyph} {km(Math.abs(meters))}</Text>;
 }
 
+/** A signed change in any unit (the reports' compare cells, reports §3.5):
+ *  the Delta grammar — ▲ up, ▼ down, · flat, `C.pop`/`C.decay`/`C.away`,
+ *  tabular nums — for metres, counts, ratios, per-post-day rates, days and
+ *  CA$. `null` prints `—` in the flat tone: a value that appeared or vanished
+ *  is a gate flip and never a number moving (the caller adds the chip).
+ *  Metres go through `km`; a ratio is printed to two places; cad to four. */
+export function Change({ value, unit, size = 'cell', style, onSlab = false, colors }: { value: number | null; unit: 'm' | 'count' | 'ratio' | 'perPostDay' | 'days' | 'cad'; size?: 'cell' | 'metric'; style?: StyleProp<TextStyle>; onSlab?: boolean; colors?: { up: string; down: string; flat: string } }) {
+  // `colors` is the print route's light set (reports §4.1): the glyph's hue is
+  // inline, so the paper stylesheet cannot reach it and the caller chooses it.
+  const flat = colors?.flat ?? (onSlab ? C.onSlabSoft : C.away);
+  if (value === null) return <Text style={[size === 'metric' ? T.metricValue : P.delta, style, { color: flat }]}>—</Text>;
+  const glyph = value > 0 ? '▲' : value < 0 ? '▼' : '·';
+  const color = value > 0 ? colors?.up ?? C.pop : value < 0 ? colors?.down ?? C.decay : flat;
+  const magnitude = Math.abs(value);
+  const text = unit === 'm' ? km(magnitude)
+    : unit === 'ratio' ? magnitude.toFixed(2)
+    : unit === 'cad' ? `CA$${magnitude.toFixed(4)}`
+    : unit === 'perPostDay' ? `${km(magnitude)}/post-day`
+    : unit === 'days' ? `${Number.isInteger(magnitude) ? magnitude : magnitude.toFixed(1)} d`
+    : String(Number.isInteger(magnitude) ? magnitude : Math.round(magnitude * 100) / 100);
+  return <Text style={[size === 'metric' ? T.metricValue : P.delta, style, { color }]}>{glyph} {text}</Text>;
+}
+
 /** A labelled value inside a card: drill facts, the Algorithm facts row — a
  *  small glass card with a 2 px clay bar down its edge. The meta line takes
  *  a node so a signed net can sit in it as a `Delta`. */
@@ -178,9 +201,12 @@ export function Connecting({ loading }: { loading: boolean }) {
 }
 
 /** The one-line status at the top of an operator tab's panel — the same
- *  derivation the tab shows as its caption while it is not selected. */
-export function Strip({ text, tone = 'off' }: { text: string; tone?: 'live' | 'warn' | 'off' }) {
-  return <Text numberOfLines={2} style={[T.meta, P.strip, tone === 'live' ? P.toneLive : tone === 'warn' ? P.toneWarn : null]}>{text}</Text>;
+ *  derivation the tab shows as its caption while it is not selected. A
+ *  caption is clamped to two lines; a strip that carries a sentence the
+ *  reader must see whole (a report's first line, reports §3.4 item 1) passes
+ *  `lines={0}` — React Native's own "no limit" value for `numberOfLines`. */
+export function Strip({ text, tone = 'off', lines = 2 }: { text: string; tone?: 'live' | 'warn' | 'off'; lines?: number }) {
+  return <Text numberOfLines={lines} style={[T.meta, P.strip, tone === 'live' ? P.toneLive : tone === 'warn' ? P.toneWarn : null]}>{text}</Text>;
 }
 
 /** The tag on every simulation row: colour never carries the meaning alone. */

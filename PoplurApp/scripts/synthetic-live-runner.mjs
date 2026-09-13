@@ -858,7 +858,11 @@ export function createSyntheticLiveRunner({
         || value(fields.locationVisibility) === 'hidden') return [];
       const latitude = Number(value(fields.latitude)), longitude = Number(value(fields.longitude));
       return Number.isFinite(latitude) && Number.isFinite(longitude)
-        ? [{ id: row.document.name.split('/').pop(), latitude, longitude, channel: value(fields.channelId) || 'live' }] : [];
+        // A post without channelId is filed under the feed's DEFAULT_FEED_CHANNEL
+        // ('news', poplur-clay-map/src/nativeFeedPosts.ts) — never 'live'. 13 Sep:
+        // the owner's Paris post has no channelId and every fourth engage cycle
+        // walked channel 116 for it and gave up.
+        ? [{ id: row.document.name.split('/').pop(), latitude, longitude, channel: value(fields.channelId) || 'news' }] : [];
     });
     if (!posts.length) return null;
     const target = posts[(actor.ownerVisitIndex++ || 0) % posts.length];

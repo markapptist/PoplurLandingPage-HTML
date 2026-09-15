@@ -794,7 +794,21 @@ export function createSyntheticLiveRunner({
         await sleep(1_500);
       }
     }
-    if (!spotChosen) throw new Error('The Map picker never accepted a spot for this post.');
+    if (!spotChosen) {
+      // Say what the picker was showing. 15 Sep: every actor's SECOND post
+      // failed here ("Visible frames did not expose button") after a clean
+      // first one; the compose title tells 'Finding your area…' / 'Choose a
+      // spot' / 'Use this spot' apart, and the frame list tells whether the
+      // picker iframe exists at all.
+      const picker = await Promise.all(page.frames().map(async frame => {
+        const url = frame.url().slice(0, 120);
+        const title = await frame.locator('#poplur-map-compose-title').first().textContent({ timeout: 1_000 }).catch(() => null);
+        const buttons = title == null ? [] : await frame.locator('[role=dialog] button').evaluateAll(list => list.map(b => (b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 40)).filter(Boolean).slice(0, 8)).catch(() => []);
+        return title == null ? url : `${url} title="${title.trim()}" buttons=${JSON.stringify(buttons)}`;
+      })).catch(() => []);
+      log(`${actor.actorId} picker diagnostics: ${picker.join(' | ') || '(no frames)'}`);
+      throw new Error('The Map picker never accepted a spot for this post.');
+    }
     // Choosing the spot remounts the map iframe, which can detach the frame
     // handle taken before the picker opened. Re-resolve it for the review.
     const review = await clayFrame(actor);
@@ -803,6 +817,15 @@ export function createSyntheticLiveRunner({
     actor.action = 'publish-post';
     await queueCapture(actor, 'publish-post', 'publish-review', { validate: false });
     await review.getByLabel('I can share this').check();
+    // The composer uploads only through the shell bridge (PostComposer.tsx:
+    // isNativeShell() → publishPost); without it the same button shows a
+    // local "Posted" with the note "nothing was sent from this browser
+    // preview". 13 Sep: 42 straight "no bound post upload" failures after
+    // each actor's first post. Say which it is before pressing.
+    const shell = await review.evaluate(() => ({ bridge: Boolean(window.PoplurNative), referrer: document.referrer, href: window.location.href.slice(0, 160) }), undefined, { timeout: 10_000 }).catch(() => null);
+    if (shell && !shell.bridge) {
+      throw new Error(`The Poplur shell bridge is missing from the home frame (referrer ${shell.referrer || 'none'}; ${shell.href}) — the composer would only preview-post.`);
+    }
     await review.getByRole('button', { name: /Post to TV/i }).click();
     const postedDialog = review.getByRole('dialog', { name: 'Posted' });
     const uploadAlert = review.getByRole('alert').first();
@@ -814,7 +837,7 @@ export function createSyntheticLiveRunner({
     ]);
     if (outcome.kind === 'error') throw new Error(`Visible upload failed: ${outcome.text || 'Poplur showed an empty upload error.'}`);
     if (actor.policy.state.postIds.size <= before || !actor.policy.state.lastPostId) {
-      throw new Error('The app reported a post but no bound post upload was observed.');
+      throw new Error(`The app reported a post (${outcome.kind}) but no bound post upload was observed.`);
     }
     actor.postsPublished += 1;
     actor.lastPostId = actor.policy.state.lastPostId;
@@ -843,6 +866,7 @@ export function createSyntheticLiveRunner({
    */
   // Visit the public location of an owner post, then find it through the
   // normal Feed controls. Reading this index never changes reach or counters.
+  const OWNER_POST_CANDIDATES = 3;
   const findOwnerPost = async actor => {
     const response = await fetch('https://firestore.googleapis.com/v1/projects/poplur2025/databases/(default)/documents:runQuery', {
       method: 'POST', signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${actor.policy.state.idToken}`, 'content-type': 'application/json' },
@@ -857,15 +881,31 @@ export function createSyntheticLiveRunner({
       if (!fields || value(fields.status) === 'deleted' || value(fields.audience) === 'private'
         || value(fields.locationVisibility) === 'hidden') return [];
       const latitude = Number(value(fields.latitude)), longitude = Number(value(fields.longitude));
+      const createdAtMillis = Date.parse(fields.createdAt?.timestampValue || '') || 0;
       return Number.isFinite(latitude) && Number.isFinite(longitude)
         // A post without channelId is filed under the feed's DEFAULT_FEED_CHANNEL
         // ('news', poplur-clay-map/src/nativeFeedPosts.ts) — never 'live'. 13 Sep:
         // the owner's Paris post has no channelId and every fourth engage cycle
         // walked channel 116 for it and gave up.
-        ? [{ id: row.document.name.split('/').pop(), latitude, longitude, channel: value(fields.channelId) || 'news' }] : [];
+        ? [{ id: row.document.name.split('/').pop(), latitude, longitude, createdAtMillis, channel: value(fields.channelId) || 'news' }] : [];
     });
     if (!posts.length) return null;
-    const target = posts[(actor.ownerVisitIndex++ || 0) % posts.length];
+    // The Feed is a newest-N pool: an owner post older than the pool's window
+    // is on no channel at all (13 Sep: three of four owner posts had aged out
+    // behind the hourly simulation's drops and three engage cycles in four
+    // were skipped). Newest first, and when a target is not on its channel,
+    // fall through to the next candidate instead of giving up the cycle.
+    posts.sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+    const startAt = (actor.ownerVisitIndex++ || 0) % posts.length;
+    for (let offset = 0; offset < Math.min(posts.length, OWNER_POST_CANDIDATES); offset += 1) {
+      const found = await reachOwnerPost(actor, posts[(startAt + offset) % posts.length]);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  // Visit one owner post's public location and walk its channel for it.
+  const reachOwnerPost = async (actor, target) => {
     await setHostSyntheticLocation(actor, { ...target, place: 'Visiting an owner post' });
     let clay = await clayFrame(actor);
     await stampFrameLocation(clay, target);
@@ -907,13 +947,20 @@ export function createSyntheticLiveRunner({
     if (selected !== String(channelNumbers[target.channel])) throw new Error(`Could not tune owner channel ${target.channel}; saw ${selected}.`);
     await sleep(2_000);
     const seen = new Set();
+    let empty = 0;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const post = clay.locator('[data-feed-post-id]').first();
-      const id = await post.getAttribute('data-feed-post-id').catch(() => '');
-      const owner = await post.getAttribute('data-feed-post-owner').catch(() => '');
+      // A channel with no post renders no [data-feed-post-id] at all; each
+      // getAttribute then waited the page default (75 s) before its catch,
+      // twice per turn, for a hundred turns — the like-post step "hung" for
+      // hours on every actor after the 14 Sep reboot. Bound the read and
+      // give an empty channel three looks, not a hundred.
+      const id = await post.getAttribute('data-feed-post-id', { timeout: 2_000 }).catch(() => '');
+      const owner = id ? await post.getAttribute('data-feed-post-owner', { timeout: 2_000 }).catch(() => '') : '';
       if (owner === LIVE_OWNER_UID) return { clay, id };
-      if (id && seen.has(id)) break;
-      if (id) seen.add(id);
+      if (!id) { empty += 1; if (empty >= 3) break; }
+      else if (seen.has(id)) break;
+      else seen.add(id);
       if (isDock) await dockKey('ArrowRight');
       else {
         const next = clay.getByRole('button', { name: 'Next post', exact: true }).first();
@@ -925,7 +972,7 @@ export function createSyntheticLiveRunner({
     // Say so: a silent null here looked like a hang for a whole evening
     // (12 Sep) while the actors were healthy and the owner's post simply was
     // not on the channel.
-    log(`${actor.actorId} owner post ${target.id} not reached on channel ${target.channel} (${channelNumbers[target.channel]}); walked ${seen.size} posts`);
+    log(`${actor.actorId} owner post ${target.id} not reached on channel ${target.channel} (${channelNumbers[target.channel]}); walked ${seen.size} posts${seen.size ? '' : ' (channel empty)'}`);
     return null;
   };
 

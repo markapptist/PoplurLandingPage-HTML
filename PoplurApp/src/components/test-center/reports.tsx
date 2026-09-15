@@ -424,9 +424,14 @@ function VerdictBody({ row, report, hue }: { row: BetaReportVerdict; report: Bet
 }
 
 const checkOf = (report: BetaAlgorithmReport, id: string): BetaReportCheck | null => report.checks.find(check => check.id === id) ?? null;
-/** Six `Fact`s (§3.4 item 4): drift (all classes), farm bound, claim ceiling, anchors, surface, seed reach. */
+/** Seven `Fact`s (§3.4 item 4): drift (all classes), farm bound, claim ceiling, anchors, surface, seed reach, feed pool. */
 function ChecksStrip({ report, hue }: { report: BetaAlgorithmReport; hue: Hue }) {
-  const drift = checkOf(report, 'drift'), farm = checkOf(report, 'farmBound'), claim = checkOf(report, 'claimCeiling'), anchors = checkOf(report, 'anchors'), surface = checkOf(report, 'surface'), seed = checkOf(report, 'seedReach');
+  const drift = checkOf(report, 'drift'), farm = checkOf(report, 'farmBound'), claim = checkOf(report, 'claimCeiling'), anchors = checkOf(report, 'anchors'), surface = checkOf(report, 'surface'), seed = checkOf(report, 'seedReach'), pool = checkOf(report, 'feedPool');
+  // The shared post pool is a newest-N window (native relay 96, browser 160): the check carries the day's
+  // creation counts and the turnover hours; a report written before the check existed renders "—".
+  // A zero-creation day still carries the week's rate (perDay7 > 0): say
+  // both, so the value never contradicts the sentence under it.
+  const poolTurnover = pool ? pool.numbers.turnoverHoursNative != null && pool.numbers.turnoverHoursWeb != null ? `${pool.numbers.createdOnDay === 0 ? 'none on the day · week ' : ''}≈ ${fmt(pool.numbers.turnoverHoursNative, 1)} h phone / ${fmt(pool.numbers.turnoverHoursWeb, 1)} h web` : 'no turnover' : null;
   const driftRows = drift ? Object.entries(drift.rows).filter(([kind]) => kind !== 'seed').map(([kind, row]) => `${kind} ${row.seen === null ? 'unseen' : fmt(row.seen)}×${fmt(row.n)}`).join(' · ') : '';
   const contamination = report.evidence.snapshots?.contamination.d7 ?? null;
   return <View style={styles.stack}>
@@ -438,6 +443,7 @@ function ChecksStrip({ report, hue }: { report: BetaAlgorithmReport; hue: Hue })
       <Fact label="ANCHORS" value={anchors ? `${anchors.status} · ${fmt(anchors.numbers.atWorld)}/${fmt(anchors.numbers.everAtWorld)} at world` : '—'} meta={anchors?.worst ? `worst ${anchors.worst.postId.slice(0, 8)} ${km(anchors.worst.radiusMeters)} (${fmt(anchors.worst.ratePerPassSeen * 100, 2)} %/pass)` : 'no anchor below the world'} />
       <Fact label="SURFACE" value={surface ? `${surface.status} · ${fmt(surface.numbers.labelledEntries)} labelled` : '—'} meta={surface?.note ?? undefined} />
       <Fact label="SEED REACH" value={seed ? seed.status === 'hidden' ? 'hidden while the trial runs' : seed.status : '—'} meta={seed ? `${seed.numbers.atClaimShare !== null && seed.numbers.atClaimShare !== undefined ? `at-claim share ${fmt(seed.numbers.atClaimShare, 2)} · ` : ''}live ${fmt(seed.numbers.livePosts)} · pairs ${fmt(seed.numbers.pairs)} · near-miss ${fmt(seed.numbers.nearMissPairs)} · ${seed.basis ?? ''}${seed.note ? ` · ${seed.note}` : ''}` : undefined} />
+      <Fact label="FEED POOL" value={pool ? `${pool.status} · ${poolTurnover}` : '—'} meta={pool?.text ?? undefined} />
     </View>
     {contamination && <Text style={[T.meta, { color: hue.meta }]}>CONTAMINATION 7 d · <Text style={{ color: hue.sim }}>synthetic {fmt(contamination.syntheticMeters)} m over {fmt(contamination.syntheticEntries)} entries on {fmt(contamination.posts.length)} posts</Text> · owner on real posts {fmt(contamination.ownerMeters)} m · review {fmt(contamination.reviewMeters)} m · simulation owner uid {contamination.simulationOwnerUid}</Text>}
     {!contamination && <Text style={[T.meta, { color: hue.meta }]}>CONTAMINATION 7 d · no snapshot on this day{report.backfilled ? ' (backfilled)' : ''}</Text>}

@@ -171,6 +171,55 @@ test('the chips cannot be missed on the document, and the trial day opens with t
   assert.ok(decode(back).includes('no snapshot on this day'));
 });
 
+/** The text nodes that follow `>LABEL<` in a `Fact` card: [value, meta, …] — the
+ *  next card's label (or the CONTAMINATION line) when the card has no meta. */
+const factTexts = (html, label, count = 2) => {
+  const at = html.indexOf(`>${label}<`);
+  assert.ok(at >= 0, `the ${label} fact is in the markup`);
+  return Array.from(html.slice(at + label.length + 2).matchAll(/>([^<]+)</g)).slice(0, count).map(match => decode(match[1]));
+};
+
+test('the FEED POOL check renders as the seventh Fact from the document, and "—" when a report predates it', () => {
+  // The shared post pool is a newest-N window (native relay 96, browser 160); the digest's
+  // seventh check carries the day's creation counts and the turnover hours. Evidence only.
+  const report = algorithmReport(fixture.suggest);
+  const pool = report.checks.find(check => check.id === 'feedPool');
+  assert.equal(report.checks.length, 7, 'the suggest fixture carries seven checks');
+  assert.equal(report.checks[6].id, 'feedPool', 'feedPool is the seventh, after seedReach');
+  assert.equal(pool.status, 'watch');
+  assert.deepEqual(pool.numbers, { createdOnDay: 452, createdReal: 2, createdOfficial: 0, createdSynthetic: 450, simShare: 450 / 452, perDay7: 447, turnoverHoursNative: 5.2, turnoverHoursWeb: 8.6, poolNative: 96, poolWeb: 160 }, 'the normaliser keeps every number of the contract');
+  assert.ok(pool.text && pool.text.startsWith('≈ 447 pops/day over the 7 d ending 2026-09-11 (452 on 2026-09-11: 450 simulation, 2 real, 0 official)'), pool.text);
+  assert.ok(pool.text.endsWith("a real pop leaves other testers' Feed and Map after that unless it is their own"), pool.text);
+  for (const mode of ['desk', 'paper']) {
+    const html = render(React.createElement(ReportMemo, mode === 'desk' ? { report, mode, drill, onOpenPost: noop } : { report, mode }));
+    const checks = html.slice(html.indexOf('>CHECKS<'), html.indexOf('CONTAMINATION 7 d'));
+    // Order inside the strip: the six existing Facts, then FEED POOL.
+    let last = -1;
+    for (const label of ['DRIFT · ALL CLASSES', 'FARM BOUND', 'CLAIM CEILING', 'ANCHORS', 'SURFACE', 'SEED REACH', 'FEED POOL']) { const at = checks.indexOf(`>${label}<`); assert.ok(at > last, `${label} follows the previous Fact on ${mode} (${at} > ${last})`); last = at; }
+    const [value, meta] = factTexts(html, 'FEED POOL');
+    assert.equal(value, 'watch · ≈ 5.2 h phone / 8.6 h web', `the value on ${mode}`);
+    assert.equal(meta, pool.text, `the meta is the check's own sentence on ${mode}`);
+  }
+  // The zero day: no turnover numbers, the sentence says so.
+  const backfilled = algorithmReport(fixture.backfilled);
+  const zero = backfilled.checks.find(check => check.id === 'feedPool');
+  assert.equal(zero.status, 'clear');
+  assert.equal(zero.numbers.turnoverHoursWeb, null);
+  assert.equal(zero.numbers.simShare, null);
+  const [zeroValue, zeroMeta] = factTexts(render(React.createElement(ReportMemo, { report: backfilled, mode: 'desk', drill, onOpenPost: noop })), 'FEED POOL');
+  assert.equal(zeroValue, 'clear · no turnover');
+  assert.equal(zeroMeta, 'no pops created on 2026-09-05; the pool did not turn over');
+  // A report written before the check existed: the Fact stays, its value is "—" and it carries no meta line.
+  const raw = JSON.parse(JSON.stringify(fixture.suggest));
+  raw.checks = raw.checks.filter(check => check.id !== 'feedPool');
+  const older = algorithmReport(raw);
+  assert.equal(older.checks.length, 6);
+  assert.equal(older.checks.find(check => check.id === 'feedPool'), undefined);
+  const [olderValue, next] = factTexts(render(React.createElement(ReportMemo, { report: older, mode: 'desk', drill, onOpenPost: noop })), 'FEED POOL');
+  assert.equal(olderValue, '—');
+  assert.ok(next.startsWith('CONTAMINATION 7 d'), `no meta line without the check (next text node: ${next})`);
+});
+
 test('Strip clamps a caption to two lines and unclamps on lines={0}', () => {
   // The primitive the memo relies on: the tab caption keeps its two-line
   // clamp; `lines={0}` (React Native's "no limit") emits no clamp at all.

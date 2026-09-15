@@ -94,11 +94,14 @@ async function getJSON(path, { auth = false, timeoutMs = 8_000 } = {}) {
   }
 }
 
-async function postCommand(command) {
+// A start answers only once every actor's browser is up (> 15 s on a cold
+// shell), which the old fixed timeout logged as "start failed: HTTP 0 null"
+// while the run went on regardless.
+async function postCommand(command, timeoutMs = 15_000) {
   const token = resolveToken();
   if (!token) return { ok: false, status: 0, body: null, error: 'No local runner token available (keychain + env + file all empty).' };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${BASE}/command`, {
       method: 'POST',
@@ -120,6 +123,18 @@ async function postCommand(command) {
 // clock, which just means one extra check cycle of patience — never a
 // problem, since the interval is short relative to the grace period.
 let idleSinceMs = null;
+
+// A live runner refuses a second start ("The live cohort runner is already
+// active" — 85 refreshes failed that way between 3 and 13 Sep, so no run was
+// ever refreshed). Stop it first, let the browsers close, then start.
+async function restartBatch() {
+  const stop = await postCommand({ enabled: false });
+  if (!stop.ok) { log(`stop failed: HTTP ${stop.status} ${JSON.stringify(stop.body) || stop.error}`); return false; }
+  await new Promise(resolve => setTimeout(resolve, 5_000));
+  const result = await postCommand({ enabled: true, mode: 'five-actor-live' }, 180_000);
+  log(result.ok ? `fresh run started: ${JSON.stringify(result.body?.status ? { status: result.body.status } : result.body)}` : `refresh failed: HTTP ${result.status} ${JSON.stringify(result.body) || result.error}`);
+  return result.ok;
+}
 
 async function tick() {
   const health = await getJSON('/health');
@@ -148,10 +163,19 @@ async function tick() {
     const ageMs = startedAtMs ? Date.now() - startedAtMs : 0;
     const allPosted = actors.length > 0 && actors.every(actor => (actor.postsPublished ?? 0) >= LIVE_MAX_POSTS_PER_ACTOR);
     const stale = REFRESH_INTERVAL_MS > 0 && ageMs >= REFRESH_INTERVAL_MS;
+    // The runner never retries an actor that errored (a sign-in against a
+    // dev server that was still booting after a reboot, 14–15 Sep), so a run
+    // can sit "live" with three dead actors for hours. Treat that like an
+    // idle runner: give it the grace period, then restart the batch.
+    const errored = actors.filter(actor => actor.status === 'error');
+    if (errored.length && ageMs >= IDLE_GRACE_MS) {
+      log(`${errored.length} actor(s) in error ${Math.round(ageMs / 60_000)}min into this run (${errored.map(a => a.actorId).join(' ')}) — restarting the batch`);
+      await restartBatch();
+      return;
+    }
     if (allPosted || stale) {
       log(`current run ${allPosted ? 'has posted its full batch' : `is stale (${Math.round(ageMs / 60_000)}min old)`} — starting a fresh batch`);
-      const result = await postCommand({ enabled: true, mode: 'five-actor-live' });
-      log(result.ok ? `fresh run started: ${JSON.stringify(result.body?.status ? { status: result.body.status } : result.body)}` : `refresh failed: HTTP ${result.status} ${JSON.stringify(result.body) || result.error}`);
+      await restartBatch();
     } else {
       const publishedSummary = actors.map(a => `${a.actorId}:${a.postsPublished ?? 0}/${LIVE_MAX_POSTS_PER_ACTOR}`).join(' ');
       log(`live and healthy (${Math.round(ageMs / 60_000)}min into this run) — ${publishedSummary}`);
@@ -169,7 +193,7 @@ async function tick() {
     return;
   }
   log(`runner has been ${status} for ${Math.round(idleForMs / 60_000)}min — starting five-actor-live`);
-  const result = await postCommand({ enabled: true, mode: 'five-actor-live' });
+  const result = await postCommand({ enabled: true, mode: 'five-actor-live' }, 180_000);
   log(result.ok ? `run started: ${JSON.stringify(result.body?.status ? { status: result.body.status } : result.body)}` : `start failed: HTTP ${result.status} ${JSON.stringify(result.body) || result.error}`);
   if (result.ok) idleSinceMs = null;
 }

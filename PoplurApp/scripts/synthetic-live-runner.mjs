@@ -790,7 +790,11 @@ export function createSyntheticLiveRunner({
       } catch (error) {
         const message = String(error?.message || error);
         if (!/detached|Cannot find context|did not expose|Timeout/i.test(message)) throw error;
-        log(`${actor.actorId} spot picker retry ${attempt + 1}: ${message.slice(0, 70)}`);
+        // A permission card standing over the home unmounts the map surface
+        // (HomeTwin: covered surfaces drop synchronously), so the picker's
+        // iframe never appears while one is open. Answer it before retrying.
+        const answered = await answerPermissionCards(await clayFrame(actor)).catch(() => 0);
+        log(`${actor.actorId} spot picker retry ${attempt + 1}: ${message.slice(0, 70)}${answered ? ` (answered ${answered} permission card)` : ''}`);
         await sleep(1_500);
       }
     }
@@ -802,9 +806,12 @@ export function createSyntheticLiveRunner({
       // picker iframe exists at all.
       const picker = await Promise.all(page.frames().map(async frame => {
         const url = frame.url().slice(0, 120);
+        const screen = await visibleClayScreen(frame).catch(() => '');
+        const dialogs = await frame.locator('[role=dialog]').evaluateAll(list => list.map(el => (el.getAttribute('aria-label') || el.querySelector('h1,h2,h3')?.textContent || '').trim().slice(0, 40)).filter(Boolean).slice(0, 6)).catch(() => []);
+        const state = `${screen ? ` screen=${screen}` : ''}${dialogs.length ? ` dialogs=${JSON.stringify(dialogs)}` : ''}`;
         const title = await frame.locator('#poplur-map-compose-title').first().textContent({ timeout: 1_000 }).catch(() => null);
         const buttons = title == null ? [] : await frame.locator('[role=dialog] button').evaluateAll(list => list.map(b => (b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 40)).filter(Boolean).slice(0, 8)).catch(() => []);
-        return title == null ? url : `${url} title="${title.trim()}" buttons=${JSON.stringify(buttons)}`;
+        return title == null ? `${url}${state}` : `${url}${state} title="${title.trim()}" buttons=${JSON.stringify(buttons)}`;
       })).catch(() => []);
       log(`${actor.actorId} picker diagnostics: ${picker.join(' | ') || '(no frames)'}`);
       throw new Error('The Map picker never accepted a spot for this post.');

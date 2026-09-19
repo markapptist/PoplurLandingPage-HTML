@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from 'react';
 
 export type ShowcaseStep = {
   id: string;
+  /** short toolbar name */
+  nav: string;
   eyebrow: string;
   title: string;
   body: string;
@@ -24,27 +26,27 @@ const SCREENS = {
   feed: require('@/assets/images/landing/screens/feed.jpg'),
   place: require('@/assets/images/landing/screens/place.jpg'),
   types: require('@/assets/images/landing/screens/types.jpg'),
-  store: require('@/assets/images/landing/screens/store.png'),
+  store: require('@/assets/images/landing/screens/store.jpg'),
   splash: require('@/assets/images/landing/screens/splash.png'),
 };
 
 export const SHOWCASE_STEPS: ShowcaseStep[] = [
-  { id: 'map', eyebrow: 'The map is the home screen', title: 'See what is popping around you.',
+  { id: 'map', nav: 'Map', eyebrow: 'The map is the home screen', title: 'See what is popping around you.',
     body: 'A stylised 3D clay world with live weather and time of day. Every pop sits on the map where it was made — you see what is near, claim ground, and watch pops spread.',
     screen: SCREENS.map },
-  { id: 'radius', eyebrow: 'Every pop has a radius', title: 'Reach is earned per post, not per account.',
+  { id: 'radius', nav: 'Radius', eyebrow: 'Every pop has a radius', title: 'Reach is earned per post, not per account.',
     body: 'A pop starts with a 5 km radius. As people engage, the radius grows — all the way to the whole world. Left alone, it decays and the pop disappears. Someone with no following can be seen by everyone around them.',
     fine: 'Earned reach can be claimed on your next pop, once. It is never minted by posting more.', screen: SCREENS.radius },
-  { id: 'feed', eyebrow: 'Found without followers', title: 'Inside a radius, you are in the feed.',
+  { id: 'feed', nav: 'Feed', eyebrow: 'Found without followers', title: 'Inside a radius, you are in the feed.',
     body: 'Whether or not you follow the poster. Discovery is interception, not subscription: the feed is what has reached where you stand.',
     screen: SCREENS.feed },
-  { id: 'place', eyebrow: 'Post from where you stand', title: 'One live pop per place.',
+  { id: 'place', nav: 'Place', eyebrow: 'Post from where you stand', title: 'One live pop per place.',
     body: 'Free posting is where you are. Post again within 5 km of your own pop and it replaces it, carrying its reach forward — the map stays honest about who was actually there.',
     fine: 'Posting anywhere else is a placement, and placements are paid.', screen: SCREENS.place },
-  { id: 'types', eyebrow: 'More than photos', title: 'Photos, carousels, video, music, podcasts.',
+  { id: 'types', nav: 'Post types', eyebrow: 'More than photos', title: 'Photos, carousels, video, music, podcasts.',
     body: 'Games and apps are designed into the same post pipeline. AI tools help people make posts and recommend where to post, by comparing how similar content has spread in different regions.',
     screen: SCREENS.types },
-  { id: 'business', eyebrow: 'For businesses', title: 'Reach the people who can walk in.',
+  { id: 'business', nav: 'Business', eyebrow: 'For businesses', title: 'Reach the people who can walk in.',
     body: 'A café posts the same way anyone does; its pop reaches the people nearby. Businesses pay to extend a radius or to place a pop somewhere they are not.',
     screen: SCREENS.store },
 ];

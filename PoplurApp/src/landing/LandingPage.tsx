@@ -1,13 +1,17 @@
 import { Image } from 'expo-image';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { sendBetaInviteEmail } from '@/services/betaEmailService';
 import { saveBetaSignupEmail } from '@/services/betaSignupService';
 import './landing.css';
-import { clusterPops, dotRadius, WORLD_H, WORLD_W } from './popWorld';
 import { useBetaScorecard, type Scorecard } from './useBetaScorecard';
 import { useLivePops } from './useLivePops';
 import Showcase, { SHOWCASE_STEPS } from './Showcase';
+import Backdrop from './Backdrop';
+import ColourBadge from './ColourBadge';
+import DottedWorld from './DottedWorld';
+import RadioBadge from './RadioBadge';
+import { readLandingThemeId, saveLandingThemeId, themeById, type LandingThemeId } from './themes';
 
 // Web-only product page: white, sleek, minimal. Plain DOM on purpose — the
 // native app never renders this route (see app/index.tsx).
@@ -65,30 +69,15 @@ function ScorecardCard({ scorecard, state }: { scorecard: Scorecard | null; stat
 
 function WorldCard() {
   const { pops, state } = useLivePops(400);
-  const clusters = useMemo(() => clusterPops(pops), [pops]);
   const real = pops.filter(p => !p.synthetic).length;
   const day = Date.now() - 86_400_000;
   const recent = pops.filter(p => p.createdAtMillis >= day).length;
-  return <div className="pl-card">
+  return <div className="pl-card pl-card-world">
     <div className="pl-card-head">
       <h3>Pops on the map right now</h3>
       <span className="pl-meta">{state === 'ready' ? `${pops.length} live · ${recent} in the last 24 h` : state === 'error' ? 'unavailable' : 'loading…'}</span>
     </div>
-    <div className="pl-world" role="img" aria-label="Where pops are landing, by region">
-      <svg viewBox={`0 0 ${WORLD_W} ${WORLD_H}`} preserveAspectRatio="none">
-        {clusters.map(c => {
-          const r = dotRadius(c.count); const sim = c.real === 0 && c.sim > 0;
-          return <g key={c.key}>
-            <circle className={`dot${sim ? ' sim' : ''}`} cx={c.x} cy={c.y} r={r} />
-            {c.label && <>
-              <text className="lbl" x={c.x + r + 5} y={c.y + 3}>{sim ? `SIM · ${c.label}` : c.label}</text>
-              <text className="lbl-meta" x={c.x + r + 5} y={c.y + 15}>{c.count} {c.count === 1 ? 'pop' : 'pops'} · {Math.round(c.peakKm)} km peak</text>
-            </>}
-          </g>;
-        })}
-      </svg>
-      {state === 'ready' && !pops.length && <div className="pl-empty">No public pops on the map yet.</div>}
-    </div>
+    <DottedWorld pops={pops} state={state} />
     <div className="pl-legend"><span><i /> {real} by people</span><span><i className="sim" /> {pops.length - real} synthetic harness</span></div>
   </div>;
 }
@@ -123,6 +112,12 @@ function Signup() {
 
 export default function LandingPage() {
   const { scorecard, state } = useBetaScorecard();
+  const [themeId, setThemeId] = useState<LandingThemeId>('default');
+  useEffect(() => { setThemeId(readLandingThemeId()); }, []);
+  const theme = themeById(themeId);
+  const changeTheme = (id: LandingThemeId) => { setThemeId(id); saveLandingThemeId(id); };
+  const inkMode = /^#f/i.test(theme.ink) ? 'light' : 'dark';
+  const themeVars = { '--accent': theme.accent, '--accent-2': theme.accent2, '--ink': theme.ink, '--bg': theme.bg } as CSSProperties;
   // Expo's web shell paints the document black behind the root; this page is
   // white to the edges. Scoped to the mount so the Test Center keeps its own.
   // …and Expo's shell pins `html, body, #root` to 100% height with the body's
@@ -133,14 +128,15 @@ export default function LandingPage() {
     const root = document.getElementById('root');
     const targets = [document.documentElement, document.body, root].filter((el): el is HTMLElement => !!el);
     const previous = targets.map(el => ({ background: el.style.background, height: el.style.height, overflow: el.style.overflow, display: el.style.display }));
-    targets.forEach(el => { el.style.background = '#ffffff'; el.style.height = 'auto'; el.style.overflow = 'visible'; });
+    targets.forEach(el => { el.style.background = theme.bg; el.style.height = 'auto'; el.style.overflow = 'visible'; });
     document.body.style.overflow = 'auto';
     if (root) root.style.display = 'block';
     return () => {
       targets.forEach((el, i) => { el.style.background = previous[i].background; el.style.height = previous[i].height; el.style.overflow = previous[i].overflow; el.style.display = previous[i].display; });
     };
-  }, []);
-  return <div className="pl">
+  }, [theme.bg]);
+  return <div className="pl" data-ink={inkMode} style={themeVars}>
+    <Backdrop theme={theme} />
     <nav className="pl-nav">
       <div className="wrap">
         <a className="pl-brand" href="#" onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
@@ -148,10 +144,14 @@ export default function LandingPage() {
           <Image source={WORDMARK} style={{ width: 78, height: 26 }} contentFit="contain" accessibilityLabel="Poplur" />
         </a>
         <div className="pl-nav-links">
-          <a href="#live" onClick={e => { e.preventDefault(); scrollTo('live'); }}>Live from the beta</a>
-          {SHOWCASE_STEPS.slice(0, 4).map(f => <a key={f.id} href={`#${f.id}`} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.eyebrow}</a>)}
+          <a href="#live" onClick={e => { e.preventDefault(); scrollTo('live'); }}>Live</a>
+          {SHOWCASE_STEPS.slice(0, 4).map(f => <a key={f.id} href={`#${f.id}`} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
-        <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>
+        <div className="pl-nav-tools">
+          <RadioBadge />
+          <ColourBadge theme={theme} onChange={changeTheme} />
+          <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>
+        </div>
       </div>
     </nav>
 

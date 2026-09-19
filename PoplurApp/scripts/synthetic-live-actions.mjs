@@ -233,11 +233,76 @@ export function neighbourSpotsForActor(actorId) {
 }
 
 /**
+ * Campus lane (16 Sep 2026). The student beta runs on two colleges while the
+ * cohort keeps posting worldwide, so a share of every actor's pops lands on a
+ * campus with ~1 km of wobble — inside a student's 5 km starting radius, not
+ * 13 km away in a suburb. Off unless POPLUR_CAMPUS_POST_SHARE is set (the
+ * launchd agents set it), which also keeps the pinned-random tests exact.
+ * Coordinates are the campuses' main entrances, 3-decimal like every spot.
+ */
+export const CAMPUS_POST_SPOTS = Object.freeze([
+  Object.freeze({ place: 'Humber North', latitude: 43.729, longitude: -79.607 }),
+  Object.freeze({ place: 'Humber Lakeshore', latitude: 43.594, longitude: -79.508 }),
+  Object.freeze({ place: 'Sheridan Trafalgar', latitude: 43.469, longitude: -79.699 }),
+  Object.freeze({ place: 'Sheridan Hazel McCallion', latitude: 43.591, longitude: -79.648 }),
+  Object.freeze({ place: 'Sheridan Davis', latitude: 43.732, longitude: -79.77 }),
+]);
+/** ~±1 km, so a campus pop stays on the campus a student is standing on. */
+export const CAMPUS_POST_JITTER_DEG = 0.01;
+
+/** The share of pops aimed at a campus: 0..1 from POPLUR_CAMPUS_POST_SHARE, else 0. */
+/**
+ * Who the cohort engages. 'owner' (default, the 5 Sep contract): it walks to
+ * the OWNER's posts. 'cohort' (owner decision 18 Sep 2026, for the student
+ * beta): it walks to each other's posts instead — otherwise the owner's pops
+ * get ~200 synthetic likes a week, never decay, and his account behaves like
+ * no student's. DMs and calls still need the consenting owner either way.
+ * Set POPLUR_ENGAGE_TARGET=cohort in the runner's launchd plist.
+ */
+export function engagementTarget(env = process.env) {
+  return env.POPLUR_ENGAGE_TARGET === 'cohort' ? 'cohort' : 'owner';
+}
+
+export function campusPostShare(env = process.env) {
+  const raw = Number(env.POPLUR_CAMPUS_POST_SHARE);
+  return Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0;
+}
+
+/**
+ * One campus pop: the campus farthest from the cohort's latest pops (so the
+ * colleges take turns), never the same campus twice in a row, jittered ~1 km.
+ */
+export function campusPostLocation(previous = null, random = Math.random, recent = []) {
+  const anchors = recent
+    .filter(point => Number.isFinite(point?.latitude) && Number.isFinite(point?.longitude))
+    .slice(-POST_SPREAD_MEMORY);
+  let spot = CAMPUS_POST_SPOTS[Math.min(CAMPUS_POST_SPOTS.length - 1, Math.max(0, Math.floor(random() * CAMPUS_POST_SPOTS.length)))];
+  if (anchors.length) {
+    let best = -1;
+    for (const candidate of CAMPUS_POST_SPOTS) {
+      const nearestKm = Math.min(...anchors.map(anchor => greatCircleKm(candidate, anchor)));
+      if (nearestKm > best) { best = nearestKm; spot = candidate; }
+    }
+  }
+  if (previous && spot.place === previous.place) {
+    spot = CAMPUS_POST_SPOTS[(CAMPUS_POST_SPOTS.indexOf(spot) + 1) % CAMPUS_POST_SPOTS.length];
+  }
+  return withCells({
+    place: spot.place,
+    latitude: roundPublic(spot.latitude + (random() * 2 - 1) * CAMPUS_POST_JITTER_DEG),
+    longitude: roundPublic(spot.longitude + (random() * 2 - 1) * CAMPUS_POST_JITTER_DEG),
+  });
+}
+
+/**
  * A fresh spot for one post: somewhere in the world, never the actor's own
  * home city, never the same place twice in a row, and never the exact point
- * a previous pop took. `random` is injectable so a test can pin it.
+ * a previous pop took. `random` is injectable so a test can pin it. When the
+ * campus lane is on, that share of pops goes to a college instead.
  */
 export function randomPostLocation(actorId, previous = null, random = Math.random, recent = []) {
+  const campusShare = campusPostShare();
+  if (campusShare > 0 && random() < campusShare) return campusPostLocation(previous, random, recent);
   const spots = postSpotsForActor(actorId);
   const draw = () => spots[Math.min(spots.length - 1, Math.max(0, Math.floor(random() * spots.length)))];
   let spot = draw();

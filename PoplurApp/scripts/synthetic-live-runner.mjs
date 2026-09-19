@@ -31,6 +31,7 @@ import {
   livePlanForActor,
   locationForActor,
   randomPostLocation,
+  engagementTarget,
   POST_SPREAD_MEMORY,
 } from './synthetic-live-actions.mjs';
 import {
@@ -886,7 +887,7 @@ export function createSyntheticLiveRunner({
     const posts = rows.flatMap(row => {
       const fields = row.document?.fields;
       if (!fields || value(fields.status) === 'deleted' || value(fields.audience) === 'private'
-        || value(fields.locationVisibility) === 'hidden') return [];
+        || value(fields.visibilityStatus) === 'expired' || value(fields.locationVisibility) === 'hidden') return [];
       const latitude = Number(value(fields.latitude)), longitude = Number(value(fields.longitude));
       const createdAtMillis = Date.parse(fields.createdAt?.timestampValue || '') || 0;
       return Number.isFinite(latitude) && Number.isFinite(longitude)
@@ -912,6 +913,42 @@ export function createSyntheticLiveRunner({
   };
 
   // Visit one owner post's public location and walk its channel for it.
+  // Owner decision 18 Sep 2026: during the student beta the cohort engages its
+  // OWN pops (POPLUR_ENGAGE_TARGET=cohort), not the owner's — his four pops had
+  // ~200 synthetic likes each in a week and never decayed. Same walk as the
+  // owner finder (reachOwnerPost visits the spot and finds the post on its
+  // channel); only the query changes. DMs/calls stay with the owner.
+  const findCohortPost = async actor => {
+    const others = ACTOR_IDS.filter(id => id !== actor.actorId);
+    if (!others.length) return null;
+    const response = await fetch('https://firestore.googleapis.com/v1/projects/poplur2025/databases/(default)/documents:runQuery', {
+      method: 'POST', signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${actor.policy.state.idToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'posts' }],
+        where: { fieldFilter: { field: { fieldPath: 'userID' }, op: 'IN', value: { arrayValue: { values: others.map(id => ({ stringValue: id })) } } } }, limit: 64 } }),
+    });
+    if (!response.ok) throw new Error(`Cohort post lookup failed (HTTP ${response.status}).`);
+    const rows = await response.json();
+    const value = field => field?.stringValue ?? field?.doubleValue ?? field?.integerValue;
+    const posts = rows.flatMap(row => {
+      const fields = row.document?.fields;
+      if (!fields || value(fields.status) === 'deleted' || value(fields.audience) === 'private'
+        || value(fields.visibilityStatus) === 'expired' || value(fields.locationVisibility) === 'hidden') return [];
+      const latitude = Number(value(fields.latitude)), longitude = Number(value(fields.longitude));
+      const createdAtMillis = Date.parse(fields.createdAt?.timestampValue || '') || 0;
+      return Number.isFinite(latitude) && Number.isFinite(longitude)
+        ? [{ id: row.document.name.split('/').pop(), latitude, longitude, createdAtMillis, channel: value(fields.channelId) || 'news' }] : [];
+    });
+    if (!posts.length) return null;
+    posts.sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+    const startAt = (actor.cohortVisitIndex++ || 0) % posts.length;
+    for (let offset = 0; offset < Math.min(posts.length, OWNER_POST_CANDIDATES); offset += 1) {
+      const found = await reachOwnerPost(actor, posts[(startAt + offset) % posts.length]);
+      if (found) return found;
+    }
+    return null;
+  };
+  const findEngagementPost = actor => (engagementTarget() === 'cohort' ? findCohortPost(actor) : findOwnerPost(actor));
+
   const reachOwnerPost = async (actor, target) => {
     await setHostSyntheticLocation(actor, { ...target, place: 'Visiting an owner post' });
     let clay = await clayFrame(actor);
@@ -1123,8 +1160,8 @@ export function createSyntheticLiveRunner({
   };
 
   const runEngageFlow = async actor => {
-    let post = await findOwnerPost(actor);
-    if (!post) { log(`${actor.actorId} engage skipped: no owner post reachable; next try in ${Math.round(LIVE_ENGAGEMENT_INTERVAL_MS / 60_000)} min`); actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS; return; }
+    let post = await findEngagementPost(actor);
+    if (!post) { log(`${actor.actorId} engage skipped: no ${engagementTarget()} post reachable; next try in ${Math.round(LIVE_ENGAGEMENT_INTERVAL_MS / 60_000)} min`); actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS; return; }
     actor.currentScreen = 'feed';
     actor.action = 'view-post';
     // A view requires the real image/video to be ready. Failed media is never
@@ -1136,7 +1173,7 @@ export function createSyntheticLiveRunner({
     // now, and again for the press.
     let clay = await clayFrame(actor);
     if (await clay.locator('[data-feed-post-id]').first().getAttribute('data-feed-post-id') !== post.id) {
-      post = await findOwnerPost(actor);
+      post = await findEngagementPost(actor);
       if (!post) return;
       clay = await clayFrame(actor);
     }

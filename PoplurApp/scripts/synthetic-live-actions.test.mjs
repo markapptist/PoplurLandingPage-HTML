@@ -18,6 +18,7 @@ import {
   validateRunnerCommand,
   randomPostLocation,
   postSpotsForActor, WORLD_POST_SPOTS, POST_SPOT_JITTER_DEG, POST_SPREAD_MEMORY, POST_SPREAD_CANDIDATES,
+  CAMPUS_POST_SPOTS, CAMPUS_POST_JITTER_DEG, campusPostShare, campusPostLocation, engagementTarget,
   expectedAccountTypeForActor,
 } from './synthetic-live-actions.mjs';
 import { ACTOR_IDS, SAFE_ACTIONS, SAFE_EVENT_SCREENS, isAllowedEvent, eventTypeForAction } from './synthetic-runner-actions.mjs';
@@ -425,6 +426,57 @@ test('randomPostLocation pushes a pop away from the cohort\'s latest pops', () =
   assert.ok(POST_SPREAD_MEMORY >= 8 && POST_SPREAD_CANDIDATES >= 4);
 });
 
+test('campus lane is off unless POPLUR_CAMPUS_POST_SHARE says otherwise, and is clamped to 0..1', () => {
+  assert.equal(campusPostShare({}), 0);
+  assert.equal(campusPostShare({ POPLUR_CAMPUS_POST_SHARE: 'nope' }), 0);
+  assert.equal(campusPostShare({ POPLUR_CAMPUS_POST_SHARE: '0.35' }), 0.35);
+  assert.equal(campusPostShare({ POPLUR_CAMPUS_POST_SHARE: '7' }), 1);
+  assert.equal(campusPostShare({ POPLUR_CAMPUS_POST_SHARE: '-1' }), 0);
+});
+
+test('campusPostLocation lands within ~1 km of a real campus, 3-decimal, never the same campus twice running', () => {
+  const spot = campusPostLocation(null, () => 0.5, []);
+  const campus = CAMPUS_POST_SPOTS.find(c => c.place === spot.place);
+  assert.ok(campus, 'a named campus');
+  assert.ok(Math.abs(spot.latitude - campus.latitude) <= CAMPUS_POST_JITTER_DEG + 1e-9);
+  assert.ok(Math.abs(spot.longitude - campus.longitude) <= CAMPUS_POST_JITTER_DEG + 1e-9);
+  assert.equal(spot.latitude, spot.latitude3);
+  assert.equal(spot.longitudeCell, Math.round(spot.longitude * 1000));
+  const next = campusPostLocation(spot, () => 0.5, []);
+  assert.notEqual(next.place, spot.place);
+});
+
+test('campusPostLocation takes the campus farthest from the cohort\'s latest pops', () => {
+  const recent = [{ latitude: 43.469, longitude: -79.699 }]; // Sheridan Trafalgar just posted
+  const spot = campusPostLocation(null, () => 0.5, recent);
+  assert.equal(spot.place, 'Humber North'); // ~30 km away in Etobicoke: the farthest campus from Oakville
+});
+
+test('randomPostLocation is byte-for-byte unchanged while the campus lane is off', () => {
+  const before = process.env.POPLUR_CAMPUS_POST_SHARE;
+  delete process.env.POPLUR_CAMPUS_POST_SHARE;
+  try {
+    const draws = [0.31, 0.62, 0.93, 0.11, 0.47];
+    const a = randomPostLocation('sim-food-001', null, (() => { let i = 0; return () => draws[i++ % draws.length]; })(), []);
+    const b = randomPostLocation('sim-food-001', null, (() => { let i = 0; return () => draws[i++ % draws.length]; })(), []);
+    assert.deepEqual(a, b);
+    assert.ok(!CAMPUS_POST_SPOTS.some(c => c.place === a.place), 'no campus without the lane');
+  } finally {
+    if (before !== undefined) process.env.POPLUR_CAMPUS_POST_SHARE = before;
+  }
+});
+
+test('randomPostLocation sends that share of pops to a campus when the lane is on', () => {
+  const before = process.env.POPLUR_CAMPUS_POST_SHARE;
+  process.env.POPLUR_CAMPUS_POST_SHARE = '1';
+  try {
+    const spot = randomPostLocation('sim-food-001', null, () => 0.5, []);
+    assert.ok(CAMPUS_POST_SPOTS.some(c => c.place === spot.place), `${spot.place} is a campus`);
+  } finally {
+    if (before === undefined) delete process.env.POPLUR_CAMPUS_POST_SHARE; else process.env.POPLUR_CAMPUS_POST_SHARE = before;
+  }
+});
+
 test('randomPostLocation refuses an unknown actor', () => {
   assert.throws(() => randomPostLocation('nobody', null, () => 0), /Unknown synthetic actor/);
 });
@@ -635,4 +687,11 @@ test('the live runner finds the tab navigator under both renderer names', async 
   assert.ok(pattern.test('Feed tab model — swipe or use arrow keys to change tabs, hold for menu'), 'WebGL navigator');
   assert.ok(pattern.test('Feed navigator — swipe to switch tabs, tap to open, hold for menu'), 'sprite navigator');
   assert.ok(!pattern.test('Cube hold menu'), 'not the hold menu');
+});
+
+test('the cohort engages the owner unless the plist says cohort', () => {
+  assert.equal(engagementTarget({}), 'owner');
+  assert.equal(engagementTarget({ POPLUR_ENGAGE_TARGET: 'cohort' }), 'cohort');
+  assert.equal(engagementTarget({ POPLUR_ENGAGE_TARGET: 'Cohort' }), 'owner', 'exact spelling only');
+  assert.equal(engagementTarget({ POPLUR_ENGAGE_TARGET: 'students' }), 'owner', 'never a human');
 });

@@ -1,0 +1,147 @@
+/* Poplur landing — white, sleek, minimal. One accent, hairlines, generous air. */
+.pl { --ink: #111114; --ink-2: #5c5c66; --ink-3: #9a9aa3; --line: rgba(17, 17, 20, 0.08); --paper: #ffffff; --paper-2: #f6f6f8;
+  --accent: #f63b9a; --pop: #5af0a4; --sim: #8a7a96; --sim-fill: rgba(138, 122, 150, 0.28);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--ink); background: var(--paper); font-family: var(--font); -webkit-font-smoothing: antialiased; line-height: 1.4; min-height: 100vh; }
+.pl *, .pl *::before, .pl *::after { box-sizing: border-box; }
+.pl a { color: inherit; text-decoration: none; }
+.pl h1, .pl h2, .pl h3, .pl p { margin: 0; }
+.pl .wrap { width: min(1120px, calc(100% - 48px)); margin: 0 auto; }
+
+/* nav */
+.pl-nav { position: sticky; top: 0; z-index: 20; backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(255, 255, 255, 0.78); border-bottom: 1px solid var(--line); }
+.pl-nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 52px; }
+.pl-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; font-size: 17px; }
+.pl-brand img { width: 26px; height: 26px; border-radius: 7px; }
+.pl-nav-links { display: flex; gap: 22px; font-size: 13px; color: var(--ink-2); }
+.pl-nav-links a:hover { color: var(--ink); }
+.pl-nav .pl-cta { font-size: 13px; padding: 7px 14px; }
+@media (max-width: 720px) { .pl-nav-links { display: none; } }
+
+/* buttons */
+.pl-cta { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 999px; padding: 12px 22px; font-weight: 600;
+  font-size: 15px; background: var(--ink); color: #fff; border: 1px solid var(--ink); cursor: pointer; transition: transform .15s ease, opacity .15s ease; }
+.pl-cta:hover { opacity: .88; } .pl-cta:active { transform: scale(.98); }
+.pl-cta.ghost { background: transparent; color: var(--ink); }
+.pl-cta.accent { background: var(--accent); border-color: var(--accent); }
+.pl-cta:disabled { opacity: .5; cursor: default; }
+
+/* hero */
+.pl-hero { padding: 88px 0 8px; text-align: center; }
+.pl-eyebrow { font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.pl-hero h1 { font-size: clamp(40px, 7vw, 84px); line-height: 1.02; letter-spacing: -0.035em; font-weight: 700; margin: 18px auto 0; max-width: 14ch; }
+.pl-hero p { font-size: clamp(17px, 2vw, 22px); color: var(--ink-2); max-width: 46ch; margin: 22px auto 0; line-height: 1.45; }
+.pl-hero .pl-actions { display: flex; gap: 12px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+/* features */
+.pl-feature { padding: 112px 0; }
+.pl-feature .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+.pl-feature.flip .wrap > .pl-media { order: -1; }
+.pl-copy { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
+.pl-feature.in-view .pl-copy { opacity: 1; transform: none; }
+.pl-copy h2 { font-size: clamp(30px, 4.2vw, 52px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 700; margin-top: 14px; }
+.pl-copy p { font-size: 18px; color: var(--ink-2); margin-top: 18px; max-width: 46ch; }
+.pl-copy .pl-fine { font-size: 13px; color: var(--ink-3); margin-top: 14px; }
+.pl-media { position: relative; }
+.pl-media .pl-frame { width: min(360px, 100%); margin: 0 auto; aspect-ratio: 9 / 16; border-radius: 40px; overflow: hidden; background: var(--paper-2);
+  box-shadow: 0 24px 60px rgba(17, 17, 20, .14), 0 0 0 1px rgba(17, 17, 20, .06); }
+.pl-media video, .pl-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pl-media .pl-slot { width: 100%; height: 100%; display: grid; place-items: center; color: var(--ink-3); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+/* A section with no media is a centred statement, Apple-style, not a half-empty grid. */
+.pl-feature.no-media .wrap { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+.pl-feature.no-media .pl-copy p { margin-left: auto; margin-right: auto; }
+.pl-feature.no-media .pl-media { display: none; }
+@media (max-width: 860px) { .pl-feature .wrap { grid-template-columns: 1fr; gap: 28px; } .pl-feature.flip .wrap > .pl-media { order: 0; } .pl-feature { padding: 72px 0; } }
+
+/* radius diagram */
+.pl-radius { width: min(360px, 100%); margin: 0 auto; display: block; }
+.pl-radius .ring { fill: rgba(246, 59, 154, .07); stroke: var(--accent); stroke-width: 1.5; }
+.pl-radius .ring.decay { stroke-dasharray: 4 6; opacity: .6; }
+.pl-radius text { font-family: var(--mono); font-size: 11px; fill: var(--ink-2); }
+
+/* live */
+.pl-live { padding: 64px 0 80px; background: var(--paper-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 56px; }
+.pl-live h2 { font-size: clamp(30px, 4vw, 48px); letter-spacing: -0.03em; line-height: 1.05; margin-top: 12px; }
+.pl-live .pl-lede { color: var(--ink-2); font-size: 17px; margin-top: 14px; max-width: 62ch; }
+.pl-cards { display: grid; grid-template-columns: 1.15fr .85fr; gap: 24px; margin-top: 40px; align-items: start; }
+@media (max-width: 960px) { .pl-cards { grid-template-columns: 1fr; } }
+.pl-card { background: #fff; border: 1px solid var(--line); border-radius: 22px; padding: 22px; }
+.pl-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.pl-card-head h3 { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.pl-card-head .pl-meta { font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
+.pl-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+.pl-kpi { border-top: 1px solid var(--line); padding-top: 10px; }
+.pl-kpi b { display: block; font-size: 28px; letter-spacing: -0.03em; font-weight: 700; line-height: 1; }
+.pl-kpi span { display: block; font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+.pl-table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 14px; }
+.pl-table th { text-align: left; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; padding: 0 0 8px; border-bottom: 1px solid var(--line); }
+.pl-table td { padding: 11px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.pl-table td.num { font-family: var(--mono); white-space: nowrap; }
+.pl-table td.num b { font-weight: 600; }
+.pl-table .pl-note { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.pl-pill { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); }
+.pl-pill.good { background: rgba(90, 240, 164, .22); border-color: rgba(90, 240, 164, .6); color: #0d6b3d; }
+.pl-pill.mid { background: rgba(255, 196, 0, .16); border-color: rgba(255, 196, 0, .5); color: #7a5a00; }
+.pl-pill.weak { background: rgba(246, 59, 154, .1); border-color: rgba(246, 59, 154, .4); color: #9b1a5c; }
+.pl-pill.pending { color: var(--ink-3); }
+.pl-foot { font-size: 12px; color: var(--ink-3); margin-top: 14px; line-height: 1.5; }
+
+/* dot world */
+.pl-world { position: relative; width: 100%; aspect-ratio: 2 / 1; border-radius: 16px; overflow: hidden; background: #fff;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 5% 10%; margin-top: 18px; }
+.pl-world svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pl-world .dot { fill: var(--pop); stroke: var(--ink); stroke-width: 1.5; }
+.pl-world .dot.sim { fill: var(--sim-fill); stroke: var(--sim); }
+.pl-world .lbl { font-family: var(--font); font-size: 11px; font-weight: 600; fill: var(--ink); paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
+.pl-world .lbl-meta { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-2); paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+.pl-legend { display: flex; gap: 16px; margin-top: 12px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+.pl-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--pop); border: 1.5px solid var(--ink); margin-right: 6px; vertical-align: -1px; }
+.pl-legend i.sim { background: var(--sim-fill); border-color: var(--sim); }
+.pl-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; color: var(--ink-3); }
+
+/* signup */
+.pl-signup { padding: 120px 0; text-align: center; }
+.pl-signup h2 { font-size: clamp(32px, 5vw, 60px); letter-spacing: -0.035em; line-height: 1.02; }
+.pl-signup p { color: var(--ink-2); font-size: 18px; margin-top: 16px; max-width: 48ch; margin-left: auto; margin-right: auto; }
+.pl-form { display: flex; gap: 10px; justify-content: center; margin: 28px auto 0; max-width: 520px; flex-wrap: wrap; }
+.pl-form input { flex: 1 1 260px; height: 46px; border-radius: 999px; border: 1px solid rgba(17, 17, 20, .18); padding: 0 18px; font-size: 15px; font-family: var(--font); outline: none; background: #fff; color: var(--ink); }
+.pl-form input:focus { border-color: var(--ink); }
+.pl-form-note { font-size: 13px; color: var(--ink-3); margin-top: 14px; }
+.pl-form-note.err { color: #9b1a5c; } .pl-form-note.ok { color: #0d6b3d; }
+.pl-pills { display: flex; gap: 10px; justify-content: center; margin-top: 22px; flex-wrap: wrap; }
+.pl-pills span { font-size: 12px; color: var(--ink-2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; }
+
+/* footer */
+.pl-footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 12px; color: var(--ink-3); }
+.pl-footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+/* showcase — the sticky, slanted iPhone whose screen follows the copy */
+.pl-showcase { padding: 40px 0 0; }
+.pl-showcase .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 46%); gap: 48px; align-items: start; }
+.pl-steps { display: flex; flex-direction: column; padding-bottom: 34vh; }
+.pl-step { min-height: 86vh; display: flex; flex-direction: column; justify-content: center; padding: 8vh 0; opacity: .28; transform: translateY(6px); transition: opacity .5s ease, transform .5s ease; }
+.pl-step.is-active { opacity: 1; transform: none; }
+.pl-step h2 { font-size: clamp(30px, 4.2vw, 52px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 700; margin-top: 14px; }
+.pl-step p { font-size: 18px; color: var(--ink-2); margin-top: 18px; max-width: 44ch; }
+.pl-step .pl-fine { font-size: 13px; color: var(--ink-3); margin-top: 14px; }
+.pl-device-col { position: relative; min-height: 100%; }
+.pl-device-pin { position: sticky; top: 50vh; transform: translateY(-50%); display: flex; justify-content: center; perspective: 1600px; }
+.pl-iphone { position: relative; width: min(320px, 78vw); aspect-ratio: 390 / 800; border-radius: 52px; background: #0b0b0e; padding: 11px;
+  box-shadow: 0 40px 90px rgba(17, 17, 20, .28), 0 0 0 1px rgba(255, 255, 255, .06) inset, 0 0 0 2px rgba(17, 17, 20, .9);
+  transform: rotateY(-17deg) rotateX(5deg) rotateZ(1.5deg); transition: transform .9s cubic-bezier(.2, .7, .2, 1); will-change: transform; }
+.pl-device-pin.tilt-1 .pl-iphone { transform: rotateY(-11deg) rotateX(4deg) rotateZ(-1deg); }
+.pl-iphone-screen { position: absolute; inset: 11px; border-radius: 42px; overflow: hidden; background: #141018; }
+.pl-iphone-island { position: absolute; top: 22px; left: 50%; width: 96px; height: 28px; transform: translateX(-50%); border-radius: 999px; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, .04); }
+/* Narrow screens keep the phone beside the copy — never over it — just smaller. */
+@media (max-width: 860px) {
+  .pl-showcase .wrap { grid-template-columns: minmax(0, 1.1fr) minmax(132px, 40%); gap: 18px; }
+  .pl-device-pin { top: 50vh; }
+  .pl-iphone { width: min(100%, 260px); border-radius: 40px; padding: 8px; transform: rotateY(-14deg) rotateX(4deg) rotateZ(1deg); }
+  .pl-iphone-screen { inset: 8px; border-radius: 32px; }
+  .pl-iphone-island { top: 16px; width: 60px; height: 18px; }
+  .pl-step { min-height: 70vh; padding: 6vh 0; }
+  .pl-step h2 { font-size: clamp(22px, 6vw, 34px); }
+  .pl-step p { font-size: 15px; }
+}
+}

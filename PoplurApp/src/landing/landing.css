@@ -164,8 +164,15 @@
   box-shadow: 0 2px 3px rgba(110, 4, 54, .45), inset 0 1px 1px rgba(255, 255, 255, .55), inset 0 -1px 2px rgba(0, 0, 0, .18); }
 
 /* The toolbar stays at the top while the page scrolls. `.pl > *:not(.pl-backdrop)` above is (0,2,0) and set
-   every child relative — including this nav, whose own `sticky` is (0,1,0) — so it is restated here at (0,2,0). */
-.pl > .pl-nav { position: sticky; top: 0; }
+   every child relative — including this nav, whose own `sticky` is (0,1,0) — so it is restated here at (0,2,0).
+   It is an overlay: its own height is pulled back out of the flow so the hero (and its video) run up behind it. */
+.pl { --nav-h: 62px; }
+.pl > .pl-nav { position: sticky; top: 0; margin-bottom: calc(-1 * var(--nav-h)); }
+@media (max-width: 720px) { .pl { --nav-h: 54px; } }
+
+/* ── the page snaps section to section (LandingPage sets `scroll-snap-type: y mandatory` on the root) ── */
+.pl-hero, .pl-signup, .pl-live, .pl-lockup, .pl-step { scroll-snap-align: start; scroll-snap-stop: always; }
+.pl-footer { scroll-snap-align: end; }
 
 /* toolbar on colour */
 .pl-nav { background: rgba(255, 255, 255, 0.14); border-bottom: 1px solid rgba(255, 255, 255, 0.28); }
@@ -231,7 +238,7 @@
 /* ── product-page grammar (apple.com/iphone): full-bleed hero, floating local nav, chapter lockups, scrubbed chapters ── */
 /* floating local-nav pill */
 .pl-nav { position: sticky; top: 0; background: transparent; border: 0; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 10px 16px 0; }
-.pl-nav::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 84px; background: linear-gradient(to bottom, var(--bg) 0%, color-mix(in srgb, var(--bg) 70%, transparent) 55%, transparent 100%); pointer-events: none; z-index: -1; }
+.pl-nav::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 120px; background: linear-gradient(to bottom, rgba(0, 0, 0, .38) 0%, rgba(0, 0, 0, .12) 55%, transparent 100%); pointer-events: none; z-index: -1; }
 .pl-nav-pill { position: relative; }
 .pl-nav-pill { width: min(1080px, 100%); margin: 0 auto; height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 10px 0 16px;
   border-radius: 18px; background: rgba(20, 10, 16, 0.58); backdrop-filter: saturate(160%) blur(18px); -webkit-backdrop-filter: saturate(160%) blur(18px);
@@ -298,9 +305,19 @@
 .pl[data-ink="dark"] .pl-nav-links a::after { background: var(--accent); }
 
 /* the sign-up sits right under the hero now */
-.pl-signup-top { padding: 4vh 0 12vh; }
+.pl-signup-top { min-height: 100vh; display: flex; align-items: center; padding: calc(var(--nav-h) + 4vh) 0 12vh; }
+.pl-signup-top .wrap { width: min(1120px, calc(100% - 48px)); }
 
 /* the hero's TV spot (heroSpot.ts): full-bleed under the headline, darkened at the foot so the copy reads */
 .pl-hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .pl-hero.has-spot::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .6) 0%, rgba(0, 0, 0, .18) 45%, transparent 70%); pointer-events: none; }
 .pl-hero.has-spot .pl-hero-lockup { z-index: 1; }
+
+/* ── the hero headline flips through the product (HeroTitle) ── */
+.pl-hero-titles { display: grid; perspective: 900px; }
+.pl-hero-title { grid-area: 1 / 1; opacity: 0; transform-origin: 50% 100%; will-change: transform, opacity; pointer-events: none; }
+.pl-hero-title.is-in { opacity: 1; animation: plTitleIn .7s cubic-bezier(.2, .7, .2, 1) both; pointer-events: auto; }
+.pl-hero-title.is-out { animation: plTitleOut .55s ease-in both; }
+@keyframes plTitleIn { from { opacity: 0; transform: rotateX(-78deg) translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes plTitleOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: rotateX(70deg) translateY(-10px); } }
+@media (prefers-reduced-motion: reduce) { .pl-hero-title.is-in, .pl-hero-title.is-out { animation: none; } }

@@ -35,6 +35,41 @@ const fmtAgo = (ms: number, now = Date.now()) => {
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1_440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1_440)} d ago`;
 };
 
+// The hero's headline flips through the product, one claim at a time — the
+// promise first, then what each chapter below goes on to show.
+const HERO_TITLES = [
+  'Posts on a world map that spread as people engage.',
+  'Reach is earned per post, not per account.',
+  'Inside a radius, you are in the feed.',
+  'See what is popping around you.',
+  'One live pop per place.',
+  'Found without followers.',
+];
+const HERO_TITLE_MS = 4200;
+const HERO_FLIP_MS = 700;
+
+// All the titles are stacked in one grid cell, so the block is as tall as the
+// longest and nothing below it jumps; the current one flips up into place and
+// the one before flips away. Under reduced motion they simply change.
+function HeroTitle() {
+  const [index, setIndex] = useState(0);
+  const [leaving, setLeaving] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = setInterval(() => setIndex(i => { setLeaving(i); return (i + 1) % HERO_TITLES.length; }), HERO_TITLE_MS);
+    return () => clearInterval(tick);
+  }, []);
+  useEffect(() => {
+    if (leaving === null) return;
+    const done = setTimeout(() => setLeaving(null), HERO_FLIP_MS);
+    return () => clearTimeout(done);
+  }, [leaving]);
+  return <h1 className="pl-hero-titles">
+    {HERO_TITLES.map((title, i) => <span key={title} aria-hidden={i !== index} className={`pl-hero-title${i === index ? ' is-in' : i === leaving ? ' is-out' : ''}`}>
+      <ShaderText as="span">{title}</ShaderText>
+    </span>)}
+  </h1>;
+}
+
 function scrollTo(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -59,14 +94,18 @@ function Hero() {
   const poster = HERO_SPOT_POSTER === null ? undefined : Asset.fromModule(HERO_SPOT_POSTER).uri;
   return <header ref={ref} className={`pl-hero${spot ? ' has-spot' : ''}`} id="top">
     {spot
-      ? <video className="pl-hero-video" src={spot} poster={poster} autoPlay muted loop playsInline preload="auto" aria-label="People using Poplur" />
+      ? <video className="pl-hero-video" src={spot} poster={poster} autoPlay muted loop playsInline preload="auto" aria-label="People using Poplur"
+        // React never writes `muted` into server-rendered HTML (facebook/react#10389), so the
+        // element is silenced here too — before hydration the static <video autoplay> could
+        // otherwise start with sound on a browser that allows it.
+        ref={el => { if (el) { el.muted = true; el.defaultMuted = true; el.volume = 0; } }} />
       : <div className="pl-hero-stage">
         <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
       </div>}
     <div ref={copyRef} className="pl-hero-lockup wrap">
       <div className="pl-hero-text">
         <div className="pl-eyebrow">Poplur</div>
-        <ShaderText as="h1">Posts on a world map that spread as people engage.</ShaderText>
+        <HeroTitle />
         <div className="pl-offer">
           <span>Free on iPhone · Toronto beta<br /><small>Every pop starts with a 5 km radius.</small></span>
           <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
@@ -181,7 +220,7 @@ export default function LandingPage() {
   const settledRef = useRef(false);
   useEffect(() => armLandingPop(), []);
   useEffect(() => {
-    const ids = ['top', 'beta', 'live', ...SHOWCASE_STEPS.map(step => step.id)];
+    const ids = ['top', 'beta', 'live', 'features', ...SHOWCASE_STEPS.map(step => step.id)];
     return onScrollFrame((_y, h) => {
       const boxes = ids.flatMap(id => { const el = document.getElementById(id); return el ? [{ id, top: el.getBoundingClientRect().top }] : []; });
       const next = pickCurrent(boxes, h);
@@ -206,8 +245,14 @@ export default function LandingPage() {
     targets.forEach(el => { el.style.background = theme.bg; el.style.height = 'auto'; el.style.overflow = 'visible'; });
     document.body.style.overflow = 'auto';
     if (root) root.style.display = 'block';
+    // The page snaps section to section (hero, sign-up, live, each chapter — see
+    // `scroll-snap-align` in landing.css). The root element is the scroller once
+    // the body is unlocked, so the snap type lives there, and leaves with the rest.
+    const previousSnap = document.documentElement.style.scrollSnapType;
+    document.documentElement.style.scrollSnapType = 'y mandatory';
     return () => {
       targets.forEach((el, i) => { el.style.background = previous[i].background; el.style.height = previous[i].height; el.style.overflow = previous[i].overflow; el.style.display = previous[i].display; });
+      document.documentElement.style.scrollSnapType = previousSnap;
     };
   }, [theme.bg]);
   return <div className="pl" data-ink={inkMode} style={themeVars}>

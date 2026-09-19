@@ -3,7 +3,9 @@ import Head from 'expo-router/head';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  BetaReadRefused,
   ReportReadRefused,
+  readBetaMetrics,
   readOwnerDashboard,
   readPostHistory,
   readReport,
@@ -18,6 +20,7 @@ import {
   type RealtimePublicPost,
 } from '@/services/testControl';
 import AlgorithmDesk from '@/components/AlgorithmDesk';
+import { BetaTab, EMPTY_BETA_SLOT, betaStatus, type BetaSlot } from '@/components/test-center/beta';
 import { DiagnosticsBody, FeedbackList, diagnosticsStatus, type FeedChannel } from '@/components/test-center/diagnostics';
 import { useDeskPanels, useRadiusLabSummary, useSyntheticRunnerState, useUrlState } from '@/components/test-center/hooks';
 import { LabPanel, labStatus } from '@/components/test-center/lab';
@@ -42,6 +45,7 @@ const forgetFailedRead = (current: FetchedLedger | null) => current?.state === '
  *  URL: `/test-control?tab=<id>`. */
 const TABS = [
   { id: 'today', label: 'Today' },
+  { id: 'beta', label: 'Beta' },
   { id: 'testers', label: 'Testers' },
   { id: 'pops', label: 'Pops' },
   { id: 'map', label: 'Map' },
@@ -120,6 +124,25 @@ export default function TestControlScreen() {
   }), [openPostId, opened?.origin, fetched, openPost]);
   const openRadiusPost = useCallback((postId: string) => openPost(postId, 'radius'), [openPost]);
   const openReportPost = useCallback((postId: string) => openPost(postId, 'reports'), [openPost]);
+  // The Beta tab's result (human accounts only): read through the proxy's
+  // `GET /api/beta` when the tab first opens — the proxy computes it locally
+  // from Firestore and caches the run ten minutes — and again on REFRESH,
+  // which bypasses that cache. Every write happens in the handler's promise
+  // callbacks; the effect only issues the first read.
+  const [betaSlot, setBetaSlot] = useState<BetaSlot>(EMPTY_BETA_SLOT);
+  const betaRequested = useRef(false);
+  const loadBeta = useCallback((refresh: boolean) => {
+    betaRequested.current = true;
+    setBetaSlot(current => ({ ...current, state: 'loading', error: null }));
+    readBetaMetrics(refresh)
+      .then(read => setBetaSlot(read.metrics
+        ? { state: 'ready', metrics: read.metrics, error: null, reads: read.reads }
+        : { state: 'error', metrics: null, error: 'The proxy answered with a Beta schema this page does not know.', reads: read.reads }))
+      .catch((error: unknown) => setBetaSlot(current => ({ state: 'error', metrics: current.metrics, error: error instanceof BetaReadRefused ? error.message : error instanceof Error ? error.message : 'The Beta metrics could not be read.', reads: 0 })));
+  }, []);
+  useEffect(() => { if (tab === 'beta' && !betaRequested.current) loadBeta(false); }, [tab, loadBeta]);
+  const refreshBeta = useCallback(() => loadBeta(true), [loadBeta]);
+  const toggleOwner = useCallback(() => panels.toggle('includeOwner'), [panels]);
   // The report bodies (reports §3.1, the `lazyPops` shape): one slot per day,
   // keyed `day@revision` in `requestedReports` so a day is fetched once per
   // revision — a return to the tab never refetches, and an index row whose
@@ -220,7 +243,8 @@ export default function TestControlScreen() {
   // 00:45`) is judged against the time the last frame arrived, which the
   // stream (or the 15 s poll while it is down) keeps current.
   const reports = reportsStatus(dashboard?.reports ?? null, dashboard?.generatedAtMs || undefined);
-  const tabs = useMemo(() => TABS.map(item => ({ ...item, caption: item.id === 'simulation' ? simulation.caption : item.id === 'lab' ? lab.caption : item.id === 'diagnostics' ? diagnostics.caption : item.id === 'reports' ? reports.caption : undefined })), [simulation.caption, lab.caption, diagnostics.caption, reports.caption]);
+  const beta = betaStatus(betaSlot, panels.open.includeOwner);
+  const tabs = useMemo(() => TABS.map(item => ({ ...item, caption: item.id === 'simulation' ? simulation.caption : item.id === 'lab' ? lab.caption : item.id === 'diagnostics' ? diagnostics.caption : item.id === 'reports' ? reports.caption : item.id === 'beta' ? beta.caption : undefined })), [simulation.caption, lab.caption, diagnostics.caption, reports.caption, beta.caption]);
   const simSwitch = tab === 'testers' || tab === 'pops' ? { count: simAccounts, shown: panels.open.showSimRows, onToggle: toggleSimRows } : null;
 
   const panel = (() => {
@@ -233,6 +257,9 @@ export default function TestControlScreen() {
         <Section id="daily" title="Joining and dropping, per day">{dashboard ? <DailyStrip series={dashboard.daily} /> : <Text style={T.body}>Connecting…</Text>}</Section>
         <LatestPopsPreview posts={latestPops} showSim={panels.open.showSimRows} drill={drill} onSeeAll={seeAllPops} />
       </>;
+      // Human accounts only, owner excluded by default (the student beta's
+      // numbers); nothing here rides the live frame — it is its own read.
+      case 'beta': return <BetaTab slot={betaSlot} includeOwner={panels.open.includeOwner} onToggleOwner={toggleOwner} onRefresh={refreshBeta} drill={drill} />;
       case 'testers': return !dashboard ? <Connecting loading={loading} /> : <TesterTable rows={testersLive} counts={dashboard.counts} expandedUid={expandedTester} onToggle={toggleTester} lazy={lazyPops} onRetry={retryPops} showSim={panels.open.showSimRows} onToggleSim={toggleSimRows} drill={drill} />;
       case 'pops': return !dashboard ? <Connecting loading={loading} /> : <PopsList posts={latestPops} showSim={panels.open.showSimRows} onToggleSim={toggleSimRows} drill={drill} />;
       // The map owns its tab, so it is taller than the long page's 280 (spec §0).

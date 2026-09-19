@@ -4,10 +4,11 @@ import { subscribeRadiusLab, type RadiusLabLink, type RadiusLabState } from '@/s
 import { readSyntheticRunnerState, type SyntheticRunnerState } from '@/services/syntheticRunner';
 
 const KEY = 'poplur.testCenter.panels.v1';
-// Only the SIM-rows switch and the two Simulation sub-panels persist here. The
-// selected tab is the URL (`?tab=`), never storage — owner decision 12 Sep,
-// spec §0 — so there are no fold keys for the operator tools.
-const DEFAULTS = { showSimRows: false, catalogue: false, analytics: false } as const;
+// Only the SIM-rows switch, the two Simulation sub-panels and the Beta tab's
+// OWNER switch persist here. The selected tab is the URL (`?tab=`), never
+// storage — owner decision 12 Sep, spec §0 — so there are no fold keys for
+// the operator tools.
+const DEFAULTS = { showSimRows: false, catalogue: false, analytics: false, includeOwner: false } as const;
 export type PanelKey = keyof typeof DEFAULTS;
 type Panels = Record<PanelKey, boolean>;
 

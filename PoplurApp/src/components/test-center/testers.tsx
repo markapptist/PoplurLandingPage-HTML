@@ -10,7 +10,7 @@ import { C, CAUSE_COLOR, FONT, PRESENCE_LABEL, PUBLIC_POPS_WINDOW, S, T, ago, cl
  *  list; re-opening it from another host only switches the origin, so the
  *  fetch (keyed on the post id alone) is not repeated (spec decision 12;
  *  `reports` is the Reports tab's memo, reports §3.1). */
-export type DrillOrigin = 'testers' | 'pops' | 'radius' | 'reports';
+export type DrillOrigin = 'testers' | 'pops' | 'radius' | 'reports' | 'beta';
 export type DrillState = {
   openPostId: string | null;
   origin: DrillOrigin | null;

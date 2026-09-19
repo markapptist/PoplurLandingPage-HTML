@@ -3333,6 +3333,391 @@ export const reportsRangeCsv = (reports: BetaAlgorithmReport[]): string => {
   return csvFixed(columns, rows);
 };
 
+// ── Beta metrics (human accounts only; scripts/beta-metrics-policy.mjs) ──────
+
+export type BetaRetentionStatus = 'retained' | 'lost' | 'pending';
+export type BetaRetentionKey = 'd1' | 'd7' | 'd14';
+export const BETA_RETENTION_KEYS: readonly BetaRetentionKey[] = ['d1', 'd7', 'd14'];
+export type BetaReachCounts = { real: number; owner: number };
+export type BetaSplitBasis = 'digest-posts' | 'digest-contamination' | 'unavailable';
+
+export type BetaMetricsUser = {
+  uid: string;
+  label: string;
+  owner: boolean;
+  signedUpAtMs: number;
+  signedUpDay: string;
+  lastSignInAtMs: number;
+  pops: number;
+  firstPopAtMs: number;
+  firstPopHours: number | null;
+  firstPopWithin24h: boolean | null;
+  likesGiven: number;
+  likesReceived: number;
+  activeDays: number;
+  activeDayList: string[];
+  activeKinds: Record<string, string[]>;
+  lastActiveDay: string;
+  retention: Record<BetaRetentionKey, BetaRetentionStatus>;
+  anchorBasis: string | null;
+};
+
+export type BetaMetricsPop = {
+  postId: string;
+  ownerUid: string;
+  ownerLabel: string;
+  owner: boolean;
+  channelId: string;
+  mediaType: 'photo' | 'video';
+  createdAtMs: number;
+  day: string;
+  deleted: boolean;
+  startMeters: number;
+  currentMeters: number;
+  peakMeters: number;
+  peakAtMs: number;
+  /** Metres grown at peak (peak − start), split by the digest's actor-class
+   *  gains: `null` halves mean the digest has no row for the pop (never zero). */
+  grownMeters: number;
+  humanGrownMeters: number | null;
+  syntheticGrownMeters: number | null;
+  unknownGrownMeters: number | null;
+  syntheticShare: number | null;
+  splitBasis: BetaSplitBasis;
+  likesReal: number;
+  likesOwner: number;
+  views: number;
+  humansInReachAtPeak: BetaReachCounts;
+  humansInReachNow: BetaReachCounts;
+  hasCoordinates: boolean;
+};
+
+export type BetaMetricsRetentionCell = { retained: number; due: number; cohort: number };
+export type BetaMetricsDaily = {
+  day: string;
+  signups: number;
+  cumulativeAccounts: number;
+  firstPop24h: { n: number; of: number };
+  activeUsers: number;
+  pops: number;
+  popsPerActiveUser: number | null;
+  likes: number;
+  cumulativePops: number;
+  cumulativeLikes: number;
+  likesPerPop: number | null;
+  retention: Record<BetaRetentionKey, BetaMetricsRetentionCell>;
+};
+
+export type BetaMetricsHeadline = {
+  humanAccounts: number;
+  signupsToday: number;
+  signups7d: number;
+  firstPop24h: { n: number; of: number; withPop: number };
+  retention: Record<BetaRetentionKey, { n: number; of: number }>;
+  activeToday: number;
+  popsToday: number;
+  popsPerActiveUserToday: number | null;
+  likesPerPop: { likes: number; pops: number };
+  largestReach: {
+    postId: string; ownerLabel: string; owner: boolean; peakMeters: number; peakAtMs: number; startMeters: number;
+    humanGrownMeters: number | null; syntheticGrownMeters: number | null; syntheticShare: number | null; splitBasis: BetaSplitBasis;
+    humansInReach: number; hasCoordinates: boolean;
+  } | null;
+};
+
+export type BetaMetricsView = { daily: BetaMetricsDaily[]; headline: BetaMetricsHeadline };
+
+export type BetaMetrics = {
+  version: number;
+  generatedAtMs: number;
+  timeZone: string;
+  today: string;
+  days: string[];
+  accounts: { human: number; owner: number; students: number; excluded: { synthetic: number; review: number; unknown: number } };
+  users: BetaMetricsUser[];
+  pops: BetaMetricsPop[];
+  views: { students: BetaMetricsView; everyone: BetaMetricsView };
+  definitions: Record<string, string>;
+  coverage: { reads: number; cad: number; capped: boolean; cappedAt: string | null; sightingsSince: string | null; engagementIndex: boolean; engagementDaysCounted: number; digestAtMs: number };
+  cached: boolean;
+  cachedAtMs: number;
+};
+
+export const BETA_METRICS_VERSION = 1;
+export const BETA_USERS_CSV_COLUMNS: readonly string[] = Object.freeze([
+  'uid', 'label', 'owner', 'signedUpAtIso', 'signedUpDay', 'lastSignInAtIso', 'pops', 'firstPopAtIso', 'firstPopHours',
+  'firstPopWithin24h', 'likesGiven', 'likesReceived', 'activeDays', 'activeDayList', 'lastActiveDay', 'd1', 'd7', 'd14',
+  'anchorBasis',
+]);
+export const BETA_POPS_CSV_COLUMNS: readonly string[] = Object.freeze([
+  'postId', 'ownerUid', 'ownerLabel', 'owner', 'channelId', 'mediaType', 'createdAtIso', 'day', 'deleted', 'startMeters',
+  'currentMeters', 'peakMeters', 'peakAtIso', 'humanGrownMeters', 'syntheticGrownMeters', 'likesReal', 'likesOwner', 'views',
+  'humansInReachAtPeakReal', 'humansInReachAtPeakOwner', 'humansInReachNowReal', 'humansInReachNowOwner', 'hasCoordinates',
+]);
+
+const nullableMetric = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(maximum, parsed)) : null;
+};
+const dayKey = (value: unknown): string => (typeof value === 'string' && DAY_PATTERN.test(value) ? value : '');
+const retentionStatus = (value: unknown): BetaRetentionStatus => (value === 'retained' || value === 'lost' ? value : 'pending');
+const splitBasis = (value: unknown): BetaSplitBasis => (value === 'digest-posts' || value === 'digest-contamination' ? value : 'unavailable');
+/** Grown metres are never negative (unlike the ledger's signed `nullableMeters`); absent stays null. */
+const nullableGrown = (value: unknown): number | null => (value === null || value === undefined ? null : metric(value, WORLD_METERS));
+const nullableShare = (value: unknown): number | null => nullableMetric(value, 1);
+const reachCounts = (value: unknown): BetaReachCounts => ({ real: integer(record(value).real), owner: integer(record(value).owner) });
+const retentionCell = (value: unknown): BetaMetricsRetentionCell => ({ retained: integer(record(value).retained), due: integer(record(value).due), cohort: integer(record(value).cohort) });
+const retentionRecord = <T,>(value: unknown, cell: (raw: unknown) => T): Record<BetaRetentionKey, T> => {
+  const raw = record(value);
+  return { d1: cell(raw.d1), d7: cell(raw.d7), d14: cell(raw.d14) };
+};
+
+const betaUser = (value: unknown): BetaMetricsUser | null => {
+  const raw = record(value);
+  const uid = text(raw.uid, 128);
+  if (!uid) return null;
+  const activeDayList = (Array.isArray(raw.activeDayList) ? raw.activeDayList : []).map(dayKey).filter(Boolean).slice(0, 400);
+  const kinds = record(raw.activeKinds);
+  return {
+    uid,
+    label: text(raw.label, 40) || uid.slice(0, 6),
+    owner: raw.owner === true,
+    signedUpAtMs: integer(raw.signedUpAtMs, Number.MAX_SAFE_INTEGER),
+    signedUpDay: dayKey(raw.signedUpDay),
+    lastSignInAtMs: integer(raw.lastSignInAtMs, Number.MAX_SAFE_INTEGER),
+    pops: integer(raw.pops),
+    firstPopAtMs: integer(raw.firstPopAtMs, Number.MAX_SAFE_INTEGER),
+    firstPopHours: nullableMetric(raw.firstPopHours),
+    firstPopWithin24h: typeof raw.firstPopWithin24h === 'boolean' ? raw.firstPopWithin24h : null,
+    likesGiven: integer(raw.likesGiven),
+    likesReceived: integer(raw.likesReceived),
+    activeDays: integer(raw.activeDays),
+    activeDayList,
+    activeKinds: Object.fromEntries(activeDayList.map(day => [day, (Array.isArray(kinds[day]) ? kinds[day] as unknown[] : []).map(kind => text(kind, 16)).filter(Boolean)])),
+    lastActiveDay: dayKey(raw.lastActiveDay),
+    retention: retentionRecord(raw.retention, retentionStatus),
+    anchorBasis: text(raw.anchorBasis, 24) || null,
+  };
+};
+
+const betaPop = (value: unknown): BetaMetricsPop | null => {
+  const raw = record(value);
+  const postId = text(raw.postId, 128);
+  if (!postId) return null;
+  return {
+    postId,
+    ownerUid: text(raw.ownerUid, 128),
+    ownerLabel: text(raw.ownerLabel, 40),
+    owner: raw.owner === true,
+    channelId: text(raw.channelId, 64),
+    mediaType: raw.mediaType === 'video' ? 'video' : 'photo',
+    createdAtMs: integer(raw.createdAtMs, Number.MAX_SAFE_INTEGER),
+    day: dayKey(raw.day),
+    deleted: raw.deleted === true,
+    startMeters: metric(raw.startMeters, WORLD_METERS),
+    currentMeters: metric(raw.currentMeters, WORLD_METERS),
+    peakMeters: metric(raw.peakMeters, WORLD_METERS),
+    peakAtMs: integer(raw.peakAtMs, Number.MAX_SAFE_INTEGER),
+    grownMeters: metric(raw.grownMeters, WORLD_METERS),
+    humanGrownMeters: nullableGrown(raw.humanGrownMeters),
+    syntheticGrownMeters: nullableGrown(raw.syntheticGrownMeters),
+    unknownGrownMeters: nullableGrown(raw.unknownGrownMeters),
+    syntheticShare: nullableShare(raw.syntheticShare),
+    splitBasis: splitBasis(raw.splitBasis),
+    likesReal: integer(raw.likesReal),
+    likesOwner: integer(raw.likesOwner),
+    views: integer(raw.views),
+    humansInReachAtPeak: reachCounts(raw.humansInReachAtPeak),
+    humansInReachNow: reachCounts(raw.humansInReachNow),
+    hasCoordinates: raw.hasCoordinates === true,
+  };
+};
+
+const betaDaily = (value: unknown): BetaMetricsDaily | null => {
+  const raw = record(value);
+  const day = dayKey(raw.day);
+  if (!day) return null;
+  return {
+    day,
+    signups: integer(raw.signups),
+    cumulativeAccounts: integer(raw.cumulativeAccounts),
+    firstPop24h: { n: integer(record(raw.firstPop24h).n), of: integer(record(raw.firstPop24h).of) },
+    activeUsers: integer(raw.activeUsers),
+    pops: integer(raw.pops),
+    popsPerActiveUser: nullableMetric(raw.popsPerActiveUser),
+    likes: integer(raw.likes),
+    cumulativePops: integer(raw.cumulativePops),
+    cumulativeLikes: integer(raw.cumulativeLikes),
+    likesPerPop: nullableMetric(raw.likesPerPop),
+    retention: retentionRecord(raw.retention, retentionCell),
+  };
+};
+
+const betaView = (value: unknown): BetaMetricsView => {
+  const raw = record(value);
+  const head = record(raw.headline);
+  const largest = head.largestReach && typeof head.largestReach === 'object' ? record(head.largestReach) : null;
+  return {
+    daily: (Array.isArray(raw.daily) ? raw.daily : []).map(betaDaily).filter((row): row is BetaMetricsDaily => row !== null).slice(0, 90),
+    headline: {
+      humanAccounts: integer(head.humanAccounts),
+      signupsToday: integer(head.signupsToday),
+      signups7d: integer(head.signups7d),
+      firstPop24h: { n: integer(record(head.firstPop24h).n), of: integer(record(head.firstPop24h).of), withPop: integer(record(head.firstPop24h).withPop) },
+      retention: retentionRecord(head.retention, cell => ({ n: integer(record(cell).n), of: integer(record(cell).of) })),
+      activeToday: integer(head.activeToday),
+      popsToday: integer(head.popsToday),
+      popsPerActiveUserToday: nullableMetric(head.popsPerActiveUserToday),
+      likesPerPop: { likes: integer(record(head.likesPerPop).likes), pops: integer(record(head.likesPerPop).pops) },
+      largestReach: largest && text(largest.postId, 128) ? {
+        postId: text(largest.postId, 128),
+        ownerLabel: text(largest.ownerLabel, 40),
+        owner: largest.owner === true,
+        peakMeters: metric(largest.peakMeters, WORLD_METERS),
+        peakAtMs: integer(largest.peakAtMs, Number.MAX_SAFE_INTEGER),
+        startMeters: metric(largest.startMeters, WORLD_METERS),
+        humanGrownMeters: nullableGrown(largest.humanGrownMeters),
+        syntheticGrownMeters: nullableGrown(largest.syntheticGrownMeters),
+        syntheticShare: nullableShare(largest.syntheticShare),
+        splitBasis: splitBasis(largest.splitBasis),
+        humansInReach: integer(largest.humansInReach),
+        hasCoordinates: largest.hasCoordinates === true,
+      } : null,
+    },
+  };
+};
+
+/** The proxy's `GET /api/beta` result. Another schema major is null (the page says so); every count is bounded, never zero-filled from nothing. */
+export const betaMetrics = (value: unknown): BetaMetrics | null => {
+  const raw = record(value);
+  if (integer(raw.version, 1_000) !== BETA_METRICS_VERSION) return null;
+  const accounts = record(raw.accounts);
+  const excluded = record(accounts.excluded);
+  const coverage = record(raw.coverage);
+  const definitions = record(raw.definitions);
+  return {
+    version: BETA_METRICS_VERSION,
+    generatedAtMs: integer(raw.generatedAtMs, Number.MAX_SAFE_INTEGER),
+    timeZone: text(raw.timeZone, 40) || REPORT_TIME_ZONE,
+    today: dayKey(raw.today),
+    days: (Array.isArray(raw.days) ? raw.days : []).map(dayKey).filter(Boolean).slice(0, 90),
+    accounts: {
+      human: integer(accounts.human),
+      owner: integer(accounts.owner),
+      students: integer(accounts.students),
+      excluded: { synthetic: integer(excluded.synthetic), review: integer(excluded.review), unknown: integer(excluded.unknown) },
+    },
+    users: (Array.isArray(raw.users) ? raw.users : []).map(betaUser).filter((row): row is BetaMetricsUser => row !== null).slice(0, 2_000),
+    pops: (Array.isArray(raw.pops) ? raw.pops : []).map(betaPop).filter((row): row is BetaMetricsPop => row !== null).slice(0, 5_000),
+    views: { students: betaView(record(raw.views).students), everyone: betaView(record(raw.views).everyone) },
+    definitions: Object.fromEntries(Object.entries(definitions).filter(([, value]) => typeof value === 'string').map(([key, value]) => [key, text(value, 1_000)])),
+    coverage: {
+      reads: integer(coverage.reads, Number.MAX_SAFE_INTEGER),
+      cad: metric(coverage.cad, 1_000),
+      capped: coverage.capped === true,
+      cappedAt: text(coverage.cappedAt, 80) || null,
+      sightingsSince: dayKey(coverage.sightingsSince) || null,
+      engagementIndex: coverage.engagementIndex === true,
+      engagementDaysCounted: integer(coverage.engagementDaysCounted, Number.MAX_SAFE_INTEGER),
+      digestAtMs: integer(coverage.digestAtMs, Number.MAX_SAFE_INTEGER),
+    },
+    cached: raw.cached === true,
+    cachedAtMs: integer(raw.cachedAtMs, Number.MAX_SAFE_INTEGER),
+  };
+};
+
+const OWNER_BETA = 'http://127.0.0.1:8096/api/beta';
+const OWNER_SCORECARD = 'http://127.0.0.1:8096/api/scorecard';
+
+/** The published beta scorecard (public/betaScorecard) — the landing page's numbers, unchanged. */
+export async function fetchBetaScorecard(): Promise<unknown> {
+  const response = await fetch(OWNER_SCORECARD, { headers: { accept: 'application/json' } });
+  const body = (await response.json().catch(() => ({}))) as { scorecard?: unknown; error?: { message?: string } };
+  if (!response.ok) throw new Error(body.error?.message || `Scorecard request failed (${response.status}).`);
+  return body.scorecard ?? null;
+}
+
+/** The proxy's 429: a Beta run is charged to the same 25k/day ledger budget as the export. */
+export class BetaReadRefused extends Error {
+  readonly remaining: number;
+  constructor(remaining: number) {
+    super(`The proxy refused the Beta run: only ${remaining.toLocaleString()} reads are left in today's budget.`);
+    this.remaining = remaining;
+  }
+}
+
+export type BetaRead = { metrics: BetaMetrics | null; reads: number };
+
+/** GET through `fetch` (the Origin header the proxy's lock requires); `refresh` bypasses the proxy's run cache. */
+export async function readBetaMetrics(refresh = false): Promise<BetaRead> {
+  const response = await fetch(refresh ? `${OWNER_BETA}?refresh=1` : OWNER_BETA, { headers: { accept: 'application/json' } });
+  if (response.status === 429) {
+    const body = record(await response.json().catch(() => ({})));
+    throw new BetaReadRefused(integer(body.remaining, LEDGER_EXPORT_DAY_READS));
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as CallableBody<unknown>;
+    throw new Error(body.error?.message || 'The Beta metrics are unavailable.');
+  }
+  return { metrics: betaMetrics(unwrapResult(await response.json())), reads: integer(response.headers.get('x-poplur-ledger-reads') ?? 0, 1_000_000) };
+}
+
+const yesNo = (value: boolean | null | undefined): string => (value === null || value === undefined ? '' : value ? 'yes' : 'no');
+const isoOf = (ms: number): string => (ms > 0 ? new Date(ms).toISOString() : '');
+
+/** poplur-beta-users-YYYYMMDD.csv: exactly BETA_USERS_CSV_COLUMNS (the proxy's own list), built client-side: 0 reads. */
+export const betaUsersCsv = (users: BetaMetricsUser[]): string => csvFixed(BETA_USERS_CSV_COLUMNS, users.map(user => ({
+  uid: user.uid,
+  label: user.label,
+  owner: yesNo(user.owner),
+  signedUpAtIso: isoOf(user.signedUpAtMs),
+  signedUpDay: user.signedUpDay,
+  lastSignInAtIso: isoOf(user.lastSignInAtMs),
+  pops: user.pops,
+  firstPopAtIso: isoOf(user.firstPopAtMs),
+  firstPopHours: user.firstPopHours === null ? '' : Math.round(user.firstPopHours * 100) / 100,
+  firstPopWithin24h: yesNo(user.firstPopWithin24h),
+  likesGiven: user.likesGiven,
+  likesReceived: user.likesReceived,
+  activeDays: user.activeDays,
+  activeDayList: user.activeDayList.join('|'),
+  lastActiveDay: user.lastActiveDay,
+  d1: user.retention.d1,
+  d7: user.retention.d7,
+  d14: user.retention.d14,
+  anchorBasis: user.anchorBasis ?? '',
+})));
+
+/** poplur-beta-pops-YYYYMMDD.csv: exactly BETA_POPS_CSV_COLUMNS. */
+export const betaPopsCsv = (pops: BetaMetricsPop[]): string => csvFixed(BETA_POPS_CSV_COLUMNS, pops.map(pop => ({
+  postId: pop.postId,
+  ownerUid: pop.ownerUid,
+  ownerLabel: pop.ownerLabel,
+  owner: yesNo(pop.owner),
+  channelId: pop.channelId,
+  mediaType: pop.mediaType,
+  createdAtIso: isoOf(pop.createdAtMs),
+  day: pop.day,
+  deleted: yesNo(pop.deleted),
+  startMeters: pop.startMeters,
+  currentMeters: pop.currentMeters,
+  peakMeters: pop.peakMeters,
+  peakAtIso: isoOf(pop.peakAtMs),
+  humanGrownMeters: pop.humanGrownMeters ?? '',
+  syntheticGrownMeters: pop.syntheticGrownMeters ?? '',
+  likesReal: pop.likesReal,
+  likesOwner: pop.likesOwner,
+  views: pop.views,
+  humansInReachAtPeakReal: pop.humansInReachAtPeak.real,
+  humansInReachAtPeakOwner: pop.humansInReachAtPeak.owner,
+  humansInReachNowReal: pop.humansInReachNow.real,
+  humansInReachNowOwner: pop.humansInReachNow.owner,
+  hasCoordinates: yesNo(pop.hasCoordinates),
+})));
+
+export const betaCsvFilename = (table: 'users' | 'pops', today: string): string => `poplur-beta-${table}-${today.replace(/-/g, '')}.csv`;
+
 /**
  * The owner-only loopback proxy listens to the private Firestore collections
  * with Admin credentials and emits only the callable's already-sanitized

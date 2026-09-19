@@ -1,5 +1,9 @@
 import { createServer } from 'node:http';
 import { Buffer } from 'node:buffer';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { rename, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { Timestamp, getFirestore } from 'firebase-admin/firestore';
@@ -21,6 +25,7 @@ import {
   ownerClassOf,
   postClass,
   readsToCad,
+  torontoDayKey,
   validateLedgerExportRequest,
 } from './algorithm-digest-policy.mjs';
 import {
@@ -34,6 +39,29 @@ import {
   reportRevisionListed,
 } from './algorithm-report-policy.mjs';
 import {
+  BETA_ANCHOR_HIDDEN_POSTS,
+  BETA_CACHE_MS,
+  BETA_LIKES_PER_POP,
+  BETA_POSTS_PER_USER,
+  BETA_READ_CAP,
+  BETA_READ_RESERVE,
+  betaAccountClass,
+  dayKeyOffset,
+  emptySightings,
+  engagementDaysToCount,
+  foldBetaMetrics,
+  hiddenPostIdsForAnchor,
+  humanUidChunks,
+  isHumanPop,
+  markCountedThrough,
+  normalizeSightings,
+  pruneSightings,
+  recordSighting,
+  recordSightingDay,
+  torontoDayBounds,
+} from './beta-metrics-policy.mjs';
+import {
+  PRESENCE_LEASE_MS,
   createLiveDashboardState,
   createLiveRefreshScheduler,
   liveStreamOpenPlan,
@@ -88,6 +116,18 @@ let liveLocalBroadcastTimer = null;
 const liveRefresh = createLiveRefreshScheduler({ minIntervalMs: LIVE_REFRESH_MIN_MS, run: refreshLiveDashboard });
 let onboardingQuarantine = false;
 let onboardingActive = false;
+// The Beta tab's sightings ledger (beta-metrics-policy.mjs): every presence
+// lease, tester heartbeat, sign-in and token refresh the desk sees, by uid
+// and Toronto day, so retention can be answered for days Firestore keeps no
+// history of. Lives beside the proxy log, never in the repo; simulation uids
+// never enter it.
+const betaSightingsPath = process.env.POPLUR_BETA_SIGHTINGS_PATH
+  || join(process.env.HOME || homedir(), '.poplur', 'beta-sightings.json');
+const betaSightings = loadBetaSightings(betaSightingsPath);
+let betaSightingsSaveTimer = null;
+// One computed Beta result per BETA_CACHE_MS; `?refresh=1` recomputes.
+let betaCache = { atMs: 0, result: null, reads: 0 };
+let betaInFlight = null;
 
 if (!credential) {
   throw new Error('POPLUR_TEST_CONTROL_TOKEN is required. Keep it in the local machine keychain; never put it in the web bundle.');
@@ -111,6 +151,25 @@ function responseHeaders(origin = '', contentType = 'application/json; charset=u
     'content-type': contentType,
     vary: 'Origin',
   };
+}
+
+/** Firestore REST value → plain JSON (the scorecard is numbers, strings, arrays and maps). */
+function decodeFirestoreValue(value) {
+  if (!value || typeof value !== 'object') return null;
+  if ('stringValue' in value) return value.stringValue;
+  if ('integerValue' in value) return Number(value.integerValue);
+  if ('doubleValue' in value) return Number(value.doubleValue);
+  if ('booleanValue' in value) return value.booleanValue === true;
+  if ('nullValue' in value) return null;
+  if ('timestampValue' in value) return Date.parse(value.timestampValue) || null;
+  if ('arrayValue' in value) return (value.arrayValue.values ?? []).map(decodeFirestoreValue);
+  if ('mapValue' in value) return decodeFirestoreFields(value.mapValue.fields ?? {});
+  return null;
+}
+function decodeFirestoreFields(fields) {
+  const out = {};
+  for (const [key, value] of Object.entries(fields)) out[key] = decodeFirestoreValue(value);
+  return out;
 }
 
 function sendJSON(response, status, origin, body) {
@@ -303,12 +362,30 @@ function startLiveWatchers() {
     };
     const presenceChanged = snapshot => {
       if (onboardingQuarantine) return;
-      liveState.acceptPresence(snapshot.docs.map(document => ({
+      const leases = snapshot.docs.map(document => ({
         uid: typeof document.data().uid === 'string' ? document.data().uid : '',
         synthetic: document.data().synthetic === true,
         activeUntilMs: document.data().activeUntil?.toMillis?.() ?? 0,
-      })));
+      }));
+      liveState.acceptPresence(leases);
+      // A lease is renewed once a minute for PRESENCE_LEASE_MS: the sighting
+      // is the renewal, not the expiry.
+      let changed = false;
+      for (const lease of leases) if (recordSighting(betaSightings, lease.uid, lease.activeUntilMs - PRESENCE_LEASE_MS, 'lease', { synthetic: lease.synthetic })) changed = true;
+      if (changed) scheduleBetaSightingsSave();
       scheduleLocalBroadcast();
+    };
+    // Heartbeats (testActivity/{uid}.lastActivityAt) are a sighting too; the
+    // watcher already pays for these documents.
+    const activityChanged = snapshot => {
+      if (onboardingQuarantine) return;
+      let changed = false;
+      for (const document of snapshot.docs) {
+        const atMs = document.data().lastActivityAt?.toMillis?.() ?? 0;
+        if (recordSighting(betaSightings, document.id, atMs, 'heartbeat')) changed = true;
+      }
+      if (changed) scheduleBetaSightingsSave();
+      scheduleLiveDashboardRefresh();
     };
     // Tenth watcher: the daily report INDEX (1 read at attach, 1 per report
     // day). Folded locally like the digest; the frame carries ≤ 60 rows and
@@ -322,7 +399,7 @@ function startLiveWatchers() {
     };
     liveWatchers = [
       firestore.collection('posts').orderBy('createdAt', 'desc').limit(160).onSnapshot(publicPostsChanged, failed),
-      firestore.collection('testActivity').limit(100).onSnapshot(changed, failed),
+      firestore.collection('testActivity').limit(100).onSnapshot(activityChanged, failed),
       firestore.collection('testBetaPosts').limit(120).onSnapshot(changed, failed),
       firestore.collection('testFeedback').limit(80).onSnapshot(changed, failed),
       firestore.collection('testControl').doc('syntheticBrowserRunner').onSnapshot(changed, failed),
@@ -850,6 +927,276 @@ async function relayControl(body, response, origin) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Beta metrics (beta-metrics-policy.mjs): human accounts only, computed here
+// from Admin SDK reads — nothing to deploy. One run reads the Auth page (an
+// API call), users/ once, each human's posts, per human pop its ledger's
+// first and largest entries (2 reads) plus the like documents human actors
+// left on it (`actorUid in` chunks of 30), and per human per day ONE count()
+// on the engagements collection group — the (actorUid, createdAt) index —
+// so a like or view on a simulation pop is a day of activity; a day once
+// counted is kept in the ledger and never counted again. The digest the
+// desk already watches supplies each pop's gain by actor class (0 reads;
+// 1 when the watcher has not spoken). The run is charged to the same
+// 25k/day ledger budget as the export, capped per run, and cached.
+
+function loadBetaSightings(path) {
+  try {
+    return normalizeSightings(JSON.parse(readFileSync(path, 'utf8')));
+  } catch {
+    return emptySightings();
+  }
+}
+
+function scheduleBetaSightingsSave(delay = 2_000) {
+  if (betaSightingsSaveTimer) return;
+  betaSightingsSaveTimer = setTimeout(() => {
+    betaSightingsSaveTimer = null;
+    void saveBetaSightings();
+  }, delay);
+}
+
+async function saveBetaSightings() {
+  try {
+    mkdirSync(dirname(betaSightingsPath), { recursive: true });
+    const temporary = `${betaSightingsPath}.${process.pid}.tmp`;
+    await writeFile(temporary, JSON.stringify(betaSightings), 'utf8');
+    await rename(temporary, betaSightingsPath);
+  } catch (error) {
+    console.error('beta sightings save failed:', error?.message ?? error);
+  }
+}
+
+/** Run `work` over `items` with at most `limit` in flight; results in order. */
+async function mapLimit(items, limit, work) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await work(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const parseStamp = value => { const ms = Date.parse(value ?? ''); return Number.isFinite(ms) && ms > 0 ? ms : 0; };
+const docMillis = value => value?.toMillis?.() ?? (typeof value === 'number' ? value : 0);
+
+async function gatherBetaMetrics(now) {
+  const firestore = getFirestore(adminApp());
+  const cap = Math.min(BETA_READ_CAP, ledgerReadBudget.remaining(now));
+  const coverage = { reads: 0, capped: false, cappedAt: null, engagementIndex: false };
+  const charge = (reads, where) => {
+    coverage.reads += Math.max(1, reads);
+    if (coverage.reads >= cap && !coverage.capped) { coverage.capped = true; coverage.cappedAt = where; }
+  };
+  const room = () => !coverage.capped;
+  try {
+    const page = await getAuth(adminApp()).listUsers(1000);
+    const accounts = page.users.map(user => ({
+      uid: user.uid,
+      email: typeof user.email === 'string' ? user.email : null,
+      displayName: typeof user.displayName === 'string' ? user.displayName : null,
+      createdAtMs: parseStamp(user.metadata?.creationTime),
+      lastSignInAtMs: parseStamp(user.metadata?.lastSignInTime),
+      lastRefreshAtMs: parseStamp(user.metadata?.lastRefreshTime),
+    }));
+    const usersSnapshot = await firestore.collection('users').limit(1000).get();
+    charge(usersSnapshot.size, 'users');
+    const profiles = usersSnapshot.docs.map(document => ({ uid: document.id, profile: document.data() ?? {} }));
+    const profileByUid = new Map(profiles.map(row => [row.uid, row.profile]));
+    const accountByUid = new Map(accounts.map(row => [row.uid, row]));
+    const humans = [];
+    for (const uid of new Set([...accountByUid.keys(), ...profileByUid.keys()])) {
+      const account = accountByUid.get(uid) ?? null;
+      const cls = betaAccountClass(uid, profileByUid.get(uid) ?? null, account?.email ?? profileByUid.get(uid)?.email ?? null, true);
+      if (cls.human) humans.push({ uid, account, signedUpAtMs: account?.createdAtMs ?? 0 });
+    }
+    // Sightings this run can add without a read: the Auth stamps.
+    let sightingsChanged = false;
+    for (const { uid, account } of humans) {
+      if (recordSighting(betaSightings, uid, account?.lastSignInAtMs ?? 0, 'signin')) sightingsChanged = true;
+      if (recordSighting(betaSightings, uid, account?.lastRefreshAtMs ?? 0, 'refresh')) sightingsChanged = true;
+    }
+    // And the leases of the last day, in case the desk was down for them
+    // (lease documents outlive their expiry by 24 h).
+    if (room()) {
+      const leases = await firestore.collection('appPresenceSessions')
+        .where('activeUntil', '>', Timestamp.fromMillis(now - 24 * 3_600_000)).limit(500).get();
+      charge(leases.size, 'presence');
+      for (const document of leases.docs) {
+        const data = document.data() ?? {};
+        if (recordSighting(betaSightings, typeof data.uid === 'string' ? data.uid : '', docMillis(data.activeUntil) - PRESENCE_LEASE_MS, 'lease', { synthetic: data.synthetic === true })) sightingsChanged = true;
+      }
+    }
+    // Engagement days: one aggregation read per human per uncounted day on
+    // the collection group (any pop: human, simulation, official). A day that
+    // has ended is marked counted so the next run pays only for today.
+    const plan = engagementDaysToCount({ humans, ledger: betaSightings, now });
+    const yesterday = dayKeyOffset(torontoDayKey(now), -1);
+    const countedDays = {};
+    let indexRefused = false;
+    coverage.engagementDaysCounted = 0;
+    await mapLimit(plan, 8, async ({ uid, day }) => {
+      if (!room() || indexRefused) return;
+      const { startMs, endMs } = torontoDayBounds(day);
+      try {
+        const count = await firestore.collectionGroup('engagements')
+          .where('actorUid', '==', uid)
+          .where('createdAt', '>=', Timestamp.fromMillis(startMs))
+          .where('createdAt', '<', Timestamp.fromMillis(endMs))
+          // The live index is (actorUid ASC, createdAt DESC): the order must
+          // be said, or the implicit ascending order asks for another index.
+          .orderBy('createdAt', 'desc')
+          .count().get();
+        charge(1, `engagement-days:${uid}`);
+        coverage.engagementDaysCounted += 1;
+        if (count.data().count > 0 && recordSightingDay(betaSightings, uid, day, 'engagement')) sightingsChanged = true;
+        (countedDays[uid] ??= []).push(day);
+      } catch (error) {
+        // FAILED_PRECONDITION: the collection-group index is not live. Say
+        // so on the frame; the other signals still stand.
+        if (error?.code === 9) { indexRefused = true; return; }
+        throw error;
+      }
+    });
+    coverage.engagementIndex = !indexRefused;
+    for (const { uid } of humans) {
+      const wanted = plan.filter(entry => entry.uid === uid && entry.day <= yesterday).map(entry => entry.day);
+      const done = countedDays[uid] ?? [];
+      if (wanted.length && wanted.every(day => done.includes(day)) && markCountedThrough(betaSightings, uid, yesterday, now)) sightingsChanged = true;
+    }
+    if (pruneSightings(betaSightings, now)) sightingsChanged = true;
+    if (sightingsChanged) scheduleBetaSightingsSave(0);
+
+    // The digest: the watcher's copy when it has spoken, else one read.
+    let digest = liveState.algorithm();
+    if (!digest && room()) {
+      const snapshot = await firestore.collection('testControl').doc('algorithmDigest').get();
+      charge(1, 'digest');
+      digest = normalizeAlgorithmDigest(snapshot.data() ?? null);
+    }
+    if (digest && (digest.unsupportedVersion || digest.oversize)) digest = null;
+    coverage.digestAtMs = digest?.generatedAtMillis ?? 0;
+
+    // Each human's posts, newest first (the tester table's own query).
+    const postsByUid = {};
+    await mapLimit(humans, 4, async ({ uid }) => {
+      if (!room()) { postsByUid[uid] = []; return; }
+      const snapshot = await firestore.collection('posts').where('userID', '==', uid)
+        .orderBy('createdAt', 'desc').limit(BETA_POSTS_PER_USER).get();
+      charge(snapshot.size, `posts:${uid}`);
+      postsByUid[uid] = snapshot.docs.map(document => ({ id: document.id, data: document.data() ?? {} }));
+    });
+
+    // Anchors for accounts whose newest pops are hidden: the protected copy.
+    const protectedLocations = {};
+    for (const { uid } of humans) {
+      for (const postId of hiddenPostIdsForAnchor(postsByUid[uid] ?? [], BETA_ANCHOR_HIDDEN_POSTS)) {
+        if (!room()) break;
+        const copy = await firestore.doc(`users/${uid}/postLocations/${postId}`).get();
+        charge(1, `anchor:${uid}`);
+        if (copy.exists) { (protectedLocations[uid] ??= {})[postId] = copy.data() ?? {}; break; }
+      }
+    }
+
+    // Per human pop: its first and largest ledger entries, the human likes
+    // on it (likes per pop is human-on-human), and its exact location when
+    // the post hides it.
+    const humanUids = humans.map(row => row.uid);
+    const chunks = humanUidChunks(humanUids);
+    const pops = [];
+    for (const { uid } of humans) for (const post of postsByUid[uid] ?? []) if (isHumanPop(post.id, post.data)) pops.push({ uid, ...post });
+    const popDetails = {};
+    await mapLimit(pops, 6, async pop => {
+      if (!room()) return;
+      const postRef = firestore.collection('posts').doc(pop.id);
+      const [start, peak] = await Promise.all([
+        postRef.collection('radiusHistory').orderBy('atMillis', 'asc').limit(1).get(),
+        postRef.collection('radiusHistory').orderBy('radiusMeters', 'desc').limit(1).get(),
+      ]);
+      charge(2, `ledger:${pop.id}`);
+      const engagements = [];
+      for (const chunk of chunks) {
+        if (!room()) break;
+        const snapshot = await postRef.collection('engagements').where('kind', '==', 'like').where('actorUid', 'in', chunk).limit(BETA_LIKES_PER_POP).get();
+        charge(snapshot.size, `likes:${pop.id}`);
+        for (const document of snapshot.docs) {
+          const data = document.data() ?? {};
+          engagements.push({ actorUid: data.actorUid, kind: data.kind, createdAtMs: docMillis(data.createdAt) });
+        }
+      }
+      let exact = null;
+      const data = pop.data ?? {};
+      if (room() && (data.latitude == null || data.longitude == null)) {
+        const copy = await firestore.doc(`users/${pop.uid}/postLocations/${pop.id}`).get();
+        charge(1, `exact:${pop.id}`);
+        exact = copy.exists ? copy.data() ?? null : null;
+      }
+      const first = start.docs[0]?.data() ?? null;
+      const top = peak.docs[0]?.data() ?? null;
+      popDetails[pop.id] = {
+        startMeters: first ? first.radiusMeters : null,
+        startAtMs: first ? first.atMillis : null,
+        peakMeters: top ? top.radiusMeters : null,
+        peakAtMs: top ? top.atMillis : null,
+        engagements,
+        exact,
+      };
+    });
+
+    const sightingDays = Object.values(betaSightings.sightings ?? {}).flatMap(days => Object.keys(days));
+    coverage.sightingsSince = sightingDays.length ? sightingDays.sort()[0] : null;
+    return foldBetaMetrics({ now, accounts, profiles, postsByUid, popDetails, protectedLocations, sightings: betaSightings, digest, coverage });
+  } finally {
+    ledgerReadBudget.charge(coverage.reads, now);
+  }
+}
+
+/**
+ * GET /api/beta[?refresh=1]: the Beta tab's result — served from the run
+ * cache inside BETA_CACHE_MS (0 reads), else computed (charged, capped). A
+ * refusal (429) keeps the ledger export's shape; a run already in flight is
+ * joined, never duplicated.
+ */
+async function serveBetaMetrics(response, origin, refresh) {
+  if (onboardingQuarantine) {
+    sendJSON(response, 503, origin, { error: { message: 'Production reads are quarantined during first-user onboarding.' } });
+    return;
+  }
+  const now = Date.now();
+  if (!refresh && betaCache.result && now - betaCache.atMs < BETA_CACHE_MS) {
+    sendReportJSON(response, 200, origin, { result: { ...betaCache.result, cached: true, cachedAtMs: betaCache.atMs } }, 0);
+    return;
+  }
+  const remaining = ledgerReadBudget.remaining(now);
+  if (!betaInFlight && remaining < BETA_READ_RESERVE) {
+    sendJSON(response, 429, origin, {
+      error: { message: 'That Beta run would exceed today\'s ledger read budget.' },
+      remaining,
+      estimate: { reads: BETA_READ_RESERVE, cad: readsToCad(BETA_READ_RESERVE) },
+    });
+    return;
+  }
+  try {
+    if (!betaInFlight) {
+      betaInFlight = gatherBetaMetrics(now).then(result => {
+        betaCache = { atMs: now, result, reads: result.coverage.reads };
+        return result;
+      }).finally(() => { betaInFlight = null; });
+    }
+    const result = await betaInFlight;
+    sendReportJSON(response, 200, origin, { result: { ...result, cached: false, cachedAtMs: betaCache.atMs } }, result.coverage.reads);
+  } catch (error) {
+    console.error('beta metrics failed:', error?.message ?? error);
+    sendJSON(response, 502, origin, { error: { message: 'The Beta metrics could not be read from Poplur.' } });
+  }
+}
+
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin === controlRoomOrigin ? controlRoomOrigin : '';
   const requestURL = new URL(request.url || '/', `http://${host}:${port}`);
@@ -904,6 +1251,25 @@ const server = createServer(async (request, response) => {
     await serveReportIndex(response, origin);
     return;
   }
+  if (request.method === 'GET' && requestURL.pathname === '/api/beta') {
+    await serveBetaMetrics(response, origin, requestURL.searchParams.get('refresh') === '1');
+    return;
+  }
+  // The beta scorecard the landing page shows (functions/src/betaScorecard.ts →
+  // public/betaScorecard). World-readable by rule, so plain REST with no token:
+  // the desk sees exactly what YC sees, from the same document.
+  if (request.method === 'GET' && requestURL.pathname === '/api/scorecard') {
+    try {
+      const rest = await fetch('https://firestore.googleapis.com/v1/projects/poplur2025/databases/(default)/documents/public/betaScorecard', { signal: AbortSignal.timeout(10_000) });
+      if (rest.status === 404) { sendJSON(response, 200, origin, { scorecard: null }); return; }
+      if (!rest.ok) throw new Error(`Firestore REST ${rest.status}`);
+      const body = await rest.json();
+      sendJSON(response, 200, origin, { scorecard: decodeFirestoreFields(body.fields ?? {}) });
+    } catch (error) {
+      sendJSON(response, 503, origin, { error: { message: `Scorecard unavailable: ${error instanceof Error ? error.message : String(error)}` } });
+    }
+    return;
+  }
   const reportMatch = requestURL.pathname.match(/^\/api\/reports\/([^/]+)$/);
   if (request.method === 'GET' && reportMatch) {
     let day = null;
@@ -947,6 +1313,7 @@ server.on('error', error => {
 
 function shutdown() {
   resetLiveWatchers();
+  if (betaSightingsSaveTimer) { clearTimeout(betaSightingsSaveTimer); betaSightingsSaveTimer = null; void saveBetaSightings(); }
   server.close();
 }
 

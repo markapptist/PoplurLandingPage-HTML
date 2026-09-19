@@ -39,6 +39,10 @@ function ScorecardCard({ scorecard, state }: { scorecard: Scorecard | null; stat
       <div className="pl-kpi"><b>{scorecard?.activity.activeLast7d ?? '—'}</b><span>active in the last 7 days</span></div>
       <div className="pl-kpi"><b>{scorecard?.activity.humanPops ?? '—'}</b><span>pops posted by people</span></div>
     </div>
+    {scorecard && scorecard.installs === 0 && <p className="pl-empty-state">
+      Nobody is in the beta yet — the student invite has not gone out. Every number here counts people only; the first
+      ones land within 24 hours of the first sign-up and refresh every fifteen minutes.
+    </p>}
     <table className="pl-table">
       <thead><tr><th>Signal</th><th>Count</th><th>Share</th><th>Read</th></tr></thead>
       <tbody>

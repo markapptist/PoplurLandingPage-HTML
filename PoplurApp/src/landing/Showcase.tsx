@@ -1,11 +1,14 @@
 import { Image } from 'expo-image';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import ShaderText from './ShaderText';
 import { centreBell, onScrollFrame, reducedMotion } from './scroll';
 
-// The Apple-store pattern: one iPhone, on a slant, pinned while the feature
-// copy scrolls past; the screen inside changes with each step. The frame is
-// CSS; every screen is a real render of the app (approved Good Copy stills
-// today, device captures as they arrive) — never a drawn stand-in.
+// One iPhone that travels with the chapters: pinned to the screen while the
+// feature copy scrolls past, but never parked in one corner — each chapter
+// poses it somewhere else (right, left, above the copy, below it) on its own
+// slant, and the screen inside changes with the step. The frame is CSS; every
+// screen is a real render of the app (approved Good Copy stills today, device
+// captures as they arrive) — never a drawn stand-in.
 
 export type ShowcaseStep = {
   id: string;
@@ -17,6 +20,17 @@ export type ShowcaseStep = {
   fine?: string;
   /** a real app screen (390×845), or null while a capture is still owed */
   screen: number | null;
+};
+
+/** Where the phone stands for a step, and which way the copy makes room. */
+export type Pose = {
+  /** the side of the copy the phone is on */
+  side: 'right' | 'left' | 'top' | 'bottom';
+  /** offsets from the stage centre, in vw / vh */
+  x: number; y: number;
+  /** the slant, in degrees */
+  rz: number; ry: number; rx: number;
+  scale: number;
 };
 
 // Real renders only: the clay map from the map surface, the runner's recorded
@@ -51,6 +65,21 @@ export const SHOWCASE_STEPS: ShowcaseStep[] = [
     body: 'A café posts the same way anyone does; its pop reaches the people nearby. Businesses pay to extend a radius or to place a pop somewhere they are not.',
     screen: SCREENS.store },
 ];
+
+// The phone's tour, one pose per step in SHOWCASE_STEPS order: it starts on
+// the right the way the hero left it, crosses to the left, rises above the
+// copy, drops below it, and swings back — every stop on a different slant, so
+// scrolling reads as the same object moving, not six pictures.
+export const POSES: readonly Pose[] = [
+  { side: 'right',  x: 22,  y: 0,   rz: 1.5,  ry: -17, rx: 5,  scale: 1 },
+  { side: 'left',   x: -24, y: 2,   rz: -9,   ry: 16,  rx: 4,  scale: 0.96 },
+  { side: 'top',    x: 0,   y: -24, rz: -14,  ry: 0,   rx: 8,  scale: 0.66 },
+  { side: 'bottom', x: 4,   y: 25,  rz: 8,    ry: -8,  rx: -4, scale: 0.74 },
+  { side: 'left',   x: -23, y: -2,  rz: 12,   ry: 18,  rx: 3,  scale: 0.98 },
+  { side: 'right',  x: 24,  y: 4,   rz: -6,   ry: -20, rx: 6,  scale: 0.94 },
+];
+
+export const poseForStep = (index: number): Pose => POSES[index % POSES.length];
 
 /** Which screen the phone shows for a step: its own, else the app's splash —
  *  a real screen, and honest about a capture that has not arrived. */
@@ -89,7 +118,7 @@ export default function Showcase({ steps = SHOWCASE_STEPS }: { steps?: ShowcaseS
   }, [steps.length]);
   // Copy is scrubbed by the scroll: each step's block fades and lifts in as
   // it approaches the middle of the screen and falls away after — the phone
-  // holds still and the words move past it.
+  // holds its pose and the words move past it.
   useEffect(() => {
     if (reducedMotion()) return
     return onScrollFrame((_y, h) => {
@@ -103,27 +132,27 @@ export default function Showcase({ steps = SHOWCASE_STEPS }: { steps?: ShowcaseS
     })
   }, [steps.length])
   const screens = steps.map(screenForStep);
+  const pose = poseForStep(active);
+  const poseVars = { '--x': pose.x, '--y': pose.y, '--rz': pose.rz, '--ry': pose.ry, '--rx': pose.rx, '--s': pose.scale } as CSSProperties;
   const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  return <section className="pl-showcase" id="features">
-    <div className="wrap">
-      <div className="pl-steps">
-        {steps.map((step, i) => <article key={step.id} id={step.id} ref={el => { refs.current[i] = el; }} className={`pl-step${i === active ? ' is-active' : ''}`}>
-          <div className="pl-step-copy">
-            <div className="pl-eyebrow">{step.eyebrow}</div>
-            <h2>{step.title}</h2>
-            <p>{step.body}</p>
-            {step.fine && <p className="pl-fine">{step.fine}</p>}
-          </div>
-        </article>)}
+  return <section className="pl-showcase">
+    <div className="pl-stage" aria-hidden="true">
+      <div className="pl-stage-phone" style={poseVars}>
+        <IPhone screens={screens} active={active} />
       </div>
-      <div className="pl-device-col">
-        <div className={`pl-device-pin tilt-${active % 2}`}>
-          <IPhone screens={screens} active={active} />
-          <div className="pl-dots" role="tablist" aria-label="Features">
-            {steps.map((step, i) => <button key={step.id} type="button" role="tab" aria-selected={i === active} aria-label={step.nav} className={`pl-dot-btn${i === active ? ' is-on' : ''}`} onClick={() => go(step.id)} />)}
-          </div>
+      <div className="pl-dots" role="tablist" aria-label="Features" aria-hidden="false">
+        {steps.map((step, i) => <button key={step.id} type="button" role="tab" aria-selected={i === active} aria-label={step.nav} className={`pl-dot-btn${i === active ? ' is-on' : ''}`} onClick={() => go(step.id)} />)}
+      </div>
+    </div>
+    <div className="pl-steps">
+      {steps.map((step, i) => <article key={step.id} id={step.id} ref={el => { refs.current[i] = el; }} data-side={poseForStep(i).side} className={`pl-step${i === active ? ' is-active' : ''}`}>
+        <div className="pl-step-copy">
+          <div className="pl-eyebrow">{step.eyebrow}</div>
+          <ShaderText as="h2">{step.title}</ShaderText>
+          <p>{step.body}</p>
+          {step.fine && <p className="pl-fine">{step.fine}</p>}
         </div>
-      </div>
+      </article>)}
     </div>
   </section>;
 }

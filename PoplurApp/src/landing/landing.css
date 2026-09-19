@@ -118,36 +118,42 @@
 .pl-footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 12px; color: var(--ink-3); }
 .pl-footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 
-/* showcase — the sticky, slanted iPhone whose screen follows the copy */
-.pl-showcase { padding: 40px 0 0; }
-.pl-showcase .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 46%); gap: 48px; align-items: start; }
-.pl-steps { display: flex; flex-direction: column; padding-bottom: 34vh; }
-.pl-step { min-height: 86vh; display: flex; flex-direction: column; justify-content: center; padding: 8vh 0; opacity: .28; transform: translateY(6px); transition: opacity .5s ease, transform .5s ease; }
-.pl-step.is-active { opacity: 1; transform: none; }
-.pl-step h2 { font-size: clamp(30px, 4.2vw, 52px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 700; margin-top: 14px; }
-.pl-step p { font-size: 18px; color: var(--ink-2); margin-top: 18px; max-width: 44ch; }
-.pl-step .pl-fine { font-size: 13px; color: var(--ink-3); margin-top: 14px; }
-.pl-device-col { position: relative; min-height: 100%; }
-.pl-device-pin { position: sticky; top: calc(50vh - 360px); display: flex; flex-direction: column; align-items: center; perspective: 1600px; }
+/* showcase — one iPhone that travels with the chapters (Showcase.tsx POSES) */
+.pl-showcase { position: relative; padding: 0; }
+/* The stage is pinned for the whole chapter run; the steps scroll over it. */
+.pl-stage { position: sticky; top: 0; height: 100vh; z-index: 0; display: grid; place-items: center; perspective: 1600px; pointer-events: none; }
+.pl-stage-phone { will-change: transform;
+  transform: translate(calc(var(--x, 0) * 1vw), calc(var(--y, 0) * 1vh)) rotateY(calc(var(--ry, 0) * 1deg)) rotateX(calc(var(--rx, 0) * 1deg)) rotateZ(calc(var(--rz, 0) * 1deg)) scale(var(--s, 1));
+  transition: transform 1.1s cubic-bezier(.2, .7, .2, 1); }
+.pl-stage-phone .pl-iphone { transform: none; transition: none; width: min(320px, 40vw); }
+.pl-stage .pl-dots { position: absolute; left: 0; right: 0; bottom: 22px; pointer-events: auto; }
 .pl-iphone { position: relative; width: min(320px, 78vw); aspect-ratio: 390 / 800; border-radius: 52px; background: #0b0b0e; padding: 11px;
   box-shadow: 0 40px 90px rgba(17, 17, 20, .28), 0 0 0 1px rgba(255, 255, 255, .06) inset, 0 0 0 2px rgba(17, 17, 20, .9);
   transform: rotateY(-17deg) rotateX(5deg) rotateZ(1.5deg); transition: transform .9s cubic-bezier(.2, .7, .2, 1); will-change: transform; }
-.pl-device-pin.tilt-1 .pl-iphone { transform: rotateY(-11deg) rotateX(4deg) rotateZ(-1deg); }
 .pl-iphone-screen { position: absolute; inset: 11px; border-radius: 42px; overflow: hidden; background: #141018; }
 .pl-iphone-island { position: absolute; top: 22px; left: 50%; width: 96px; height: 28px; transform: translateX(-50%); border-radius: 999px; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, .04); }
-/* Narrow screens keep the phone beside the copy — never over it — just smaller. */
+/* Steps overlay the stage (its own height pulled back up) and each makes room on the phone's side. */
+.pl-steps { position: relative; z-index: 1; margin-top: -100vh; padding-bottom: 10vh; }
+.pl-step { min-height: 100vh; display: flex; align-items: center; justify-content: flex-start; padding: 0 clamp(20px, 6vw, 96px); }
+.pl-step-copy { width: min(520px, 100%); }
+.pl-step h2 { font-size: clamp(30px, 4.2vw, 52px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 700; margin-top: 14px; }
+.pl-step p { font-size: 18px; color: var(--ink-2); margin-top: 18px; max-width: 44ch; }
+.pl-step .pl-fine { font-size: 13px; color: var(--ink-3); margin-top: 14px; }
+.pl-step[data-side="left"] { justify-content: flex-end; }
+.pl-step[data-side="top"] { align-items: flex-end; justify-content: center; text-align: center; padding-bottom: 9vh; }
+.pl-step[data-side="bottom"] { align-items: flex-start; justify-content: center; text-align: center; padding-top: 12vh; }
+.pl-step[data-side="top"] .pl-step-copy p, .pl-step[data-side="bottom"] .pl-step-copy p { margin-left: auto; margin-right: auto; }
+/* Narrow screens: the phone hangs small at the top and every chapter reads beneath it. */
 @media (max-width: 860px) {
-  .pl-showcase .wrap { grid-template-columns: minmax(0, 1.1fr) minmax(132px, 40%); gap: 18px; }
-  .pl-device-pin { top: calc(50vh - 290px); }
-  .pl-iphone { width: min(100%, 260px); border-radius: 40px; padding: 8px; transform: rotateY(-14deg) rotateX(4deg) rotateZ(1deg); }
-  .pl-iphone-screen { inset: 8px; border-radius: 32px; }
-  .pl-iphone-island { top: 16px; width: 60px; height: 18px; }
-  .pl-step { min-height: 70vh; padding: 6vh 0; }
+  .pl-stage-phone { --x: 0 !important; --y: -25 !important; --s: .58 !important; }
+  .pl-stage-phone .pl-iphone { width: min(260px, 60vw); border-radius: 40px; padding: 8px; }
+  .pl-stage-phone .pl-iphone-screen { inset: 8px; border-radius: 32px; }
+  .pl-stage-phone .pl-iphone-island { top: 16px; width: 60px; height: 18px; }
+  .pl-step, .pl-step[data-side] { align-items: flex-end; justify-content: center; text-align: center; padding: 0 20px 9vh; min-height: 100vh; }
+  .pl-step-copy p { margin-left: auto; margin-right: auto; }
   .pl-step h2 { font-size: clamp(22px, 6vw, 34px); }
   .pl-step p { font-size: 15px; }
 }
-}
-
 
 /* ── the pre-login world behind everything ─────────────────────────────── */
 .pl > *:not(.pl-backdrop) { position: relative; z-index: 1; }
@@ -267,8 +273,7 @@
 .pl-reveal { opacity: 0; transform: translateY(48px) scale(.97); transition: opacity .9s cubic-bezier(.2, .7, .2, 1), transform .9s cubic-bezier(.2, .7, .2, 1); }
 .pl-reveal.in { opacity: 1; transform: none; }
 
-/* scrubbed chapter: copy moves, phone holds, dots say where you are */
-.pl-showcase { padding: 6vh 0 20px; }
+/* scrubbed chapter: copy moves, the phone holds its pose, dots say where you are */
 .pl-step { opacity: .18; transform: none; transition: none; }
 .pl-step.is-active { opacity: 1; }
 .pl-step-copy { will-change: transform; }
@@ -276,3 +281,35 @@
 .pl-dot-btn { width: 8px; height: 8px; border-radius: 999px; border: 0; padding: 0; background: rgba(255, 255, 255, 0.45); cursor: pointer; transition: width .35s ease, background .35s ease; }
 .pl-dot-btn.is-on { width: 28px; background: #fff; }
 .pl[data-ink="dark"] .pl-dot-btn { background: rgba(0, 0, 0, 0.25); } .pl[data-ink="dark"] .pl-dot-btn.is-on { background: #111; }
+
+/* ── shader text: the app's house recipe (PostComposer .filterNameShader) — a gradient sweep clipped through the letterforms, a specular band over it ── */
+.pl .pl-shader { color: transparent; -webkit-text-fill-color: transparent; background-clip: text; -webkit-background-clip: text; text-shadow: none !important;
+  background-image:
+    linear-gradient(105deg, rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, .9) 50%, rgba(255, 255, 255, 0) 58%),
+    linear-gradient(105deg, #ffffff 0%, #ffe6f2 14%, var(--accent-2) 32%, #ffffff 50%, var(--accent) 66%, #ffe6f2 84%, #ffffff 100%);
+  background-size: 260% 100%, 260% 100%; background-position: 0 0, 0 0;
+  filter: drop-shadow(0 2px 0 rgba(60, 0, 32, .38)) drop-shadow(0 10px 22px rgba(0, 0, 0, .26)); }
+.pl[data-ink="dark"] .pl-shader {
+  background-image:
+    linear-gradient(105deg, rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, .75) 50%, rgba(255, 255, 255, 0) 58%),
+    linear-gradient(105deg, var(--ink) 0%, var(--accent) 26%, var(--ink) 48%, var(--accent-2) 70%, var(--ink) 100%);
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, .55)) drop-shadow(0 8px 18px rgba(0, 0, 0, .12)); }
+/* Only while on screen (ShaderText.tsx): background-position repaints every frame. The specular runs at twice the sweep. */
+.pl .pl-shader.is-live { animation: plShaderSweep 5.2s linear infinite; }
+@keyframes plShaderSweep { from { background-position: 0 0, 0 0; } to { background-position: -520% 0, -260% 0; } }
+@media (prefers-reduced-motion: reduce) { .pl .pl-shader.is-live { animation: none; } }
+
+/* the chapter under you, in the toolbar */
+.pl-nav-links a { position: relative; padding: 6px 2px; opacity: .78; transition: opacity .25s ease; }
+.pl-nav-links a::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 2px; background: var(--accent-2); transform: scaleX(0); transition: transform .35s cubic-bezier(.2, .7, .2, 1); }
+.pl-nav-links a.is-current { opacity: 1; }
+.pl-nav-links a.is-current::after { transform: scaleX(1); }
+.pl[data-ink="dark"] .pl-nav-links a::after { background: var(--accent); }
+
+/* the sign-up sits right under the hero now */
+.pl-signup-top { padding: 4vh 0 12vh; }
+
+/* the hero's TV spot (heroSpot.ts): full-bleed under the headline, darkened at the foot so the copy reads */
+.pl-hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pl-hero.has-spot::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .6) 0%, rgba(0, 0, 0, .18) 45%, transparent 70%); pointer-events: none; }
+.pl-hero.has-spot .pl-hero-lockup { z-index: 1; }

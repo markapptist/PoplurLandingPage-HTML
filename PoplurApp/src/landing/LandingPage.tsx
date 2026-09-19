@@ -1,3 +1,4 @@
+import { Asset } from 'expo-asset';
 import { Image } from 'expo-image';
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
@@ -8,6 +9,10 @@ import { useBetaScorecard, type Scorecard } from './useBetaScorecard';
 import { useLivePops } from './useLivePops';
 import Showcase, { IPhone, SCREENS, SHOWCASE_STEPS } from './Showcase';
 import Lockup from './Lockup';
+import ShaderText from './ShaderText';
+import { HERO_SPOT } from './heroSpot';
+import { armLandingPop, landingPop } from './landingPop';
+import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, progressOf, reducedMotion } from './scroll';
 import Backdrop from './Backdrop';
 import ColourBadge from './ColourBadge';
@@ -50,14 +55,17 @@ function Hero() {
       if (copyRef.current) { copyRef.current.style.opacity = String(1 - p * 1.4); copyRef.current.style.transform = `translateY(${p * 40}px)`; }
     });
   }, []);
-  return <header ref={ref} className="pl-hero" id="top">
-    <div className="pl-hero-stage">
-      <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
-    </div>
+  const spot = HERO_SPOT === null ? null : Asset.fromModule(HERO_SPOT).uri;
+  return <header ref={ref} className={`pl-hero${spot ? ' has-spot' : ''}`} id="top">
+    {spot
+      ? <video className="pl-hero-video" src={spot} autoPlay muted loop playsInline preload="auto" aria-label="People using Poplur" />
+      : <div className="pl-hero-stage">
+        <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
+      </div>}
     <div ref={copyRef} className="pl-hero-lockup wrap">
       <div className="pl-hero-text">
         <div className="pl-eyebrow">Poplur</div>
-        <h1>Posts on a world map that spread as people engage.</h1>
+        <ShaderText as="h1">Posts on a world map that spread as people engage.</ShaderText>
         <div className="pl-offer">
           <span>Free on iPhone · Toronto beta<br /><small>Every pop starts with a 5 km radius.</small></span>
           <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
@@ -141,10 +149,10 @@ function Signup() {
     catch (error) { setNote({ tone: 'err', text: error instanceof Error ? error.message : 'Unable to send beta links right now.' }); }
     finally { setBusy(false); }
   }
-  return <section id="beta" className="pl-signup">
+  return <section id="beta" className="pl-signup pl-signup-top">
     <div className="wrap">
       <div className="pl-eyebrow">Private beta</div>
-      <h2>Join the beta.</h2>
+      <ShaderText as="h2">Join the beta.</ShaderText>
       <p>iPhone first, through TestFlight. Enter your email and we will send the links. Students: your course Discord has the invite and the tester agreement.</p>
       <form className="pl-form" onSubmit={submit}>
         <input type="email" inputMode="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} disabled={busy} aria-label="Email address" />
@@ -163,6 +171,26 @@ export default function LandingPage() {
   const theme = themeById(themeId);
   const changeTheme = (id: LandingThemeId) => { setThemeId(id); saveLandingThemeId(id); };
   const inkMode = /^#f/i.test(theme.ink) ? 'light' : 'dark';
+  // The chapter under the reader — one answer (spy.ts) that both the nav's
+  // highlight and the scroll pop use. The pop plays on every change after the
+  // first read (landing on the page is not a pop), and only once the page
+  // has had a real gesture to unlock sound with (landingPop.ts).
+  const [current, setCurrent] = useState<string | null>(null);
+  const currentRef = useRef<string | null>(null);
+  const settledRef = useRef(false);
+  useEffect(() => armLandingPop(), []);
+  useEffect(() => {
+    const ids = ['top', 'beta', 'live', ...SHOWCASE_STEPS.map(step => step.id)];
+    return onScrollFrame((_y, h) => {
+      const boxes = ids.flatMap(id => { const el = document.getElementById(id); return el ? [{ id, top: el.getBoundingClientRect().top }] : []; });
+      const next = pickCurrent(boxes, h);
+      if (next === currentRef.current) return;
+      if (settledRef.current) landingPop();
+      settledRef.current = true;
+      currentRef.current = next;
+      setCurrent(next);
+    });
+  }, []);
   const themeVars = { '--accent': theme.accent, '--accent-2': theme.accent2, '--ink': theme.ink, '--bg': theme.bg } as CSSProperties;
   // Expo's web shell paints the document black behind the root; this page is
   // white to the edges. Scoped to the mount so the Test Center keeps its own.
@@ -190,8 +218,8 @@ export default function LandingPage() {
           <Image source={WORDMARK} style={{ width: 78, height: 26 }} contentFit="contain" accessibilityLabel="Poplur" />
         </a>
         <div className="pl-nav-links">
-          <a href="#live" onClick={e => { e.preventDefault(); scrollTo('live'); }}>Live</a>
-          {SHOWCASE_STEPS.slice(0, 4).map(f => <a key={f.id} href={`#${f.id}`} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
+          <a href="#live" className={current === 'live' ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo('live'); }}>Live</a>
+          {SHOWCASE_STEPS.slice(0, 4).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
         <div className="pl-nav-tools">
           <RadioBadge />
@@ -202,6 +230,8 @@ export default function LandingPage() {
     </nav>
 
     <Hero />
+
+    <Signup />
 
     <section id="live" className="pl-live">
       <Lockup eyebrow="Live from the beta" title="The numbers, as they happen." sub="A student beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a classmate likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees." />
@@ -216,8 +246,6 @@ export default function LandingPage() {
     <Lockup id="features" eyebrow="How it works" title="Reach, without followers." sub="Six things a pop does that a post never could." />
 
     <Showcase />
-
-    <Signup />
 
     <footer className="pl-footer">
       <div className="wrap">

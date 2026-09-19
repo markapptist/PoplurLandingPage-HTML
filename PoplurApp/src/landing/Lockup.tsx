@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import ShaderText from './ShaderText'
 
 // A chapter opener the Apple way: a small eyebrow, a giant headline, air
 // around it, revealed as it scrolls into the middle of the screen.
@@ -11,7 +12,7 @@ export default function Lockup({ eyebrow, title, sub, id }: { eyebrow: string; t
   }, [])
   return <div ref={ref} id={id} className="pl-lockup">
     <div className="pl-eyebrow">{eyebrow}</div>
-    <h2>{title}</h2>
+    <ShaderText as="h2">{title}</ShaderText>
     {sub && <p>{sub}</p>}
   </div>
 }

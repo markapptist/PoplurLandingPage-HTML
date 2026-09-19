@@ -10,7 +10,7 @@ import { useLivePops } from './useLivePops';
 import Showcase, { IPhone, SCREENS, SHOWCASE_STEPS } from './Showcase';
 import Lockup from './Lockup';
 import ShaderText from './ShaderText';
-import { HERO_SPOT } from './heroSpot';
+import { HERO_SPOT, HERO_SPOT_POSTER } from './heroSpot';
 import { armLandingPop, landingPop } from './landingPop';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, progressOf, reducedMotion } from './scroll';
@@ -56,9 +56,10 @@ function Hero() {
     });
   }, []);
   const spot = HERO_SPOT === null ? null : Asset.fromModule(HERO_SPOT).uri;
+  const poster = HERO_SPOT_POSTER === null ? undefined : Asset.fromModule(HERO_SPOT_POSTER).uri;
   return <header ref={ref} className={`pl-hero${spot ? ' has-spot' : ''}`} id="top">
     {spot
-      ? <video className="pl-hero-video" src={spot} autoPlay muted loop playsInline preload="auto" aria-label="People using Poplur" />
+      ? <video className="pl-hero-video" src={spot} poster={poster} autoPlay muted loop playsInline preload="auto" aria-label="People using Poplur" />
       : <div className="pl-hero-stage">
         <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
       </div>}

@@ -1,6 +1,8 @@
-// The TV spot behind the hero — people using Poplur — plays full-bleed under
-// the headline when it exists, and the phone stands in until then. Metro
-// resolves assets at bundle time, so this points at nothing until the file
-// is in the repo: when the spot lands at assets/videos/landing/tv-spot.mp4,
-// set HERO_SPOT to require('@/assets/videos/landing/tv-spot.mp4').
-export const HERO_SPOT: number | null = null
+// The TV spot behind the hero — people using Poplur, generated in Google AI
+// Studio (Veo) from .codex/landing-tv-spot-script.md — plays full-bleed,
+// muted and looping, under the headline. The video is the generated clip with
+// its audio track dropped (the hero never has sound) and a faststart header
+// so it starts before it has fully downloaded; the poster is its frame at
+// 1.5 s, shown until the first frame decodes.
+export const HERO_SPOT: number | null = require('@/assets/videos/landing/tv-spot.mp4')
+export const HERO_SPOT_POSTER: number | null = require('@/assets/images/landing/tv-spot-poster.jpg')

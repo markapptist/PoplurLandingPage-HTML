@@ -1,14 +1,14 @@
 import { Image } from 'expo-image';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import ShaderText from './ShaderText';
 import { centreBell, onScrollFrame, reducedMotion } from './scroll';
 
-// One iPhone that travels with the chapters: pinned to the screen while the
-// feature copy scrolls past, but never parked in one corner — each chapter
-// poses it somewhere else (right, left, above the copy, below it) on its own
-// slant, and the screen inside changes with the step. The frame is CSS; every
-// screen is a real render of the app (approved Good Copy stills today, device
-// captures as they arrive) — never a drawn stand-in.
+// Every chapter has its own iPhone, large, laid out beside its copy — right
+// of it, left of it, above it or below it — on its own slant, so scrolling
+// reads as a walk past six different arrangements and the phone is never over
+// the words. The frame is CSS; every screen is a real render of the app
+// (approved Good Copy stills today, device captures as they arrive) — never a
+// drawn stand-in.
 
 export type ShowcaseStep = {
   id: string;
@@ -22,15 +22,11 @@ export type ShowcaseStep = {
   screen: number | null;
 };
 
-/** Where the phone stands for a step, and which way the copy makes room. */
+/** Where a step's phone stands relative to its copy, and its slant. */
 export type Pose = {
-  /** the side of the copy the phone is on */
   side: 'right' | 'left' | 'top' | 'bottom';
-  /** offsets from the stage centre, in vw / vh */
-  x: number; y: number;
-  /** the slant, in degrees */
+  /** degrees; small around Z beside text — a big tilt widens the phone into the column next to it */
   rz: number; ry: number; rx: number;
-  scale: number;
 };
 
 // Real renders only: the clay map from the map surface, the runner's recorded
@@ -66,17 +62,16 @@ export const SHOWCASE_STEPS: ShowcaseStep[] = [
     screen: SCREENS.store },
 ];
 
-// The phone's tour, one pose per step in SHOWCASE_STEPS order: it starts on
-// the right the way the hero left it, crosses to the left, rises above the
-// copy, drops below it, and swings back — every stop on a different slant, so
-// scrolling reads as the same object moving, not six pictures.
+// One pose per step in SHOWCASE_STEPS order: right, left, above, below, left,
+// right — six arrangements, six slants, so the walk down the page never
+// repeats a picture.
 export const POSES: readonly Pose[] = [
-  { side: 'right',  x: 22,  y: 0,   rz: 1.5,  ry: -17, rx: 5,  scale: 1 },
-  { side: 'left',   x: -24, y: 2,   rz: -9,   ry: 16,  rx: 4,  scale: 0.96 },
-  { side: 'top',    x: 0,   y: -24, rz: -14,  ry: 0,   rx: 8,  scale: 0.66 },
-  { side: 'bottom', x: 4,   y: 25,  rz: 8,    ry: -8,  rx: -4, scale: 0.74 },
-  { side: 'left',   x: -23, y: -2,  rz: 12,   ry: 18,  rx: 3,  scale: 0.98 },
-  { side: 'right',  x: 24,  y: 4,   rz: -6,   ry: -20, rx: 6,  scale: 0.94 },
+  { side: 'right',  rz: 2,   ry: -17, rx: 5 },
+  { side: 'left',   rz: -6,  ry: 16,  rx: 4 },
+  { side: 'top',    rz: -12, ry: 0,   rx: 8 },
+  { side: 'bottom', rz: 9,   ry: -8,  rx: -4 },
+  { side: 'left',   rz: 7,   ry: 18,  rx: 3 },
+  { side: 'right',  rz: -5,  ry: -20, rx: 6 },
 ];
 
 export const poseForStep = (index: number): Pose => POSES[index % POSES.length];
@@ -96,63 +91,33 @@ export function IPhone({ screens, active, className = '' }: { screens: readonly 
 }
 
 export default function Showcase({ steps = SHOWCASE_STEPS }: { steps?: ShowcaseStep[] }) {
-  const [active, setActive] = useState(0);
   const refs = useRef<(HTMLElement | null)[]>([]);
-  useEffect(() => {
-    const els = refs.current.filter((el): el is HTMLElement => !!el);
-    if (!els.length || typeof IntersectionObserver === 'undefined') return;
-    const io = new IntersectionObserver(entries => {
-      // The step nearest the middle of the viewport owns the phone.
-      let best: { index: number; distance: number } | null = null;
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const index = els.indexOf(entry.target as HTMLElement);
-        const mid = entry.boundingClientRect.top + entry.boundingClientRect.height / 2;
-        const distance = Math.abs(mid - window.innerHeight / 2);
-        if (!best || distance < best.distance) best = { index, distance };
-      }
-      if (best) setActive(best.index);
-    }, { threshold: [0.25, 0.5, 0.75], rootMargin: '-10% 0px -10% 0px' });
-    els.forEach(el => io.observe(el));
-    return () => io.disconnect();
-  }, [steps.length]);
-  // Copy is scrubbed by the scroll: each step's block fades and lifts in as
-  // it approaches the middle of the screen and falls away after — the phone
-  // holds its pose and the words move past it.
+  // Scrubbed by the scroll: a chapter brightens as it nears the middle of the
+  // screen and dims as it leaves, so the one you are reading is the one lit.
   useEffect(() => {
     if (reducedMotion()) return
     return onScrollFrame((_y, h) => {
       refs.current.forEach(el => {
         if (!el) return
-        const bell = centreBell(el, h, 0.42)
-        const copy = el.firstElementChild as HTMLElement | null
-        el.style.opacity = String(0.18 + bell * 0.82)
-        if (copy) copy.style.transform = `translateY(${(1 - bell) * 26}px)`
+        el.style.opacity = String(0.3 + centreBell(el, h, 0.55) * 0.7)
       })
     })
   }, [steps.length])
-  const screens = steps.map(screenForStep);
-  const pose = poseForStep(active);
-  const poseVars = { '--x': pose.x, '--y': pose.y, '--rz': pose.rz, '--ry': pose.ry, '--rx': pose.rx, '--s': pose.scale } as CSSProperties;
-  const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return <section className="pl-showcase">
-    <div className="pl-stage" aria-hidden="true">
-      <div className="pl-stage-phone" style={poseVars}>
-        <IPhone screens={screens} active={active} />
-      </div>
-      <div className="pl-dots" role="tablist" aria-label="Features" aria-hidden="false">
-        {steps.map((step, i) => <button key={step.id} type="button" role="tab" aria-selected={i === active} aria-label={step.nav} className={`pl-dot-btn${i === active ? ' is-on' : ''}`} onClick={() => go(step.id)} />)}
-      </div>
-    </div>
-    <div className="pl-steps">
-      {steps.map((step, i) => <article key={step.id} id={step.id} ref={el => { refs.current[i] = el; }} data-side={poseForStep(i).side} className={`pl-step${i === active ? ' is-active' : ''}`}>
+    {steps.map((step, i) => {
+      const pose = poseForStep(i);
+      const slant = { '--rz': pose.rz, '--ry': pose.ry, '--rx': pose.rx } as CSSProperties;
+      return <article key={step.id} id={step.id} ref={el => { refs.current[i] = el; }} data-side={pose.side} className="pl-step">
         <div className="pl-step-copy">
           <div className="pl-eyebrow">{step.eyebrow}</div>
           <ShaderText as="h2">{step.title}</ShaderText>
           <p>{step.body}</p>
           {step.fine && <p className="pl-fine">{step.fine}</p>}
         </div>
-      </article>)}
-    </div>
+        <div className="pl-step-phone" style={slant} aria-hidden="true">
+          <IPhone screens={[screenForStep(step)]} active={0} />
+        </div>
+      </article>;
+    })}
   </section>;
 }

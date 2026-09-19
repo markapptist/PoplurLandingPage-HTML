@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
+import { centreBell, onScrollFrame, reducedMotion } from './scroll';
 
 // The Apple-store pattern: one iPhone, on a slant, pinned while the feature
 // copy scrolls past; the screen inside changes with each step. The frame is
@@ -20,7 +21,7 @@ export type ShowcaseStep = {
 
 // Real renders only: the clay map from the map surface, the runner's recorded
 // app frames (a signed-in session, phone-sized), and approved Good Copy stills.
-const SCREENS = {
+export const SCREENS = {
   map: require('@/assets/images/landing/screens/map.jpg'),
   radius: require('@/assets/images/landing/screens/radius.jpg'),
   feed: require('@/assets/images/landing/screens/feed.jpg'),
@@ -86,20 +87,41 @@ export default function Showcase({ steps = SHOWCASE_STEPS }: { steps?: ShowcaseS
     els.forEach(el => io.observe(el));
     return () => io.disconnect();
   }, [steps.length]);
+  // Copy is scrubbed by the scroll: each step's block fades and lifts in as
+  // it approaches the middle of the screen and falls away after — the phone
+  // holds still and the words move past it.
+  useEffect(() => {
+    if (reducedMotion()) return
+    return onScrollFrame((_y, h) => {
+      refs.current.forEach(el => {
+        if (!el) return
+        const bell = centreBell(el, h, 0.42)
+        const copy = el.firstElementChild as HTMLElement | null
+        el.style.opacity = String(0.18 + bell * 0.82)
+        if (copy) copy.style.transform = `translateY(${(1 - bell) * 26}px)`
+      })
+    })
+  }, [steps.length])
   const screens = steps.map(screenForStep);
+  const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return <section className="pl-showcase" id="features">
     <div className="wrap">
       <div className="pl-steps">
         {steps.map((step, i) => <article key={step.id} id={step.id} ref={el => { refs.current[i] = el; }} className={`pl-step${i === active ? ' is-active' : ''}`}>
-          <div className="pl-eyebrow">{step.eyebrow}</div>
-          <h2>{step.title}</h2>
-          <p>{step.body}</p>
-          {step.fine && <p className="pl-fine">{step.fine}</p>}
+          <div className="pl-step-copy">
+            <div className="pl-eyebrow">{step.eyebrow}</div>
+            <h2>{step.title}</h2>
+            <p>{step.body}</p>
+            {step.fine && <p className="pl-fine">{step.fine}</p>}
+          </div>
         </article>)}
       </div>
       <div className="pl-device-col">
         <div className={`pl-device-pin tilt-${active % 2}`}>
           <IPhone screens={screens} active={active} />
+          <div className="pl-dots" role="tablist" aria-label="Features">
+            {steps.map((step, i) => <button key={step.id} type="button" role="tab" aria-selected={i === active} aria-label={step.nav} className={`pl-dot-btn${i === active ? ' is-on' : ''}`} onClick={() => go(step.id)} />)}
+          </div>
         </div>
       </div>
     </div>

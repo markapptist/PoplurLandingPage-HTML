@@ -1,12 +1,14 @@
 import { Image } from 'expo-image';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { sendBetaInviteEmail } from '@/services/betaEmailService';
 import { saveBetaSignupEmail } from '@/services/betaSignupService';
 import './landing.css';
 import { useBetaScorecard, type Scorecard } from './useBetaScorecard';
 import { useLivePops } from './useLivePops';
-import Showcase, { SHOWCASE_STEPS } from './Showcase';
+import Showcase, { IPhone, SCREENS, SHOWCASE_STEPS } from './Showcase';
+import Lockup from './Lockup';
+import { clamp01, easeOut, onScrollFrame, progressOf, reducedMotion } from './scroll';
 import Backdrop from './Backdrop';
 import ColourBadge from './ColourBadge';
 import DottedWorld from './DottedWorld';
@@ -30,6 +32,50 @@ const fmtAgo = (ms: number, now = Date.now()) => {
 
 function scrollTo(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// The product hero, Apple-style: the phone fills the first screen, the
+// eyebrow and headline sit bottom-left, the offer pill bottom-right. As you
+// scroll, the phone settles back and everything eases away.
+function Hero() {
+  const ref = useRef<HTMLElement | null>(null);
+  const phoneRef = useRef<HTMLDivElement | null>(null);
+  const copyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current; if (!el || reducedMotion()) return;
+    return onScrollFrame((y, h) => {
+      const p = easeOut(clamp01(y / (h * 0.9)));
+      if (phoneRef.current) phoneRef.current.style.transform = `translateY(${-p * 90}px) scale(${1.04 - p * 0.14}) rotateY(${-16 + p * 10}deg) rotateX(${5 - p * 3}deg)`;
+      if (phoneRef.current) phoneRef.current.style.opacity = String(1 - p * 0.9);
+      if (copyRef.current) { copyRef.current.style.opacity = String(1 - p * 1.4); copyRef.current.style.transform = `translateY(${p * 40}px)`; }
+    });
+  }, []);
+  return <header ref={ref} className="pl-hero" id="top">
+    <div className="pl-hero-stage">
+      <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
+    </div>
+    <div ref={copyRef} className="pl-hero-lockup wrap">
+      <div className="pl-hero-text">
+        <div className="pl-eyebrow">Poplur</div>
+        <h1>Posts on a world map that spread as people engage.</h1>
+        <div className="pl-offer">
+          <span>Free on iPhone · Toronto beta<br /><small>Every pop starts with a 5 km radius.</small></span>
+          <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
+        </div>
+      </div>
+    </div>
+  </header>;
+}
+
+// Cards rise into place as they enter, the way product-page media does.
+function Reveal({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const io = new IntersectionObserver(entries => entries.forEach(e => { if (e.isIntersecting) { setTimeout(() => el.classList.add('in'), delay); io.disconnect(); } }), { threshold: 0.18 });
+    io.observe(el); return () => io.disconnect();
+  }, [delay]);
+  return <div ref={ref} className="pl-reveal">{children}</div>;
 }
 
 function ScorecardCard({ scorecard, state }: { scorecard: Scorecard | null; state: string }) {
@@ -138,7 +184,7 @@ export default function LandingPage() {
   return <div className="pl" data-ink={inkMode} style={themeVars}>
     <Backdrop theme={theme} />
     <nav className="pl-nav">
-      <div className="wrap">
+      <div className="pl-nav-pill">
         <a className="pl-brand" href="#" onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
           <Image source={ICON} style={{ width: 28, height: 28, borderRadius: 8 }} contentFit="cover" />
           <Image source={WORDMARK} style={{ width: 78, height: 26 }} contentFit="contain" accessibilityLabel="Poplur" />
@@ -155,29 +201,19 @@ export default function LandingPage() {
       </div>
     </nav>
 
-    <header className="pl-hero">
-      <div className="wrap">
-        <div className="pl-eyebrow">Poplur</div>
-        <h1>Posts on a world map that spread as people engage.</h1>
-        <p>Every pop starts with a radius. Everyone inside it can find it — no followers needed. Engagement grows the radius; silence shrinks it.</p>
-        <div className="pl-actions">
-          <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>
-          <button className="pl-cta ghost" onClick={() => scrollTo('features')}>See the features</button>
-        </div>
-      </div>
-    </header>
+    <Hero />
 
     <section id="live" className="pl-live">
+      <Lockup eyebrow="Live from the beta" title="The numbers, as they happen." sub="A student beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a classmate likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees." />
       <div className="wrap">
-        <div className="pl-eyebrow">Live from the beta</div>
-        <h2>The numbers, as they happen.</h2>
-        <p className="pl-lede">A student beta in Toronto, opt-in only. What we are testing is whether the radius works: do people post, do they come back, does a pop grow when a classmate likes it, and do people find pops by being inside them. Published every fifteen minutes from the same data the team sees.</p>
         <div className="pl-cards">
-          <ScorecardCard scorecard={scorecard} state={state} />
-          <WorldCard />
+          <Reveal><ScorecardCard scorecard={scorecard} state={state} /></Reveal>
+          <Reveal delay={120}><WorldCard /></Reveal>
         </div>
       </div>
     </section>
+
+    <Lockup id="features" eyebrow="How it works" title="Reach, without followers." sub="Six things a pop does that a post never could." />
 
     <Showcase />
 

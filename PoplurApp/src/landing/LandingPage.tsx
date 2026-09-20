@@ -240,11 +240,16 @@ function WorldCard({ demo }: { demo: boolean }) {
   const real = pops.filter(p => !p.synthetic).length;
   const day = Date.now() - 86_400_000;
   const recent = pops.filter(p => p.createdAtMillis >= day).length;
+  // When the newest pop landed — the proof the feed is live, re-read every
+  // half minute so "just now" ages honestly between snapshots.
+  const newest = pops.reduce((max, p) => Math.max(max, p.createdAtMillis), 0);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => { const tick = setInterval(() => setClock(Date.now()), 30_000); return () => clearInterval(tick); }, []);
   return <div className="pl-card pl-card-world">
     <div className="pl-card-head">
       <h3>Pops on the map right now{demo && <span className="pl-demo" title="Scripted pops are landing alongside the real ones">demo</span>}</h3>
       <span className="pl-meta">
-        {state === 'ready' ? <><span className="pl-live-pill"><i /> live</span> <AnimatedNumber value={pops.length} /> live · <AnimatedNumber value={recent} /> in the last 24 h</> : state === 'error' ? 'unavailable' : 'loading…'}
+        {state === 'ready' ? <><span className="pl-live-pill"><i /> live</span> <AnimatedNumber value={pops.length} /> live · <AnimatedNumber value={recent} /> in the last 24 h{newest > 0 && <> · last landed <span className="pl-last-landed" data-at={newest}>{fmtAgo(newest, clock)}</span></>}</> : state === 'error' ? 'unavailable' : 'loading…'}
       </span>
     </div>
     <DottedWorld pops={pops} state={state} />

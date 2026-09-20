@@ -12,6 +12,7 @@ import {
   betaInviteHostedImages,
   createBetaInviteHtml,
   createBetaInviteText,
+  isBetaInviteVariant,
   pickBetaInviteVariant,
 } from '@/emails/betaInviteEmail';
 import { createNdaToken, ndaTokenConfigured } from '@/server/betaNda.server';
@@ -21,6 +22,8 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type SendEmailRequest = {
   email?: unknown;
+  /** Pins a design instead of rolling one — for checking a design in a real inbox. */
+  variant?: unknown;
 };
 
 /** Where the signing page lives. BETA_SITE_ORIGIN points a preview deployment at itself. */
@@ -57,7 +60,7 @@ export async function POST(request: Request) {
   // points a preview deployment at itself.
   const images = betaInviteHostedImages(process.env.BETA_EMAIL_ASSET_ORIGIN || BETA_INVITE_ASSET_ORIGIN);
   // One of the four designs per email, rolled here so the answer knows which.
-  const variant = pickBetaInviteVariant();
+  const variant = isBetaInviteVariant(body.variant) ? body.variant : pickBetaInviteVariant();
   const ndaUrl = `${siteOrigin()}/nda?t=${encodeURIComponent(createNdaToken(email))}`;
 
   const sent = await sendWithResend({

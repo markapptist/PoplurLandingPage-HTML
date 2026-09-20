@@ -19,7 +19,7 @@ import Backdrop from './Backdrop';
 import { useDemoMode, useDemoPops, useDemoScorecard } from './demo';
 import ColourBadge from './ColourBadge';
 import DottedWorld from './DottedWorld';
-import RadioBadge from './RadioBadge';
+import RadioBadge, { SPOT_SOUND_EVENT } from './RadioBadge';
 import { randomLandingThemeId, themeById, type LandingThemeId } from './themes';
 
 // Web-only product page: white, sleek, minimal. Plain DOM on purpose — the
@@ -118,6 +118,19 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
     const v = videoRef.current; if (!v) return;
     v.muted = true; v.defaultMuted = true;
   }, []);
+  // Tell the radio when the spot is audible — playing, unmuted — so it can duck.
+  useEffect(() => {
+    const v = videoRef.current; if (!v) return;
+    let last: boolean | null = null;
+    const report = () => {
+      const on = !v.paused && !v.ended && !v.muted;
+      if (on === last) return;
+      last = on;
+      window.dispatchEvent(new CustomEvent(SPOT_SOUND_EVENT, { detail: { on } }));
+    };
+    for (const type of ['play', 'pause', 'ended', 'volumechange']) v.addEventListener(type, report);
+    return () => { for (const type of ['play', 'pause', 'ended', 'volumechange']) v.removeEventListener(type, report); };
+  }, []);
   useEffect(() => {
     const v = videoRef.current; if (!v) return;
     const unmute = () => { v.muted = false; v.volume = 1; setSound(true); off(); };
@@ -162,7 +175,7 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
       <div className="pl-hero-text">
         <div className="pl-eyebrow">Poplur</div>
         <HeroTitle />
-        <p className="pl-hero-sub">Free on iPhone · Toronto beta. Every pop starts with a 5 km radius.</p>
+        <p className="pl-hero-sub">Free on iPhone and Android · Toronto beta. Every pop starts with a 5 km radius.</p>
         <div className="pl-hero-actions">
           <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
           {spot && <button type="button" className={`pl-sound${sound ? ' is-on' : ''}`} aria-pressed={sound}
@@ -275,13 +288,13 @@ function Signup() {
     <div className="wrap">
       <div className="pl-eyebrow">Private beta</div>
       <ShaderText as="h2">Join the beta.</ShaderText>
-      <p>iPhone first, through TestFlight. Enter your email and we will send the links. Students: your course Discord has the invite and the tester agreement.</p>
+      <p>iPhone and Android. Enter your email and we will send the links — TestFlight for iOS, the beta build for Android. Students: your course Discord has the invite and the tester agreement.</p>
       <form className="pl-form" onSubmit={submit}>
         <input type="email" inputMode="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} disabled={busy} aria-label="Email address" />
         <button type="submit" className="pl-cta accent" disabled={busy}>{busy ? 'Sending…' : 'Send me the beta'}</button>
       </form>
       {note && <p className={`pl-form-note ${note.tone}`}>{note.text}</p>}
-      <div className="pl-pills"><span>iOS · TestFlight</span><span>Android · soon</span><span>Toronto first</span></div>
+      <div className="pl-pills"><span>iOS · TestFlight</span><span>Android · beta</span><span>Toronto first</span></div>
     </div>
   </section>;
 }

@@ -367,9 +367,18 @@
    themes, the theme's ink on the light ones) with a shadow to lift it off the dots, and over the video it is white
    with a dark shadow whatever theme rolled, since the footage is the ground there. ── */
 .pl-nav::before { display: none; }
+/* …and the bar itself: `.pl[data-ink="dark"] .pl-nav` (0,3,0) still painted a white band on the light-ink themes. */
+.pl-nav, .pl[data-ink="dark"] .pl-nav { background: transparent; border: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .pl-nav-pill, .pl[data-ink="dark"] .pl-nav-pill { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; color: var(--ink); }
 .pl-nav-links a { text-shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 4px 14px rgba(0, 0, 0, .3); }
 .pl[data-ink="dark"] .pl-nav-links a { text-shadow: 0 1px 0 rgba(255, 255, 255, .7); }
 .pl-nav.is-over-video .pl-nav-pill, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-pill { color: #fff; }
 .pl-nav.is-over-video .pl-nav-links a, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-links a { text-shadow: 0 1px 2px rgba(0, 0, 0, .55), 0 4px 14px rgba(0, 0, 0, .35); }
 .pl[data-ink="dark"] .pl-nav.is-over-video .pl-badge { background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .4); color: #fff; }
+
+/* ── the toolbar's badges (radio, colour) carry their own contrast now that the bar has none: dark glass with
+   white text on the coloured themes and over the video, light glass with dark text on the light themes. ── */
+.pl-nav-pill .pl-badge { background: rgba(0, 0, 0, .3); border-color: rgba(255, 255, 255, .38); color: #fff; }
+.pl[data-ink="dark"] .pl-nav-pill .pl-badge { background: rgba(255, 255, 255, .6); border-color: rgba(0, 0, 0, .12); color: #111; }
+.pl-nav.is-over-video .pl-nav-pill .pl-badge, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-pill .pl-badge { background: rgba(0, 0, 0, .38); border-color: rgba(255, 255, 255, .42); color: #fff; }
+.pl-nav-pill .pl-radio.is-on, .pl[data-ink="dark"] .pl-nav-pill .pl-radio.is-on { background: #fff; color: #111; border-color: #fff; }

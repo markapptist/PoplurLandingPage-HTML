@@ -131,7 +131,7 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
             </tr>
 
             <tr>
-              <td align="center" style="padding:0 0 10px;">${img(src.mailbox, `width="300" alt="A pink clay Poplur mailbox with its flag up" style="display:block;width:300px;max-width:80%;height:auto;border:0;"`)}</td>
+              <td align="center" style="padding:0 0 10px;">${img(src.mailbox, `width="150" alt="A pink clay Poplur mailbox with its flag up" style="display:block;width:150px;max-width:50%;height:auto;border:0;"`)}</td>
             </tr>
 
             <tr>

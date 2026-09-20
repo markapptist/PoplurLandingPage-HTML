@@ -203,10 +203,22 @@ function shell(bg: string, body: string): string {
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
     <title>${betaInviteSubject}</title>
+    <style>
+      /* Gmail on iOS repaints colours for its dark mode: on the owner's phone
+         the white ink on the pink came out near-black and the postcard's
+         white card went dark. Gmail prefixes the body with a <u>, so these
+         two rules reach only that app; there, the pair of blends cancels
+         its repaint. Everywhere else a screen or difference blend over black
+         changes nothing. (Rémi Parmentier's trick.) */
+      u + .body .gmail-blend-screen { background: #000000; mix-blend-mode: screen; }
+      u + .body .gmail-blend-difference { background: #000000; mix-blend-mode: difference; }
+    </style>
   </head>
-  <body style="margin:0;padding:0;background:${bg};font-family:${FONT};-webkit-font-smoothing:antialiased;">
+  <body class="body" style="margin:0;padding:0;background:${bg};font-family:${FONT};-webkit-font-smoothing:antialiased;">
+    <div class="gmail-blend-screen"><div class="gmail-blend-difference">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:${bg};">${betaInvitePreview}</div>
     ${body}
+    </div></div>
   </body>
 </html>`;
 }

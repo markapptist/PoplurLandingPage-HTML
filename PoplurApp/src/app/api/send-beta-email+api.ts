@@ -54,6 +54,9 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       from,
+      // poplur.ca has no MX record, so hello@poplur.ca cannot receive a reply;
+      // until it can, BETA_EMAIL_REPLY_TO names the inbox replies should reach.
+      ...(process.env.BETA_EMAIL_REPLY_TO ? { reply_to: process.env.BETA_EMAIL_REPLY_TO } : {}),
       to: email,
       subject: betaInviteSubject,
       html: createBetaInviteHtml({ images, variant }),

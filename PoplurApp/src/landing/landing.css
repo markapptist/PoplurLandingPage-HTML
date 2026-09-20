@@ -306,12 +306,7 @@
 /* Held still (owner's call): the specular band parked a third of the way across the line. */
 .pl .pl-shader { background-position: -70% 0, -30% 0; }
 
-/* the chapter under you, in the toolbar */
-.pl-nav-links a { position: relative; padding: 6px 2px; opacity: .78; transition: opacity .25s ease; }
-.pl-nav-links a::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 2px; background: var(--accent-2); transform: scaleX(0); transition: transform .35s cubic-bezier(.2, .7, .2, 1); }
-.pl-nav-links a.is-current { opacity: 1; }
-.pl-nav-links a.is-current::after { transform: scaleX(1); }
-.pl[data-ink="dark"] .pl-nav-links a::after { background: var(--accent); }
+/* the chapter under you, in the toolbar: the section buttons below fill the current one */
 
 /* the sign-up sits right under the hero now */
 .pl-signup-top { min-height: 100vh; display: flex; align-items: center; padding: calc(var(--nav-h) + 4vh) 0 12vh; }
@@ -362,6 +357,8 @@
     linear-gradient(105deg, #ffffff 0%, #ffe6f2 14%, color-mix(in srgb, var(--accent-2) 55%, #ffffff) 32%, #ffffff 50%, color-mix(in srgb, var(--accent) 60%, #ffffff) 66%, #ffe6f2 84%, #ffffff 100%);
   filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .5)) drop-shadow(0 10px 24px rgba(0, 0, 0, .5)); }
 .pl-hero.has-spot .pl-sound { color: #fff; }
+/* …but once the sound is on the chip is white, so its text goes dark — the hero rule above must not keep it white. */
+.pl-hero.has-spot .pl-sound.is-on { background: #fff; color: #111; border-color: #fff; }
 
 /* ── the toolbar has no background, anywhere: only its controls. Its ink follows the page (white on the coloured
    themes, the theme's ink on the light ones) with a shadow to lift it off the dots, and over the video it is white
@@ -382,3 +379,37 @@
 .pl[data-ink="dark"] .pl-nav-pill .pl-badge { background: rgba(255, 255, 255, .6); border-color: rgba(0, 0, 0, .12); color: #111; }
 .pl-nav.is-over-video .pl-nav-pill .pl-badge, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-pill .pl-badge { background: rgba(0, 0, 0, .38); border-color: rgba(255, 255, 255, .42); color: #fff; }
 .pl-nav-pill .pl-radio.is-on, .pl[data-ink="dark"] .pl-nav-pill .pl-radio.is-on { background: #fff; color: #111; border-color: #fff; }
+
+/* ── the section buttons: every chapter is a pill you can tap, at every width; the one under you is filled ── */
+.pl-nav-links { gap: 6px; }
+.pl-nav-links a, .pl-nav.is-over-video .pl-nav-links a, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-links a {
+  display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 999px; background: rgba(0, 0, 0, .3); border: 1px solid rgba(255, 255, 255, .38);
+  color: #fff; font: 700 12px/1 var(--font); letter-spacing: .01em; opacity: 1; text-shadow: none; white-space: nowrap; transition: background .2s ease, color .2s ease; }
+.pl[data-ink="dark"] .pl-nav-links a { background: rgba(255, 255, 255, .6); border-color: rgba(0, 0, 0, .12); color: #111; }
+.pl-nav-links a:hover { background: rgba(0, 0, 0, .45); }
+.pl[data-ink="dark"] .pl-nav-links a:hover { background: rgba(255, 255, 255, .8); }
+.pl-nav-links a.is-current, .pl[data-ink="dark"] .pl-nav-links a.is-current, .pl-nav.is-over-video .pl-nav-links a.is-current { background: #fff; color: #111; border-color: #fff; }
+/* Narrow screens: the buttons take a row of their own under the brand and tools, scrolling sideways if they must. */
+@media (max-width: 720px) {
+  .pl-nav-pill { flex-wrap: wrap; height: auto; padding: 6px 8px 8px 12px; row-gap: 6px; }
+  .pl-nav-links { display: flex; order: 3; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; }
+  .pl-nav-links::-webkit-scrollbar { display: none; }
+  .pl-nav-links a { height: 28px; padding: 0 11px; font-size: 12px; }
+}
+
+/* ── no button has a background (owner's call, 19 Sep): text in the page's ink inside a hairline, the same on the
+   toolbar, the hero, the sign-up and the cards. The current section and the on-states (radio, sound) say so by
+   weight and a solid border, never a fill. `!important` because a dozen earlier rules painted these at every
+   specificity; this is the one rule that wins. ── */
+.pl .pl-cta, .pl .pl-badge, .pl .pl-nav-links a, .pl .pl-sound, .pl .pl-colour-item { background: transparent !important; box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+/* coloured themes and the video: white ink, a light hairline, lifted by a shadow */
+.pl .pl-cta, .pl .pl-badge, .pl .pl-nav-links a, .pl .pl-sound { color: #fff; border: 1px solid rgba(255, 255, 255, .55); text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
+/* light themes: the theme's ink and a dark hairline — except over the video, where white stays */
+.pl[data-ink="dark"] .pl-cta, .pl[data-ink="dark"] .pl-badge, .pl[data-ink="dark"] .pl-nav-links a, .pl[data-ink="dark"] .pl-sound { color: var(--ink); border-color: rgba(0, 0, 0, .28); text-shadow: none; }
+.pl[data-ink="dark"] .pl-nav.is-over-video .pl-cta, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-badge, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-links a, .pl[data-ink="dark"] .pl-hero.has-spot .pl-cta, .pl[data-ink="dark"] .pl-hero.has-spot .pl-sound { color: #fff; border-color: rgba(255, 255, 255, .55); text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
+/* on the paper cards (the sign-up form's button lives on colour, the cards' buttons on paper) */
+.pl .pl-card .pl-cta, .pl .pl-card button { color: var(--card-ink); border-color: rgba(17, 17, 20, .3); text-shadow: none; }
+/* states: the section under you, the radio playing, the sound on */
+.pl .pl-nav-links a.is-current, .pl[data-ink="dark"] .pl-nav-links a.is-current { font-weight: 800; border-color: currentColor; text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 2px; }
+.pl .pl-radio.is-on, .pl .pl-sound.is-on, .pl[data-ink="dark"] .pl-radio.is-on, .pl[data-ink="dark"] .pl-sound.is-on, .pl .pl-hero.has-spot .pl-sound.is-on { font-weight: 800; border-color: currentColor; border-width: 1.5px; }
+.pl .pl-cta:hover, .pl .pl-badge:hover, .pl .pl-nav-links a:hover, .pl .pl-sound:hover { border-color: currentColor; opacity: 1; }

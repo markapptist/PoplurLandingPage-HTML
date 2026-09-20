@@ -123,7 +123,9 @@
 .pl-field-hint { position: absolute; left: 21px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 15px; font-weight: 600; letter-spacing: 0; line-height: 1; white-space: nowrap; }
 /* The hint's shader on a dark base — ink with the theme's accents flashing through and the specular band over it — so it
    reads on the white field. The headline's whites, and a pink-and-cyan sweep, both washed out there. */
-.pl .pl-field-hint, .pl[data-ink="dark"] .pl-field-hint {
+/* Selector weight matters here: the headline's .pl-shader rules come later in this file at equal weight and were winning. */
+.pl .pl-shader.pl-field-hint, .pl[data-ink="dark"] .pl-shader.pl-field-hint {
+  background-position: 0 0, 0 0;
   background-image:
     linear-gradient(105deg, rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, .75) 50%, rgba(255, 255, 255, 0) 58%),
     linear-gradient(105deg, #111114 0%, #111114 18%, var(--accent) 34%, #111114 50%, var(--accent-2) 68%, #111114 84%, #111114 100%);

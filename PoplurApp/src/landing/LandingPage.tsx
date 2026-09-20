@@ -14,7 +14,9 @@ import { HERO_SPOT, HERO_SPOT_POSTER } from './heroSpot';
 import { armLandingPop, landingPop } from './landingPop';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
+import AnimatedNumber from './AnimatedNumber';
 import Backdrop from './Backdrop';
+import { useDemoMode, useDemoPops, useDemoScorecard } from './demo';
 import ColourBadge from './ColourBadge';
 import DottedWorld from './DottedWorld';
 import RadioBadge from './RadioBadge';
@@ -89,7 +91,9 @@ function scrollTo(id: string) {
 // which also mutes it again. It plays through once on arrival; when that
 // first run ends, `onSpotEnded` lets the page take over (the tour below).
 // After that the hero is hover-to-play: the pointer entering the hero plays
-// the spot (from the top if it had finished), leaving pauses it, and a tap
+// the spot (from the top if it had finished) and keeps it looping for as long
+// as it stays; leaving turns the loop off (a first run still reaches its end
+// and starts the tour) and, once the first run is done, pauses it. A tap
 // plays it where there is no pointer.
 function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
   const firstRunDone = useRef(false);
@@ -127,6 +131,7 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
   };
   const playSpot = () => {
     const v = videoRef.current; if (!v) return;
+    v.loop = true;
     if (v.ended) v.currentTime = 0;
     if (!v.paused) return;
     // An unmuted play() needs a prior gesture on the page; without one the
@@ -134,8 +139,9 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
     v.play().catch(() => { v.muted = true; setSound(false); v.play().catch(() => { /* not now */ }); });
   };
   const pauseSpot = () => {
-    const v = videoRef.current; if (!v || !firstRunDone.current) return;
-    v.pause();
+    const v = videoRef.current; if (!v) return;
+    v.loop = false;
+    if (firstRunDone.current) v.pause();
   };
   const ended = () => {
     if (firstRunDone.current) return;
@@ -187,16 +193,18 @@ function Reveal({ children, delay = 0 }: { children: React.ReactNode; delay?: nu
   return <div ref={ref} className="pl-reveal">{children}</div>;
 }
 
-function ScorecardCard({ scorecard, state }: { scorecard: Scorecard | null; state: string }) {
+// Every number here counts to its value the app's way (AnimatedNumber): a
+// scorecard that moves rolls its digits and pips as it goes.
+function ScorecardCard({ scorecard, state, demo }: { scorecard: Scorecard | null; state: string; demo: boolean }) {
   return <div className="pl-card" aria-live="polite">
     <div className="pl-card-head">
-      <h3>The beta scorecard</h3>
+      <h3>The beta scorecard{demo && <span className="pl-demo" title="Scripted numbers — not the beta">demo</span>}</h3>
       <span className="pl-meta">{scorecard ? `updated ${fmtAgo(scorecard.updatedAtMillis)} · since ${fmtWhen(scorecard.window.startMillis)}` : state === 'loading' ? 'loading…' : 'first numbers land on the next tick'}</span>
     </div>
     <div className="pl-kpis">
-      <div className="pl-kpi"><b>{scorecard?.installs ?? '—'}</b><span>people in the beta</span></div>
-      <div className="pl-kpi"><b>{scorecard?.activity.activeLast7d ?? '—'}</b><span>active in the last 7 days</span></div>
-      <div className="pl-kpi"><b>{scorecard?.activity.humanPops ?? '—'}</b><span>pops posted by people</span></div>
+      <div className="pl-kpi"><b>{scorecard ? <AnimatedNumber value={scorecard.installs} /> : '—'}</b><span>people in the beta</span></div>
+      <div className="pl-kpi"><b>{scorecard ? <AnimatedNumber value={scorecard.activity.activeLast7d} /> : '—'}</b><span>active in the last 7 days</span></div>
+      <div className="pl-kpi"><b>{scorecard ? <AnimatedNumber value={scorecard.activity.humanPops} /> : '—'}</b><span>pops posted by people</span></div>
     </div>
     {scorecard && scorecard.installs === 0 && <p className="pl-empty-state">
       Nobody is in the beta yet — the student invite has not gone out. Every number here counts people only; the first
@@ -207,7 +215,7 @@ function ScorecardCard({ scorecard, state }: { scorecard: Scorecard | null; stat
       <tbody>
         {(scorecard?.signals ?? []).map(s => <tr key={s.key}>
           <td>{s.label}<span className="pl-note">{s.note}</span></td>
-          <td className="num"><b>{s.count}</b> / {s.of}</td>
+          <td className="num"><b><AnimatedNumber value={s.count} /></b> / <AnimatedNumber value={s.of} /></td>
           <td className="num">{fmtPct(s.share)}</td>
           <td><span className={`pl-pill ${s.verdict}`}>{s.verdict}</span></td>
         </tr>)}
@@ -222,18 +230,25 @@ function ScorecardCard({ scorecard, state }: { scorecard: Scorecard | null; stat
   </div>;
 }
 
-function WorldCard() {
-  const { pops, state } = useLivePops(400);
+// Live from the posts collection: the counts roll as pops land, each landing
+// ripples on the world (DottedWorld). In demo mode scripted pops land too.
+function WorldCard({ demo }: { demo: boolean }) {
+  const live = useLivePops(400);
+  const scripted = useDemoPops(demo);
+  const pops = useMemo(() => (scripted.length ? [...scripted, ...live.pops] : live.pops), [scripted, live.pops]);
+  const state = live.state;
   const real = pops.filter(p => !p.synthetic).length;
   const day = Date.now() - 86_400_000;
   const recent = pops.filter(p => p.createdAtMillis >= day).length;
   return <div className="pl-card pl-card-world">
     <div className="pl-card-head">
-      <h3>Pops on the map right now</h3>
-      <span className="pl-meta">{state === 'ready' ? `${pops.length} live · ${recent} in the last 24 h` : state === 'error' ? 'unavailable' : 'loading…'}</span>
+      <h3>Pops on the map right now{demo && <span className="pl-demo" title="Scripted pops are landing alongside the real ones">demo</span>}</h3>
+      <span className="pl-meta">
+        {state === 'ready' ? <><span className="pl-live-pill"><i /> live</span> <AnimatedNumber value={pops.length} /> live · <AnimatedNumber value={recent} /> in the last 24 h</> : state === 'error' ? 'unavailable' : 'loading…'}
+      </span>
     </div>
     <DottedWorld pops={pops} state={state} />
-    <div className="pl-legend"><span><i /> {real} by people</span><span><i className="sim" /> {pops.length - real} synthetic harness</span></div>
+    <div className="pl-legend"><span><i /> <AnimatedNumber value={real} /> by people</span><span><i className="sim" /> <AnimatedNumber value={pops.length - real} /> synthetic harness</span></div>
   </div>;
 }
 
@@ -266,7 +281,11 @@ function Signup() {
 }
 
 export default function LandingPage() {
-  const { scorecard, state } = useBetaScorecard();
+  const demo = useDemoMode();
+  const live = useBetaScorecard();
+  const scripted = useDemoScorecard(demo);
+  const scorecard = demo ? scripted : live.scorecard;
+  const state = demo ? (scripted ? 'ready' : 'loading') : live.state;
   const [themeId, setThemeId] = useState<LandingThemeId>('default');
   // The page wears a different theme on every load (themes.ts): the server
   // renders the default, the client rolls on mount. A pick from the colour
@@ -368,8 +387,8 @@ export default function LandingPage() {
       <Lockup eyebrow="Live from the beta" title="The numbers, as they happen." sub="A student beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a classmate likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees." />
       <div className="wrap">
         <div className="pl-cards">
-          <Reveal><ScorecardCard scorecard={scorecard} state={state} /></Reveal>
-          <Reveal delay={120}><WorldCard /></Reveal>
+          <Reveal><ScorecardCard scorecard={scorecard} state={state} demo={demo} /></Reveal>
+          <Reveal delay={120}><WorldCard demo={demo} /></Reveal>
         </div>
       </div>
     </section>

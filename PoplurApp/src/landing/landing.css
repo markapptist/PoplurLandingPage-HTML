@@ -319,7 +319,7 @@
 
 /* the hero's TV spot (heroSpot.ts): full-bleed under the headline, darkened at the foot so the copy reads */
 .pl-hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.pl-hero.has-spot::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .6) 0%, rgba(0, 0, 0, .18) 45%, transparent 70%); pointer-events: none; }
+.pl-hero.has-spot::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .72) 0%, rgba(0, 0, 0, .28) 42%, transparent 72%); pointer-events: none; }
 .pl-hero.has-spot .pl-hero-lockup { z-index: 1; }
 
 /* ── the hero headline flips through the product (HeroTitle) ── */
@@ -330,3 +330,32 @@
 @keyframes plTitleIn { from { opacity: 0; transform: rotateX(-78deg) translateY(14px); } to { opacity: 1; transform: none; } }
 @keyframes plTitleOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: rotateX(70deg) translateY(-10px); } }
 @media (prefers-reduced-motion: reduce) { .pl-hero-title.is-in, .pl-hero-title.is-out { animation: none; } }
+
+/* ── the numbers count the app's way (AnimatedNumber): a lift while counting, settled when landed ── */
+.pl-count { display: inline-block; font-variant-numeric: tabular-nums; transition: transform .18s ease, color .18s ease; }
+.pl-count.is-counting { transform: scale(1.06); color: var(--accent); }
+.pl-card-world .pl-count.is-counting { color: #fff; }
+
+/* the world card is live: a breathing dot, and every landing ripples out with the pop */
+.pl-live-pill { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .5); font: 700 10px/1.6 var(--font); letter-spacing: .08em; text-transform: uppercase; }
+.pl-live-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 0 0 var(--accent-2); animation: plLiveBreath 1.8s ease-out infinite; }
+@keyframes plLiveBreath { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-2) 70%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+.pl-world .ripple { fill: none; stroke: #fff; stroke-width: 2; opacity: .95; transform-box: fill-box; transform-origin: center; animation: plRipple 2.4s cubic-bezier(.2, .7, .2, 1) forwards; }
+.pl-world .ripple:nth-child(2n) { animation-delay: .12s; }
+@keyframes plRipple { 0% { transform: scale(.4); opacity: .95; stroke-width: 3; } 100% { transform: scale(7); opacity: 0; stroke-width: .5; } }
+@media (prefers-reduced-motion: reduce) { .pl-live-pill i { animation: none; } .pl-world .ripple { animation: none; opacity: 0; } }
+
+/* demo mode: says so on the cards it scripts */
+.pl-demo { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 999px; background: var(--accent); color: #fff; font: 800 10px/1.4 var(--font); letter-spacing: .1em; text-transform: uppercase; vertical-align: 2px; }
+.pl-card-world .pl-demo { background: #fff; color: var(--accent); }
+
+/* ── over the video the hero's words are always light, whatever theme the page rolled: the video is the ground
+   there, not the theme. The shader keeps the theme's accents but mixed toward white, so a dark accent (Toy's blue,
+   Icy Crystal's ink) can never sink into the footage, and a dark drop shadow lifts every glyph off it. ── */
+.pl-hero.has-spot .pl-eyebrow, .pl-hero.has-spot .pl-hero-sub { color: #fff; opacity: 1; text-shadow: 0 1px 2px rgba(0, 0, 0, .55), 0 6px 24px rgba(0, 0, 0, .4); }
+.pl .pl-hero.has-spot .pl-shader, .pl[data-ink="dark"] .pl-hero.has-spot .pl-shader {
+  background-image:
+    linear-gradient(105deg, rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, .9) 50%, rgba(255, 255, 255, 0) 58%),
+    linear-gradient(105deg, #ffffff 0%, #ffe6f2 14%, color-mix(in srgb, var(--accent-2) 55%, #ffffff) 32%, #ffffff 50%, color-mix(in srgb, var(--accent) 60%, #ffffff) 66%, #ffe6f2 84%, #ffffff 100%);
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .5)) drop-shadow(0 10px 24px rgba(0, 0, 0, .5)); }
+.pl-hero.has-spot .pl-sound { color: #fff; }

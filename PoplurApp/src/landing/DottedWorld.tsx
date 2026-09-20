@@ -1,12 +1,39 @@
-import { useMemo } from 'react'
-import { clusterPops, dotRadius, WORLD_H, WORLD_W } from './popWorld'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { landingPop } from './landingPop'
+import { clusterPops, dotRadius, WORLD_H, WORLD_W, worldXY } from './popWorld'
 import type { LivePop } from './useLivePops'
 import { WORLD_LAND_COLS, WORLD_LAND_ROWS, worldLandRows } from './worldLand'
 
 // The world as the welcome screen draws it — a lattice of white dots — but
 // shaped as the planet (worldLand.ts, from Natural Earth), with the live pops
-// clustered on top in the desk's dot design.
+// clustered on top in the desk's dot design. A pop that lands while you watch
+// ripples out from where it landed, with the pop — the way the app's map
+// greets an arrival.
+
+export const RIPPLE_MS = 2_400
+type Ripple = { id: string; x: number; y: number; at: number }
+
+/** Pops in `next` that were not in `seen` — the arrivals. Pure. */
+export function arrivals(seen: ReadonlySet<string>, next: readonly LivePop[]): LivePop[] {
+  return next.filter(p => !seen.has(p.id))
+}
+
 export default function DottedWorld({ pops, state }: { pops: readonly LivePop[]; state: 'loading' | 'ready' | 'error' }) {
+  // Arrivals: after the first snapshot, any new id ripples and pops once.
+  const seen = useRef<Set<string> | null>(null)
+  const [ripples, setRipples] = useState<Ripple[]>([])
+  useEffect(() => {
+    if (state !== 'ready') return
+    if (!seen.current) { seen.current = new Set(pops.map(p => p.id)); return }
+    const fresh = arrivals(seen.current, pops)
+    if (!fresh.length) return
+    for (const p of fresh) seen.current.add(p.id)
+    const at = Date.now()
+    setRipples(current => [...current, ...fresh.map(p => { const [x, y] = worldXY(p.longitude, p.latitude); return { id: p.id, x, y, at } })])
+    landingPop(0.45)
+    const clear = setTimeout(() => setRipples(current => current.filter(r => r.at !== at)), RIPPLE_MS)
+    return () => clearTimeout(clear)
+  }, [pops, state])
   const land = useMemo(() => {
     const rows = worldLandRows(); const cw = WORLD_W / WORLD_LAND_COLS, ch = WORLD_H / WORLD_LAND_ROWS
     const out: { x: number; y: number; bright: boolean }[] = []
@@ -17,6 +44,7 @@ export default function DottedWorld({ pops, state }: { pops: readonly LivePop[];
   return <div className="pl-world" role="img" aria-label="Where pops are landing, by region">
     <svg viewBox={`0 0 ${WORLD_W} ${WORLD_H}`} preserveAspectRatio="xMidYMid meet">
       <g className="land">{land.map((d, i) => <circle key={i} cx={d.x} cy={d.y} r={d.bright ? 2.4 : 2} className={d.bright ? 'ld bright' : 'ld'} />)}</g>
+      {ripples.map(r => <circle key={r.id} className="ripple" cx={r.x} cy={r.y} r={6} />)}
       {clusters.map(c => {
         const r = dotRadius(c.count); const sim = c.real === 0 && c.sim > 0
         return <g key={c.key}>

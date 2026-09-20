@@ -32,6 +32,13 @@ async function load() {
   }
 }
 
+/** The page's one audio context, once a gesture has unlocked it — shared with
+ *  the counter pips (counterSound.ts) so every sound on the page rides one
+ *  context, the way the app's do. Null until then. */
+export function landingAudioContext(): AudioContext | null {
+  return ctx && ctx.state === 'running' ? ctx : null
+}
+
 /** Creates and resumes the context inside a gesture, then decodes the sample. */
 export function unlockLandingPop(): void {
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return

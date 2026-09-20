@@ -439,11 +439,24 @@ export default function LandingPage() {
 
     <Showcase />
 
+    {/* The footer is the header again — the same bar, the same classes, so the
+        two cannot drift: brand, the chapter pills, and the way in. The legal
+        line sits small beneath it. */}
     <footer className="pl-footer">
-      <div className="wrap">
-        <span>Poplur™ is confidential pre-release software of Apptist Inc., Toronto.</span>
-        <span>© 2026 Apptist Inc.</span>
+      <div className="pl-nav-pill pl-footer-pill">
+        <a className="pl-brand" href="#" onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+          <Image source={ICON} style={{ width: 28, height: 28, borderRadius: 8 }} contentFit="cover" />
+          <Image source={WORDMARK} style={{ width: 78, height: 26 }} contentFit="contain" accessibilityLabel="Poplur" />
+        </a>
+        <div className="pl-nav-links">
+          <a href="#live" className={current === 'live' ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo('live'); }}>Live</a>
+          {SHOWCASE_STEPS.slice(0, 5).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
+        </div>
+        <div className="pl-nav-tools">
+          <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>
+        </div>
       </div>
+      <p className="pl-footer-legal">Poplur™ is confidential pre-release software of Apptist Inc., Toronto. · © 2026 Apptist Inc.</p>
     </footer>
   </div>;
 }

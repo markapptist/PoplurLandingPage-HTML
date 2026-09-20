@@ -176,6 +176,10 @@
 .pl > .pl-nav { position: sticky; top: 0; z-index: 20; margin-bottom: calc(-1 * var(--nav-h)); }
 @media (max-width: 720px) { .pl { --nav-h: 54px; } }
 
+/* ── no scrollbar on the landing (LandingPage adds `pl-root` to <html> while it is mounted); scrolling is untouched ── */
+html.pl-root { scrollbar-width: none; -ms-overflow-style: none; }
+html.pl-root::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
 /* ── the page snaps section to section (LandingPage sets `scroll-snap-type: y mandatory` on the root) ── */
 .pl-hero, .pl-signup, .pl-live, .pl-lockup, .pl-step { scroll-snap-align: start; scroll-snap-stop: always; }
 .pl-footer { scroll-snap-align: end; }

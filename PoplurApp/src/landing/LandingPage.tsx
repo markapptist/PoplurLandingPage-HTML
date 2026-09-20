@@ -380,9 +380,14 @@ export default function LandingPage() {
     // the body is unlocked, so the snap type lives there, and leaves with the rest.
     const previousSnap = document.documentElement.style.scrollSnapType;
     document.documentElement.style.scrollSnapType = 'y mandatory';
+    // No scrollbar while the landing is up (`html.pl-root` in landing.css): the
+    // page snaps section to section and a bar read as chrome down the side of a
+    // full-bleed spot. Scrolling itself is untouched; other routes keep theirs.
+    document.documentElement.classList.add('pl-root');
     return () => {
       targets.forEach((el, i) => { el.style.background = previous[i].background; el.style.height = previous[i].height; el.style.overflow = previous[i].overflow; el.style.display = previous[i].display; });
       document.documentElement.style.scrollSnapType = previousSnap;
+      document.documentElement.classList.remove('pl-root');
     };
   }, [theme.bg]);
   return <div className="pl" data-ink={inkMode} style={themeVars}>

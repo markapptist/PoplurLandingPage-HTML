@@ -37,7 +37,7 @@ export function emptyDemoScorecard(now = Date.now()): Scorecard {
       signal('posted24h', 'Posted within 24 h', 'a pop within a day of the account'),
       signal('day7', 'Active on day 7', 'of accounts whose day 7 has passed'),
       signal('day14', 'Active on day 14', 'of accounts whose day 14 has passed'),
-      signal('grew', 'Engaged pops that grew', "reach rose after a classmate's like"),
+      signal('grew', 'Engaged pops that grew', "reach rose after a neighbour's like"),
       signal('radius', 'Found by radius', 'feed or map, not a profile visit'),
       signal('unprompted', 'Pops on days with no prompt', 'posted without being asked'),
     ],

@@ -1,19 +1,32 @@
+// POST /api/send-beta-email {email}: the first mail of the beta hand-off.
+//
+// It no longer carries the store links. It carries one signed, expiring link
+// to the tester agreement (app/nda.tsx); signing there (api/nda+api.ts) is
+// what releases the TestFlight and Google Play links — on the page and in a
+// second email. The token is bound to this address, so only the inbox that
+// receives this mail can sign as it.
+
 import {
   BETA_INVITE_ASSET_ORIGIN,
-  betaInviteFrom,
+  BETA_INVITE_SUBJECTS,
   betaInviteHostedImages,
-  betaInviteSubject,
   createBetaInviteHtml,
   createBetaInviteText,
   pickBetaInviteVariant,
 } from '@/emails/betaInviteEmail';
+import { createNdaToken, ndaTokenConfigured } from '@/server/betaNda.server';
+import { replyToAddress, sendWithResend } from '@/server/resend.server';
 
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type SendEmailRequest = {
   email?: unknown;
 };
+
+/** Where the signing page lives. BETA_SITE_ORIGIN points a preview deployment at itself. */
+export function siteOrigin(): string {
+  return (process.env.BETA_SITE_ORIGIN || BETA_INVITE_ASSET_ORIGIN).replace(/\/+$/, '');
+}
 
 export async function POST(request: Request) {
   let body: SendEmailRequest;
@@ -30,14 +43,14 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Enter a valid email address.' }, { status: 400 });
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.BETA_EMAIL_FROM || betaInviteFrom;
-
-  if (!apiKey) {
+  if (!process.env.RESEND_API_KEY) {
     return Response.json(
       { error: 'Email service is not configured. Set RESEND_API_KEY on the server.' },
       { status: 503 },
     );
+  }
+  if (!ndaTokenConfigured()) {
+    return Response.json({ error: 'The tester agreement link cannot be signed. Set BETA_NDA_SECRET on the server.' }, { status: 503 });
   }
 
   // The pictures are fetched from the site (public/emails); BETA_EMAIL_ASSET_ORIGIN
@@ -45,39 +58,17 @@ export async function POST(request: Request) {
   const images = betaInviteHostedImages(process.env.BETA_EMAIL_ASSET_ORIGIN || BETA_INVITE_ASSET_ORIGIN);
   // One of the four designs per email, rolled here so the answer knows which.
   const variant = pickBetaInviteVariant();
+  const ndaUrl = `${siteOrigin()}/nda?t=${encodeURIComponent(createNdaToken(email))}`;
 
-  const response = await fetch(RESEND_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from,
-      // poplur.ca has no MX record, so hello@poplur.ca cannot receive a reply;
-      // until it can, BETA_EMAIL_REPLY_TO names the inbox replies should reach.
-      ...(process.env.BETA_EMAIL_REPLY_TO ? { reply_to: process.env.BETA_EMAIL_REPLY_TO } : {}),
-      to: email,
-      subject: betaInviteSubject,
-      html: createBetaInviteHtml({ images, variant }),
-      text: createBetaInviteText(),
-    }),
+  const sent = await sendWithResend({
+    to: email,
+    replyTo: replyToAddress(),
+    subject: BETA_INVITE_SUBJECTS.nda,
+    html: createBetaInviteHtml({ images, variant, stage: 'nda', ndaUrl }),
+    text: createBetaInviteText({ stage: 'nda', ndaUrl }),
   });
 
-  if (!response.ok) {
-    let providerError = 'Email provider rejected the message.';
+  if (!sent.ok) return Response.json({ error: sent.error }, { status: 502 });
 
-    try {
-      const result = (await response.json()) as { message?: string; error?: string };
-      providerError = result.message || result.error || providerError;
-    } catch {
-      // Keep the generic provider error.
-    }
-
-    return Response.json({ error: providerError }, { status: 502 });
-  }
-
-  const result = (await response.json()) as { id?: string };
-
-  return Response.json({ id: result.id ?? null, ok: true, variant });
+  return Response.json({ id: sent.id, ok: true, variant, stage: 'nda' });
 }

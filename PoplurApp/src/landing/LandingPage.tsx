@@ -228,7 +228,7 @@ function ScorecardCard({ scorecard, state, demo }: { scorecard: Scorecard | null
       <div className="pl-kpi"><b>{scorecard ? <AnimatedNumber value={scorecard.activity.humanPops} /> : '—'}</b><span>pops posted by people</span></div>
     </div>
     {scorecard && scorecard.installs === 0 && <p className="pl-empty-state">
-      Nobody is in the beta yet — the student invite has not gone out. Every number here counts people only; the first
+      Nobody is in the beta yet — the first invites have not gone out. Every number here counts people only; the first
       ones land within 24 hours of the first sign-up and refresh every fifteen minutes.
     </p>}
     <table className="pl-table">
@@ -287,7 +287,7 @@ function Signup() {
     const normalized = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) { setNote({ tone: 'err', text: 'Enter an email address.' }); return; }
     setBusy(true); setNote(null);
-    try { await saveBetaSignupEmail(normalized); await sendBetaInviteEmail(normalized); setNote({ tone: 'ok', text: 'Sent — check your inbox for the beta links.' }); setEmail(''); }
+    try { await saveBetaSignupEmail(normalized); await sendBetaInviteEmail(normalized); setNote({ tone: 'ok', text: 'Sent — check your inbox. Sign the short tester agreement there and your links unlock.' }); setEmail(''); }
     catch (error) { setNote({ tone: 'err', text: error instanceof Error ? error.message : 'Unable to send beta links right now.' }); }
     finally { setBusy(false); }
   }
@@ -295,7 +295,7 @@ function Signup() {
     <div className="wrap">
       <div className="pl-eyebrow">Private beta</div>
       <ShaderText as="h2">Join the beta.</ShaderText>
-      <p>iPhone and Android. Enter your email and we will send the links — TestFlight for iOS, the beta build for Android. Students: your course Discord has the invite and the tester agreement.</p>
+      <p>iPhone and Android. Enter your email and we will send you the tester agreement; sign it with your name and your links unlock — TestFlight for iOS, Google Play for Android.</p>
       <form className="pl-form" onSubmit={submit}>
         {/* The field is the one thing on this screen to act on, so it wears
             the house shader as its hint (the same recipe as the headlines,
@@ -426,7 +426,7 @@ export default function LandingPage() {
     <Signup />
 
     <section id="live" className="pl-live">
-      <Lockup eyebrow="Live from the beta" title="The numbers, as they happen." sub="A student beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a classmate likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees." />
+      <Lockup eyebrow="Live from the beta" title="The numbers, as they happen." sub="A private beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a neighbour likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees." />
       <div className="wrap">
         <div className="pl-cards">
           <Reveal><ScorecardCard scorecard={scorecard} state={state} demo={demo} /></Reveal>

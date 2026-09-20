@@ -413,3 +413,11 @@
 .pl .pl-nav-links a.is-current, .pl[data-ink="dark"] .pl-nav-links a.is-current { font-weight: 800; border-color: currentColor; text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 2px; }
 .pl .pl-radio.is-on, .pl .pl-sound.is-on, .pl[data-ink="dark"] .pl-radio.is-on, .pl[data-ink="dark"] .pl-sound.is-on, .pl .pl-hero.has-spot .pl-sound.is-on { font-weight: 800; border-color: currentColor; border-width: 1.5px; }
 .pl .pl-cta:hover, .pl .pl-badge:hover, .pl .pl-nav-links a:hover, .pl .pl-sound:hover { border-color: currentColor; opacity: 1; }
+
+/* ── …and no outline or border either (owner's call): a button is its label. States are weight and an underline. ── */
+.pl .pl-cta, .pl .pl-badge, .pl .pl-nav-links a, .pl .pl-sound, .pl .pl-colour-item, .pl[data-ink="dark"] .pl-cta, .pl[data-ink="dark"] .pl-badge, .pl[data-ink="dark"] .pl-nav-links a, .pl[data-ink="dark"] .pl-sound,
+.pl .pl-card .pl-cta, .pl .pl-card button, .pl .pl-radio.is-on, .pl .pl-sound.is-on, .pl .pl-hero.has-spot .pl-sound.is-on, .pl .pl-nav-links a.is-current, .pl .pl-colour-item.is-current { border: 0 !important; outline: none; }
+.pl .pl-cta:focus-visible, .pl .pl-badge:focus-visible, .pl .pl-nav-links a:focus-visible, .pl .pl-sound:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.pl .pl-cta:hover, .pl .pl-badge:hover, .pl .pl-nav-links a:hover, .pl .pl-sound:hover { text-decoration: underline; text-underline-offset: 4px; }
+.pl .pl-radio.is-on, .pl .pl-sound.is-on, .pl[data-ink="dark"] .pl-radio.is-on, .pl[data-ink="dark"] .pl-sound.is-on, .pl .pl-hero.has-spot .pl-sound.is-on { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 2px; }
+.pl .pl-colour-item.is-current { font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }

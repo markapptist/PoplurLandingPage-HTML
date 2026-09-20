@@ -10,7 +10,7 @@ import { useLivePops } from './useLivePops';
 import Showcase, { IPhone, SCREENS, SHOWCASE_STEPS } from './Showcase';
 import Lockup from './Lockup';
 import ShaderText from './ShaderText';
-import { HERO_SPOT, HERO_SPOT_POSTER } from './heroSpot';
+import { HERO_SPOTS, pickHeroSpot, type HeroSpot } from './heroSpot';
 import { armLandingPop, landingPop } from './landingPop';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
@@ -103,6 +103,10 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
   const copyRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [sound, setSound] = useState(false);
+  // Which spot this visit plays is rolled on the client after mount (the
+  // server cannot know), so the video mounts a beat after the page does.
+  const [chosen, setChosen] = useState<HeroSpot | null>(null);
+  useEffect(() => { setChosen(pickHeroSpot()); }, []);
   useEffect(() => {
     const el = ref.current; if (!el || reducedMotion()) return;
     return onScrollFrame((y, h) => {
@@ -117,7 +121,7 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
   useEffect(() => {
     const v = videoRef.current; if (!v) return;
     v.muted = true; v.defaultMuted = true;
-  }, []);
+  }, [chosen]);
   // Tell the radio when the spot is audible — playing, unmuted — so it can duck.
   useEffect(() => {
     const v = videoRef.current; if (!v) return;
@@ -130,7 +134,7 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
     };
     for (const type of ['play', 'pause', 'ended', 'volumechange']) v.addEventListener(type, report);
     return () => { for (const type of ['play', 'pause', 'ended', 'volumechange']) v.removeEventListener(type, report); };
-  }, []);
+  }, [chosen]);
   useEffect(() => {
     const v = videoRef.current; if (!v) return;
     const unmute = () => { v.muted = false; v.volume = 1; setSound(true); off(); };
@@ -138,7 +142,7 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
     document.addEventListener('pointerdown', unmute, { passive: true });
     document.addEventListener('keydown', unmute);
     return off;
-  }, []);
+  }, [chosen]);
   const toggleSound = () => {
     const v = videoRef.current; if (!v) return;
     v.muted = !v.muted; v.volume = 1; setSound(!v.muted);
@@ -162,12 +166,13 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
     firstRunDone.current = true;
     onSpotEnded();
   };
-  const spot = HERO_SPOT === null ? null : Asset.fromModule(HERO_SPOT).uri;
-  const poster = HERO_SPOT_POSTER === null ? undefined : Asset.fromModule(HERO_SPOT_POSTER).uri;
-  return <header ref={ref} className={`pl-hero${spot ? ' has-spot' : ''}`} id="top"
-    onMouseEnter={spot ? playSpot : undefined} onMouseLeave={spot ? pauseSpot : undefined}>
-    {spot
-      ? <video ref={videoRef} className="pl-hero-video" src={spot} poster={poster} autoPlay muted playsInline preload="auto" aria-label="People using Poplur" onEnded={ended} onClick={playSpot} />
+  const hasSpots = HERO_SPOTS.length > 0;
+  const spot = chosen ? Asset.fromModule(chosen.video).uri : null;
+  const poster = chosen ? Asset.fromModule(chosen.poster).uri : undefined;
+  return <header ref={ref} className={`pl-hero${hasSpots ? ' has-spot' : ''}`} id="top"
+    onMouseEnter={hasSpots ? playSpot : undefined} onMouseLeave={hasSpots ? pauseSpot : undefined}>
+    {hasSpots
+      ? (spot && <video key={chosen?.id} ref={videoRef} className="pl-hero-video" src={spot} poster={poster} autoPlay muted playsInline preload="auto" aria-label="People using Poplur" onEnded={ended} onClick={playSpot} />)
       : <div className="pl-hero-stage">
         <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
       </div>}
@@ -178,7 +183,7 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
         <p className="pl-hero-sub">Free on iPhone and Android · Toronto beta. Every pop starts with a 5 km radius.</p>
         <div className="pl-hero-actions">
           <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
-          {spot && <button type="button" className={`pl-sound${sound ? ' is-on' : ''}`} aria-pressed={sound}
+          {hasSpots && <button type="button" className={`pl-sound${sound ? ' is-on' : ''}`} aria-pressed={sound}
             // The chip's own press must not reach the document's one-time unmute, or the
             // click that follows would toggle the sound straight back off.
             onPointerDown={e => e.stopPropagation()} onClick={toggleSound}>
@@ -382,7 +387,7 @@ export default function LandingPage() {
     <Backdrop theme={theme} />
     {/* Over the video the toolbar is just its controls: while the hero is the chapter under the
         reader (spy.ts) its pill, scrim and blur go, and they come back as the page scrolls on. */}
-    <nav className={`pl-nav${HERO_SPOT !== null && (current === null || current === 'top') ? ' is-over-video' : ''}`}>
+    <nav className={`pl-nav${HERO_SPOTS.length > 0 && (current === null || current === 'top') ? ' is-over-video' : ''}`}>
       <div className="pl-nav-pill">
         <a className="pl-brand" href="#" onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
           <Image source={ICON} style={{ width: 28, height: 28, borderRadius: 8 }} contentFit="cover" />

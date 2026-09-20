@@ -963,7 +963,197 @@ test('the live runner paces its lap with these helpers and treats an unreachable
   assert.match(source, /getByRole\('alertdialog', \{ name: 'This pop replaces one of yours' \}\)/, 'the one-pop-per-place prompt is answered, not waited out');
   assert.match(source, /name: 'Replace it', exact: true/, 'answered by replacing the actor\'s own pop');
   assert.match(source, /\$\{new Date\(\)\.toISOString\(\)\} \[live\]/, 'log lines carry a clock');
-  assert.match(source, /await context\.route\('\*\*\/\*', async route => \{\n\s+try \{ await guardRoute\(route\); \} catch/, 'a request-guard failure aborts that request instead of exiting the process');
+  assert.match(source, /await context\.route\('\*\*\/\*', createLiveRouteGuard\(\{ actor, appOrigin, clayOrigin, log, verdictLog \}\)\);/, 'every actor context routes through the guarded factory');
+  assert.doesNotMatch(source, /await context\.route\('\*\*\/\*', async route =>/, 'no unguarded inline route handler remains');
+});
+
+// The route guard proper. A Playwright Route is four calls; the fake records
+// which one the guard ended on, and `fetch` is whatever the test says the
+// upstream did — including dying.
+import { createLiveRouteGuard } from './synthetic-live-runner.mjs';
+
+const GUARD_APP = 'http://127.0.0.1:8081';
+const GUARD_CLAY = 'http://127.0.0.1:5173';
+const guardActor = (policy = bound()) => ({
+  actorId: 'sim-food-001', uid: 'sim-food-001', policy, lastError: '',
+  appliedEngagementIds: new Set(), viewsApplied: 0, likesApplied: 0,
+});
+const guardHarness = (actor = guardActor()) => {
+  const lines = [];
+  const guard = createLiveRouteGuard({ actor, appOrigin: GUARD_APP, clayOrigin: GUARD_CLAY, log: message => lines.push(message), verdictLog: false });
+  return { actor, lines, guard };
+};
+const fakeRoute = ({ method = 'POST', url, postData = '', headers = {}, navigation = false, fetch, abort }) => {
+  const calls = [];
+  return {
+    calls,
+    request: () => ({
+      url: () => url, method: () => method, postData: () => postData, headers: () => headers,
+      isNavigationRequest: () => navigation,
+    }),
+    fetch: async options => { calls.push(['fetch', options]); return fetch(); },
+    abort: async code => { calls.push(['abort', code]); if (abort) return abort(); },
+    fulfill: async options => { calls.push(['fulfill', options.response]); },
+    continue: async () => { calls.push(['continue']); },
+  };
+};
+const upstreamAnswer = ({ status = 200, headers = {}, body = {} } = {}) => ({
+  status: () => status, ok: () => status >= 200 && status < 300, headers: () => headers, json: async () => body,
+});
+const GUARD_POST = 'post-0123456789abcdef0123';
+const GUARD_OBJECT = `posts/sim-food-001/${GUARD_POST}.jpg`;
+const proxiedRequests = () => ({
+  'live-auth-sign-in': {
+    url: `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${KEY}`,
+    postData: JSON.stringify({ email: 'beta-sim-food-001@poplur.test', password: 'secret-1', returnSecureToken: true }),
+  },
+  'live-auth-refresh': {
+    url: `https://securetoken.googleapis.com/v1/token?key=${KEY}`,
+    postData: 'grant_type=refresh_token&refresh_token=refresh-1',
+  },
+  'live-engagement': {
+    url: LIVE_ENGAGEMENT_FUNCTION_URL,
+    headers: { authorization: 'Bearer id-token-1' },
+    postData: JSON.stringify({ data: { postId: GUARD_POST, eventId: 'event-000001', kind: 'view', surface: 'feed' } }),
+  },
+  'live-storage-upload': {
+    url: `https://firebasestorage.googleapis.com/v0/b/poplur2025.firebasestorage.app/o?name=${encodeURIComponent(GUARD_OBJECT)}&uploadType=resumable`,
+    headers: { authorization: 'Firebase id-token-1' },
+  },
+});
+
+test('the route guard reaches every proxied production call it is asked about', () => {
+  const policy = bound();
+  for (const [kind, request] of Object.entries(proxiedRequests())) {
+    const verdict = policy.inspect({ method: 'POST', postData: '', headers: {}, ...request });
+    assert.equal(verdict.allow, true, `${kind} is admitted`);
+    assert.equal(verdict.kind, kind, `${kind} is the verdict the guard proxies`);
+  }
+});
+
+test('a dead upstream socket on any proxied branch aborts that one request and keeps the process alive', async () => {
+  // 20 Sep 2026 05:00Z: route.fetch rejected with "socket hang up" on an
+  // upload start; the four earlier exits were ECONNRESET, ETIMEDOUT and the
+  // 30 s fetch timeout. Each one must now end in abort('failed'), a note on
+  // the actor, and exactly one log line — never a rejection out of the guard.
+  const failures = ['route.fetch: socket hang up', 'route.fetch: read ECONNRESET', 'route.fetch: read ETIMEDOUT', 'route.fetch: Timeout 30000ms exceeded.'];
+  for (const [kind, request] of Object.entries(proxiedRequests())) {
+    for (const failure of failures) {
+      const { actor, lines, guard } = guardHarness();
+      const route = fakeRoute({ ...request, fetch: async () => { throw new Error(`${failure}\nCall log:\n  - some playwright detail`); } });
+      await guard(route);
+      assert.deepEqual(route.calls.at(-1), ['abort', 'failed'], `${kind}: ${failure} ends in abort('failed')`);
+      assert.ok(!route.calls.some(call => call[0] === 'fulfill'), `${kind}: nothing is fulfilled after ${failure}`);
+      assert.equal(actor.lastError, `request guard: ${failure}`, `${kind}: the actor records ${failure}`);
+      assert.equal(lines.length, 1, `${kind}: one log line for ${failure}`);
+      assert.match(lines[0], /^sim-food-001 request guard failed for https:\/\//, 'the line names the actor and the target');
+      assert.ok(lines[0].endsWith(`: ${failure}`), 'and carries only the first line of the error');
+    }
+  }
+});
+
+test('the route guard survives a non-Error rejection and an abort that itself fails', async () => {
+  const request = proxiedRequests()['live-storage-upload'];
+  {
+    const { actor, lines, guard } = guardHarness();
+    const route = fakeRoute({ ...request, fetch: async () => { throw 'boom'; } });
+    await guard(route);
+    assert.deepEqual(route.calls.at(-1), ['abort', 'failed']);
+    assert.equal(actor.lastError, 'request guard: boom');
+    assert.equal(lines.length, 1);
+  }
+  {
+    // The page may already be gone by the time the guard aborts (the actor's
+    // context closed mid-request): abort rejects, and that must not escape.
+    const { actor, guard } = guardHarness();
+    const route = fakeRoute({ ...request, fetch: async () => { throw new Error('route.fetch: socket hang up'); }, abort: async () => { throw new Error('Route is already handled!'); } });
+    await assert.doesNotReject(() => guard(route));
+    assert.equal(actor.lastError, 'request guard: route.fetch: socket hang up');
+  }
+});
+
+test('the route guard still binds what a healthy upstream returns', async () => {
+  const requests = proxiedRequests();
+  {
+    // Upload start: the session URL Storage hands back is bound to the post.
+    const { actor, guard } = guardHarness();
+    const session = `https://firebasestorage.googleapis.com/v0/b/poplur2025.firebasestorage.app/o?name=${encodeURIComponent(GUARD_OBJECT)}&uploadType=resumable&upload_id=abc123`;
+    const upstream = upstreamAnswer({ headers: { 'x-goog-upload-url': session } });
+    const route = fakeRoute({ ...requests['live-storage-upload'], fetch: async () => upstream });
+    await guard(route);
+    assert.deepEqual(route.calls.at(-1), ['fulfill', upstream]);
+    assert.equal(actor.policy.state.uploadSessions[GUARD_OBJECT], session);
+    assert.equal(actor.lastError, '');
+  }
+  {
+    // Upload start answered by a redirect is refused, not followed.
+    const { guard } = guardHarness();
+    const route = fakeRoute({ ...requests['live-storage-upload'], fetch: async () => upstreamAnswer({ status: 302, headers: { location: 'https://elsewhere.example' } }) });
+    await guard(route);
+    assert.deepEqual(route.calls.at(-1), ['abort', 'blockedbyclient']);
+  }
+  {
+    // Engagement: the server's applied view is counted once per event id.
+    const { actor, lines, guard } = guardHarness();
+    const answer = upstreamAnswer({ body: { result: { applied: true, eventId: 'event-000001', kind: 'view', postId: GUARD_POST, counters: { radiusMeters: 5000 } } } });
+    const route = fakeRoute({ ...requests['live-engagement'], fetch: async () => answer });
+    await guard(route);
+    await guard(fakeRoute({ ...requests['live-engagement'], fetch: async () => answer }));
+    assert.deepEqual(route.calls.at(-1), ['fulfill', answer]);
+    assert.equal(actor.viewsApplied, 1);
+    assert.deepEqual([...actor.appliedEngagementIds], ['event-000001']);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /server applied view to post-0123456789abcdef0123; radius=5000/);
+  }
+  {
+    // Refresh: a token for the pinned uid rebinds; the request is fulfilled.
+    const { actor, guard } = guardHarness();
+    const answer = upstreamAnswer({ body: { id_token: 'id-token-2', refresh_token: 'refresh-2', user_id: 'sim-food-001' } });
+    const route = fakeRoute({ ...requests['live-auth-refresh'], fetch: async () => answer });
+    await guard(route);
+    assert.deepEqual(route.calls.at(-1), ['fulfill', answer]);
+    assert.equal(actor.policy.state.idToken, 'id-token-2');
+    assert.equal(actor.policy.state.refreshToken, 'refresh-2');
+  }
+  {
+    // Sign-in for a foreign uid is refused after the fetch and noted.
+    const { actor, guard } = guardHarness();
+    const answer = upstreamAnswer({ body: { localId: 'someone-else', idToken: 'x', refreshToken: 'y' } });
+    const route = fakeRoute({ ...requests['live-auth-sign-in'], fetch: async () => answer });
+    await guard(route);
+    assert.deepEqual(route.calls.at(-1), ['abort', 'blockedbyclient']);
+    assert.match(actor.lastError, /did not return the pinned identity/);
+  }
+});
+
+test('the route guard never fetches what the policy refuses, and lets the local app through untouched', async () => {
+  {
+    const { guard } = guardHarness();
+    const route = fakeRoute({ url: `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${KEY}`, postData: '{}', fetch: async () => { throw new Error('must not be called'); } });
+    await guard(route);
+    assert.deepEqual(route.calls, [['abort', 'blockedbyclient']]);
+  }
+  {
+    const { guard } = guardHarness();
+    const route = fakeRoute({ method: 'GET', url: `${GUARD_CLAY}/assets/index.js`, fetch: async () => { throw new Error('must not be called'); } });
+    await guard(route);
+    assert.deepEqual(route.calls, [['continue']]);
+  }
+  {
+    // A top-level navigation away from the two loopback origins is blocked
+    // before the policy is even asked.
+    const { guard } = guardHarness({ ...guardActor(), policy: null });
+    const route = fakeRoute({ method: 'GET', url: 'https://example.com/', navigation: true, fetch: async () => { throw new Error('must not be called'); } });
+    await guard(route);
+    assert.deepEqual(route.calls, [['abort', 'blockedbyclient']]);
+  }
+});
+
+test('the app runner logs an unhandled rejection instead of letting Node exit', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('./synthetic-app-runner.mjs', import.meta.url), 'utf8');
+  assert.match(source, /process\.on\('unhandledRejection', reason => \{/, 'a process-level catcher exists');
+  assert.match(source, /unhandled rejection #\$\{unhandledRejections\} kept from exiting the process/, 'it says so, with a running count');
+  assert.doesNotMatch(source, /process\.on\('uncaughtException'/, 'a thrown exception still exits: its state cannot be trusted');
 });
 
 test('the app runner waits out a Cloud Run "no instance to spare" answer instead of retiring the cohort on it', async () => {

@@ -996,6 +996,19 @@ async function shutdown(signal) {
 process.once('SIGINT', () => { void shutdown('SIGINT'); });
 process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
 
+// Node exits 1 on an unhandled rejection. Under launchd KeepAlive that exit is
+// a respawn PAUSED, every actor's counters gone, and a scheduler hole of up to
+// 20 min before five-actor-live is restored (nine such exits in the log by
+// 20 Sep 2026, each a route.fetch that lost its socket). The per-request guard
+// in synthetic-live-runner.mjs is the real fix; this is the floor under it:
+// say what slipped through, with a running count, and stay up.
+let unhandledRejections = 0;
+process.on('unhandledRejection', reason => {
+  unhandledRejections += 1;
+  const detail = reason instanceof Error ? (reason.stack || reason.message) : String(reason);
+  console.error(`${new Date().toISOString()} [runner] unhandled rejection #${unhandledRejections} kept from exiting the process: ${detail.split('\n').slice(0, 4).join(' | ').slice(0, 600)}`);
+});
+
 export const SYNTHETIC_RUNNER_LIMITS = Object.freeze({
   actorCount: SYNTHETIC_ACTORS.length,
   maxFramesPerActor: MAX_FRAMES_PER_ACTOR,

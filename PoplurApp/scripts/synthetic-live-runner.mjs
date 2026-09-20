@@ -292,6 +292,103 @@ async function moveCubeTo(frame, expected, direction = 'right') {
  * nothing outside each actor's own bound ledger: its posts, its post
  * locations, its first-run profile, and view/like engagement calls.
  */
+/**
+ * The per-request guard for one live actor's browser context: the policy
+ * verdict first, then the four proxied production calls whose answers bind
+ * the actor's auth, upload session or engagement ledger.
+ *
+ * Exported so the error boundary is testable with a fake route. One
+ * request's failure must stay one request's failure: 20 Sep 2026 05:00Z
+ * route.fetch threw "socket hang up" on a Storage upload while the machine
+ * sat at load 900+; the rejection had no catcher, Node exited 1, launchd
+ * respawned the runner paused and every actor's counters were gone (nine
+ * such exits in the launchd log: ECONNRESET, ETIMEDOUT, 30 s fetch timeouts
+ * and the hang-up). The guard now records the failure on the actor, logs
+ * one line and aborts the request with 'failed' so the page sees an ordinary
+ * network error and the actor's own step retry handles it.
+ */
+export function createLiveRouteGuard({ actor, appOrigin, clayOrigin, log, verdictLog = false }) {
+  const guardRoute = async route => {
+    const request = route.request();
+    const target = request.url();
+    if (request.isNavigationRequest() && target !== 'about:blank') {
+      let origin = '';
+      try { origin = new URL(target).origin; } catch { /* blocked below */ }
+      if (origin !== appOrigin && origin !== clayOrigin) { await route.abort('blockedbyclient'); return; }
+    }
+    const verdict = actor.policy.inspect({
+      method: request.method(), url: target, postData: request.postData() || '', headers: request.headers(),
+    });
+    if (verdictLog && verdict.kind !== 'local-app' && verdict.kind !== 'read' && verdict.kind !== 'live-firestore-read') {
+      console.error(`${new Date().toISOString()} [verdict:${actor.actorId}] ${verdict.allow ? 'allow' : 'BLOCK'} ${verdict.kind ?? '-'} ${request.method()} ${target.slice(0, 140)}${verdict.allow ? '' : ` reason=${verdict.reason ?? ''}`}`);
+    }
+    if (!verdict.allow) { await route.abort('blockedbyclient'); return; }
+    if (verdict.kind === 'live-auth-sign-in') {
+      const upstream = await route.fetch({ maxRedirects: 0 });
+      if (upstream.status() >= 300 && upstream.status() < 400) { await route.abort('blockedbyclient'); return; }
+      if (upstream.ok()) {
+        const auth = await upstream.json().catch(() => null);
+        if (auth?.localId) {
+          try { actor.policy.bindAuth({ uid: auth.localId, idToken: auth.idToken, refreshToken: auth.refreshToken }); } catch (error) {
+            actor.lastError = error.message;
+            await route.abort('blockedbyclient');
+            return;
+          }
+        }
+      }
+      await route.fulfill({ response: upstream });
+      return;
+    }
+    if (verdict.kind === 'live-auth-refresh') {
+      const upstream = await route.fetch({ maxRedirects: 0 });
+      if (upstream.ok()) {
+        const refreshed = await upstream.json().catch(() => null);
+        if (refreshed?.id_token && refreshed?.refresh_token && refreshed.user_id === actor.uid) {
+          actor.policy.bindAuth({ uid: refreshed.user_id, idToken: refreshed.id_token, refreshToken: refreshed.refresh_token });
+        }
+      }
+      await route.fulfill({ response: upstream });
+      return;
+    }
+    if (verdict.kind === 'live-engagement') {
+      const upstream = await route.fetch({ maxRedirects: 0 });
+      const body = await upstream.json().catch(() => null);
+      const result = body?.result;
+      if (upstream.ok() && result?.applied && !actor.appliedEngagementIds.has(result.eventId)) {
+        actor.appliedEngagementIds.add(result.eventId);
+        if (result.kind === 'view') actor.viewsApplied += 1;
+        if (result.kind === 'like') actor.likesApplied += 1;
+        log(`${actor.actorId} server applied ${result.kind} to ${result.postId}; radius=${result.counters?.radiusMeters}`);
+      }
+      await route.fulfill({ response: upstream });
+      return;
+    }
+    if (verdict.kind === 'live-storage-upload') {
+      const upstream = await route.fetch({ maxRedirects: 0 });
+      if (upstream.status() >= 300 && upstream.status() < 400) { await route.abort('blockedbyclient'); return; }
+      const uploadURL = upstream.headers()['x-goog-upload-url'];
+      if (uploadURL) {
+        try { actor.policy.bindUploadSession(uploadURL, verdict.objectPath); } catch (error) {
+          actor.lastError = error.message;
+          await route.abort('blockedbyclient');
+          return;
+        }
+      }
+      await route.fulfill({ response: upstream });
+      return;
+    }
+    await route.continue();
+  };
+  return async route => {
+    try { await guardRoute(route); } catch (error) {
+      const reason = error instanceof Error ? error.message.split('\n')[0].slice(0, 120) : String(error);
+      actor.lastError = `request guard: ${reason}`.slice(0, 200);
+      log(`${actor.actorId} request guard failed for ${route.request().url().slice(0, 100)}: ${reason}`);
+      await route.abort('failed').catch(() => {});
+    }
+  };
+}
+
 export function createSyntheticLiveRunner({
   chromium,
   chromePath,
@@ -473,89 +570,7 @@ export function createSyntheticLiveRunner({
       }
       socket.connectToServer();
     });
-    const guardRoute = async route => {
-      const request = route.request();
-      const target = request.url();
-      if (request.isNavigationRequest() && target !== 'about:blank') {
-        let origin = '';
-        try { origin = new URL(target).origin; } catch { /* blocked below */ }
-        if (origin !== appOrigin && origin !== clayOrigin) { await route.abort('blockedbyclient'); return; }
-      }
-      const verdict = actor.policy.inspect({
-        method: request.method(), url: target, postData: request.postData() || '', headers: request.headers(),
-      });
-      if (verdictLog && verdict.kind !== 'local-app' && verdict.kind !== 'read' && verdict.kind !== 'live-firestore-read') {
-        console.error(`${new Date().toISOString()} [verdict:${actor.actorId}] ${verdict.allow ? 'allow' : 'BLOCK'} ${verdict.kind ?? '-'} ${request.method()} ${target.slice(0, 140)}${verdict.allow ? '' : ` reason=${verdict.reason ?? ''}`}`);
-      }
-      if (!verdict.allow) { await route.abort('blockedbyclient'); return; }
-      if (verdict.kind === 'live-auth-sign-in') {
-        const upstream = await route.fetch({ maxRedirects: 0 });
-        if (upstream.status() >= 300 && upstream.status() < 400) { await route.abort('blockedbyclient'); return; }
-        if (upstream.ok()) {
-          const auth = await upstream.json().catch(() => null);
-          if (auth?.localId) {
-            try { actor.policy.bindAuth({ uid: auth.localId, idToken: auth.idToken, refreshToken: auth.refreshToken }); } catch (error) {
-              actor.lastError = error.message;
-              await route.abort('blockedbyclient');
-              return;
-            }
-          }
-        }
-        await route.fulfill({ response: upstream });
-        return;
-      }
-      if (verdict.kind === 'live-auth-refresh') {
-        const upstream = await route.fetch({ maxRedirects: 0 });
-        if (upstream.ok()) {
-          const refreshed = await upstream.json().catch(() => null);
-          if (refreshed?.id_token && refreshed?.refresh_token && refreshed.user_id === actor.uid) {
-            actor.policy.bindAuth({ uid: refreshed.user_id, idToken: refreshed.id_token, refreshToken: refreshed.refresh_token });
-          }
-        }
-        await route.fulfill({ response: upstream });
-        return;
-      }
-      if (verdict.kind === 'live-engagement') {
-        const upstream = await route.fetch({ maxRedirects: 0 });
-        const body = await upstream.json().catch(() => null);
-        const result = body?.result;
-        if (upstream.ok() && result?.applied && !actor.appliedEngagementIds.has(result.eventId)) {
-          actor.appliedEngagementIds.add(result.eventId);
-          if (result.kind === 'view') actor.viewsApplied += 1;
-          if (result.kind === 'like') actor.likesApplied += 1;
-          log(`${actor.actorId} server applied ${result.kind} to ${result.postId}; radius=${result.counters?.radiusMeters}`);
-        }
-        await route.fulfill({ response: upstream });
-        return;
-      }
-      if (verdict.kind === 'live-storage-upload') {
-        const upstream = await route.fetch({ maxRedirects: 0 });
-        if (upstream.status() >= 300 && upstream.status() < 400) { await route.abort('blockedbyclient'); return; }
-        const uploadURL = upstream.headers()['x-goog-upload-url'];
-        if (uploadURL) {
-          try { actor.policy.bindUploadSession(uploadURL, verdict.objectPath); } catch (error) {
-            actor.lastError = error.message;
-            await route.abort('blockedbyclient');
-            return;
-          }
-        }
-        await route.fulfill({ response: upstream });
-        return;
-      }
-      await route.continue();
-    };
-    // One request's failure must stay one request's failure. 20 Sep 2026
-    // 05:00: route.fetch threw "socket hang up" on an upload while the
-    // machine sat at load 900+; the rejection had no catcher, Node exited 1,
-    // launchd respawned the runner paused, and every actor's counters were
-    // gone. Abort that request and say so; the actor's own step reports it.
-    await context.route('**/*', async route => {
-      try { await guardRoute(route); } catch (error) {
-        const reason = error instanceof Error ? error.message.split('\n')[0].slice(0, 120) : String(error);
-        log(`${actor.actorId} request guard failed for ${route.request().url().slice(0, 100)}: ${reason}`);
-        await route.abort('failed').catch(() => {});
-      }
-    });
+    await context.route('**/*', createLiveRouteGuard({ actor, appOrigin, clayOrigin, log, verdictLog }));
     page.on('popup', popup => { void popup.close().catch(() => {}); });
     page.on('download', download => { void download.cancel().catch(() => {}); });
     page.on('dialog', dialog => { void dialog.dismiss().catch(() => {}); });

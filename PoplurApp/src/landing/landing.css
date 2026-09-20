@@ -359,3 +359,11 @@
     linear-gradient(105deg, #ffffff 0%, #ffe6f2 14%, color-mix(in srgb, var(--accent-2) 55%, #ffffff) 32%, #ffffff 50%, color-mix(in srgb, var(--accent) 60%, #ffffff) 66%, #ffe6f2 84%, #ffffff 100%);
   filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .5)) drop-shadow(0 10px 24px rgba(0, 0, 0, .5)); }
 .pl-hero.has-spot .pl-sound { color: #fff; }
+
+/* ── over the video the toolbar has no background: only its controls, in white, until the page scrolls on ── */
+.pl-nav.is-over-video::before { opacity: 0; }
+.pl-nav::before { transition: opacity .35s ease; }
+.pl-nav-pill { transition: background .35s ease, border-color .35s ease, box-shadow .35s ease; }
+.pl-nav.is-over-video .pl-nav-pill, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-pill { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; color: #fff; }
+.pl-nav.is-over-video .pl-nav-links a { text-shadow: 0 1px 2px rgba(0, 0, 0, .55), 0 4px 14px rgba(0, 0, 0, .35); }
+.pl[data-ink="dark"] .pl-nav.is-over-video .pl-badge { background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .4); color: #fff; }

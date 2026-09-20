@@ -366,7 +366,9 @@ export default function LandingPage() {
   }, [theme.bg]);
   return <div className="pl" data-ink={inkMode} style={themeVars}>
     <Backdrop theme={theme} />
-    <nav className="pl-nav">
+    {/* Over the video the toolbar is just its controls: while the hero is the chapter under the
+        reader (spy.ts) its pill, scrim and blur go, and they come back as the page scrolls on. */}
+    <nav className={`pl-nav${HERO_SPOT !== null && (current === null || current === 'top') ? ' is-over-video' : ''}`}>
       <div className="pl-nav-pill">
         <a className="pl-brand" href="#" onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
           <Image source={ICON} style={{ width: 28, height: 28, borderRadius: 8 }} contentFit="cover" />

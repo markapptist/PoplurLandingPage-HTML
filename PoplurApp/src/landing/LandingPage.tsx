@@ -297,7 +297,16 @@ function Signup() {
       <ShaderText as="h2">Join the beta.</ShaderText>
       <p>iPhone and Android. Enter your email and we will send the links — TestFlight for iOS, the beta build for Android. Students: your course Discord has the invite and the tester agreement.</p>
       <form className="pl-form" onSubmit={submit}>
-        <input type="email" inputMode="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} disabled={busy} aria-label="Email address" />
+        {/* The field is the one thing on this screen to act on, so it wears
+            the house shader as its hint (the same recipe as the headlines,
+            in the theme's accents so it reads on the white field), a thick
+            border with a breathing glow, and a shadow. The hint is a real
+            label over an empty field, so a tap on it lands in the input and
+            it leaves the moment a character is typed. */}
+        <label className="pl-field">
+          <input type="email" inputMode="email" autoComplete="email" placeholder="" value={email} onChange={e => setEmail(e.target.value)} disabled={busy} aria-label="Email address" />
+          {!email && <ShaderText as="span" className="pl-field-hint">you@example.com</ShaderText>}
+        </label>
         <button type="submit" className="pl-cta accent" disabled={busy}>{busy ? 'Sending…' : 'Send me the beta'}</button>
       </form>
       {note && <p className={`pl-form-note ${note.tone}`}>{note.text}</p>}

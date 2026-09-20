@@ -1,17 +1,12 @@
 import {
-  BETA_INVITE_IMAGES,
+  BETA_INVITE_ASSET_ORIGIN,
   betaInviteFrom,
+  betaInviteHostedImages,
   betaInviteSubject,
   createBetaInviteHtml,
   createBetaInviteText,
   pickBetaInviteVariant,
-  type BetaInviteImageKey,
 } from '@/emails/betaInviteEmail';
-
-declare const require: any;
-
-const { readFile } = require('node:fs/promises');
-const path = require('node:path');
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -45,7 +40,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const { attachments, images } = await loadInlineImages();
+  // The pictures are fetched from the site (public/emails); BETA_EMAIL_ASSET_ORIGIN
+  // points a preview deployment at itself.
+  const images = betaInviteHostedImages(process.env.BETA_EMAIL_ASSET_ORIGIN || BETA_INVITE_ASSET_ORIGIN);
   // One of the four designs per email, rolled here so the answer knows which.
   const variant = pickBetaInviteVariant();
 
@@ -56,7 +53,6 @@ export async function POST(request: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      ...(attachments.length ? { attachments } : {}),
       from,
       to: email,
       subject: betaInviteSubject,
@@ -81,25 +77,4 @@ export async function POST(request: Request) {
   const result = (await response.json()) as { id?: string };
 
   return Response.json({ id: result.id ?? null, ok: true, variant });
-}
-
-// The email's pictures ride along as inline parts, one per content id, so
-// they show without a "load images" click and without a hosted URL that a
-// bundle hash could move. A file the function bundle does not carry (see
-// vercel.json includeFiles) is simply left out of the mail rather than
-// failing the send.
-async function loadInlineImages() {
-  const attachments: { content: string; contentId: string; filename: string }[] = [];
-  const images: Partial<Record<BetaInviteImageKey, string>> = {};
-  for (const key of Object.keys(BETA_INVITE_IMAGES) as BetaInviteImageKey[]) {
-    const image = BETA_INVITE_IMAGES[key];
-    try {
-      const content = await readFile(path.join(process.cwd(), image.file));
-      attachments.push({ content: content.toString('base64'), contentId: image.contentId, filename: image.filename });
-      images[key] = `cid:${image.contentId}`;
-    } catch {
-      images[key] = '';
-    }
-  }
-  return { attachments, images };
 }

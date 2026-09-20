@@ -12,28 +12,40 @@
 //   postcard  — the envelope is the hero, airmail stripes, buttons side by side
 // Same copy, links and images in every one.
 //
-// Everything is tables and inline styles because it is an email. The images
-// travel as inline attachments: the sender (app/api/send-beta-email+api.ts)
-// attaches each file under its content id and hands `cid:` sources in; the
-// preview route and the rendered proof hand hosted or data URIs in instead.
+// Everything is tables and inline styles because it is an email. Rows that
+// sit side by side at 600 px are "hybrid" blocks (inline-block with a
+// max-width) so they stack on a phone instead of squeezing the copy.
 
 export const betaInviteSubject = 'Your Poplur beta access is ready';
 export const betaInvitePreview = 'Your links are inside: TestFlight for iPhone, the beta build for Android.';
 export const betaInviteFrom = 'Poplur <hello@poplur.ca>';
 
+// The pictures live on the site itself (PoplurApp/public/emails → poplur.ca/emails/…),
+// where every mail client can fetch them. They had travelled as inline
+// attachments by content id, and Gmail on the phone showed none of them.
 export const BETA_INVITE_IMAGES = {
-  icon: { contentId: 'poplur-icon', file: 'assets/images/landing/app-icon.png', filename: 'poplur-icon.png' },
-  mailbox: { contentId: 'poplur-mailbox', file: 'assets/emails/mailbox.png', filename: 'poplur-mailbox.png' },
-  envelope: { contentId: 'poplur-envelope', file: 'assets/emails/envelope.png', filename: 'poplur-envelope.png' },
+  icon: { path: 'emails/icon.png', file: 'assets/images/landing/app-icon.png' },
+  mailbox: { path: 'emails/mailbox.png', file: 'assets/emails/mailbox.png' },
+  envelope: { path: 'emails/envelope.png', file: 'assets/emails/envelope.png' },
   // The platform marks on the buttons, from the app's own icon font
   // (Ionicons logo-apple / logo-android), in the two button inks.
-  appleWhite: { contentId: 'poplur-apple-white', file: 'assets/emails/apple-white.png', filename: 'apple-white.png' },
-  appleInk: { contentId: 'poplur-apple-ink', file: 'assets/emails/apple-ink.png', filename: 'apple-ink.png' },
-  androidWhite: { contentId: 'poplur-android-white', file: 'assets/emails/android-white.png', filename: 'android-white.png' },
-  androidInk: { contentId: 'poplur-android-ink', file: 'assets/emails/android-ink.png', filename: 'android-ink.png' },
+  appleWhite: { path: 'emails/apple-white.png', file: 'assets/emails/apple-white.png' },
+  appleInk: { path: 'emails/apple-ink.png', file: 'assets/emails/apple-ink.png' },
+  androidWhite: { path: 'emails/android-white.png', file: 'assets/emails/android-white.png' },
+  androidInk: { path: 'emails/android-ink.png', file: 'assets/emails/android-ink.png' },
 } as const;
 
 export type BetaInviteImageKey = keyof typeof BETA_INVITE_IMAGES;
+
+export const BETA_INVITE_ASSET_ORIGIN = 'https://www.poplur.ca';
+
+/** Every image as an absolute URL on the site. */
+export function betaInviteHostedImages(origin = BETA_INVITE_ASSET_ORIGIN): Record<BetaInviteImageKey, string> {
+  const base = origin.replace(/\/+$/, '');
+  const out = {} as Record<BetaInviteImageKey, string>;
+  for (const key of Object.keys(BETA_INVITE_IMAGES) as BetaInviteImageKey[]) out[key] = `${base}/${BETA_INVITE_IMAGES[key].path}`;
+  return out;
+}
 
 export const BETA_INVITE_VARIANTS = ['pink', 'paper', 'night', 'postcard'] as const;
 export type BetaInviteVariant = (typeof BETA_INVITE_VARIANTS)[number];
@@ -53,8 +65,8 @@ type BetaInviteEmailOptions = {
   iosUrl?: string;
   /** Which design. Omitted, the template rolls one. */
   variant?: BetaInviteVariant;
-  /** A src per image. Missing keys fall back to the sender's `cid:` parts; an
-   *  empty string leaves that image out (a file the server could not read). */
+  /** A src per image. Missing keys fall back to the hosted copies on the site;
+   *  an empty string leaves that image out. */
   images?: Partial<Record<BetaInviteImageKey, string>>;
   /** The older call shape: the icon's src alone. */
   logoSrc?: string;
@@ -94,9 +106,10 @@ export function getBetaInviteLinks(options: BetaInviteEmailOptions = {}) {
 
 export function getBetaInviteImageSources(options: BetaInviteEmailOptions = {}): Record<BetaInviteImageKey, string> {
   const sources = {} as Record<BetaInviteImageKey, string>;
+  const hosted = betaInviteHostedImages();
   for (const key of Object.keys(BETA_INVITE_IMAGES) as BetaInviteImageKey[]) {
     const given = options.images?.[key];
-    sources[key] = given !== undefined ? given : `cid:${BETA_INVITE_IMAGES[key].contentId}`;
+    sources[key] = given !== undefined ? given : hosted[key];
   }
   if (options.logoSrc !== undefined && options.images?.icon === undefined) sources.icon = options.logoSrc;
   return sources;
@@ -148,6 +161,17 @@ function markImg(src: string): string {
 function tags(color: string, border: string): string {
   const cells = COPY.tags.map(label => `<td style="padding:0 4px;"><span style="display:inline-block;padding:6px 12px;border:1px solid ${border};border-radius:999px;font-family:${FONT};font-size:12px;line-height:14px;color:${color};white-space:nowrap;">${label}</span></td>`).join('');
   return `<table role="presentation" cellspacing="0" cellpadding="0" align="center"><tr>${cells}</tr></table>`;
+}
+
+/** Two blocks side by side where they fit, stacked where they do not: the
+ *  hybrid pattern mail clients honour without media queries. The gap lives
+ *  inside the first block — to its right when side by side, below it when
+ *  stacked — so the sum of the max widths must fit the container. */
+function sideBySide(left: string, leftMax: number, right: string, rightMax: number, pad = 18): string {
+  return `<div style="font-size:0;line-height:0;text-align:left;">
+    <div style="display:inline-block;width:100%;max-width:${leftMax}px;vertical-align:top;"><div style="padding:0 ${pad}px ${pad}px 0;">${left}</div></div>
+    <div style="display:inline-block;width:100%;max-width:${rightMax}px;vertical-align:top;">${right}</div>
+  </div>`;
 }
 
 function gap(px: number): string {
@@ -211,12 +235,7 @@ function pinkDesign(src: Src, { iosUrl, androidUrl }: Links): string {
             ${gap(34)}
             <tr>
               <td style="background:${white};border-radius:22px;padding:24px 26px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                  <tr>
-                    <td valign="top" width="112" style="padding:2px 18px 0 0;">${img(src.envelope, `width="104" alt="A striped Poplur airmail envelope" style="display:block;width:104px;height:auto;border:0;"`)}</td>
-                    <td valign="top" style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}</td>
-                  </tr>
-                </table>
+                ${sideBySide(img(src.envelope, `width="104" alt="A striped Poplur airmail envelope" style="display:block;width:104px;height:auto;border:0;"`), 122, `<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}</div>`, 380)}
               </td>
             </tr>
             <tr><td align="center" style="padding:28px 24px 0;font-family:${FONT};font-size:15px;line-height:1.5;color:rgba(255,255,255,0.86);">${COPY.reply}</td></tr>
@@ -255,12 +274,9 @@ function paperDesign(src: Src, { iosUrl, androidUrl }: Links): string {
             ${gap(34)}
             <tr>
               <td style="padding:0 32px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-top:1px solid rgba(17,17,20,0.08);">
-                  <tr>
-                    <td valign="top" width="108" style="padding:24px 16px 0 0;">${img(src.envelope, `width="100" alt="A striped Poplur airmail envelope" style="display:block;width:100px;height:auto;border:0;"`)}</td>
-                    <td valign="top" style="padding:22px 0 0;font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}</td>
-                  </tr>
-                </table>
+                <div style="border-top:1px solid rgba(17,17,20,0.08);padding-top:22px;">
+                ${sideBySide(img(src.envelope, `width="100" alt="A striped Poplur airmail envelope" style="display:block;width:100px;height:auto;border:0;"`), 116, `<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}</div>`, 420)}
+                </div>
               </td>
             </tr>
             <tr><td style="padding:26px 32px 0;font-family:${FONT};font-size:15px;line-height:1.5;color:${INK_2};">${COPY.reply}</td></tr>
@@ -294,12 +310,7 @@ function nightDesign(src: Src, { iosUrl, androidUrl }: Links): string {
             ${gap(34)}
             <tr>
               <td style="background:#17171c;border-radius:22px;padding:24px 26px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                  <tr>
-                    <td valign="top" width="112" style="padding:2px 18px 0 0;">${img(src.envelope, `width="104" alt="A striped Poplur airmail envelope" style="display:block;width:104px;height:auto;border:0;"`)}</td>
-                    <td valign="top" style="font-family:${FONT};font-size:15px;line-height:1.55;color:${grey};">${notes('#ffffff', grey)}</td>
-                  </tr>
-                </table>
+                ${sideBySide(img(src.envelope, `width="104" alt="A striped Poplur airmail envelope" style="display:block;width:104px;height:auto;border:0;"`), 122, `<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${grey};">${notes('#ffffff', grey)}</div>`, 380)}
               </td>
             </tr>
             <tr><td align="center" style="padding:28px 24px 0;font-family:${FONT};font-size:15px;line-height:1.5;color:${grey};">${COPY.reply}</td></tr>
@@ -315,8 +326,8 @@ function nightDesign(src: Src, { iosUrl, androidUrl }: Links): string {
  *  a client without gradients (Outlook) shows a solid dark bar. */
 function postcardDesign(src: Src, { iosUrl, androidUrl }: Links): string {
   const stripes = `repeating-linear-gradient(135deg, ${PINK} 0 14px, ${INK} 14px 28px)`;
-  const button = (label: string, href: string, bg: string, side: string, mark: string) =>
-    `<td width="50%" style="padding-${side}:6px;"><a href="${href}" style="display:block;background:${bg};border-radius:999px;padding:15px 12px;color:#ffffff;font-family:${FONT};font-size:15px;font-weight:600;line-height:20px;text-align:center;text-decoration:none;">${markImg(mark)}${label}</a></td>`;
+  const button = (label: string, href: string, bg: string, mark: string) =>
+    `<a href="${href}" style="display:block;background:${bg};border-radius:999px;padding:15px 12px;color:#ffffff;font-family:${FONT};font-size:15px;font-weight:600;line-height:20px;text-align:center;text-decoration:none;white-space:nowrap;">${markImg(mark)}${label}</a>`;
   return shell(PINK, `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${PINK};">
       <tr>
@@ -325,41 +336,33 @@ function postcardDesign(src: Src, { iosUrl, androidUrl }: Links): string {
             <tr><td style="height:12px;line-height:12px;font-size:1px;background:${INK};background-image:${stripes};border-radius:22px 22px 0 0;">&nbsp;</td></tr>
             <tr>
               <td style="padding:26px 30px 0;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                  <tr>
-                    <td valign="top" width="230" style="padding:6px 22px 0 0;">${img(src.envelope, `width="220" alt="A striped Poplur airmail envelope" style="display:block;width:220px;height:auto;border:0;"`)}</td>
-                    <td valign="top">
-                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                        <tr>
-                          <td valign="middle" style="font-family:${FONT};font-size:12px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${PINK};">${COPY.eyebrow}</td>
-                          <td align="right" valign="middle">
-                            <table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border:1px dashed rgba(17,17,20,0.28);padding:6px;">${img(src.icon, `width="34" height="34" alt="" style="display:block;width:34px;height:34px;border-radius:8px;border:0;"`)}</td></tr></table>
-                          </td>
-                        </tr>
-                      </table>
-                      <h1 style="margin:12px 0 0;font-family:${FONT};font-size:34px;line-height:1.06;font-weight:700;letter-spacing:-0.035em;color:${INK};">${COPY.title}</h1>
-                      <p style="margin:12px 0 0;font-family:${FONT};font-size:15px;line-height:1.5;color:${INK_2};">${COPY.lede}</p>
-                    </td>
-                  </tr>
-                </table>
+                ${sideBySide(
+                  img(src.envelope, `width="220" alt="A striped Poplur airmail envelope" style="display:block;width:220px;max-width:100%;height:auto;border:0;"`), 250,
+                  `<table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                    <tr>
+                      <td valign="middle" style="font-family:${FONT};font-size:12px;line-height:16px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${PINK};">${COPY.eyebrow}</td>
+                      <td align="right" valign="middle">
+                        <table role="presentation" cellspacing="0" cellpadding="0" align="right"><tr><td style="border:1px dashed rgba(17,17,20,0.28);padding:6px;">${img(src.icon, `width="34" height="34" alt="" style="display:block;width:34px;height:34px;border-radius:8px;border:0;"`)}</td></tr></table>
+                      </td>
+                    </tr>
+                  </table>
+                  <h1 style="margin:12px 0 0;font-family:${FONT};font-size:34px;line-height:1.06;font-weight:700;letter-spacing:-0.035em;color:${INK};">${COPY.title}</h1>
+                  <p style="margin:12px 0 0;font-family:${FONT};font-size:15px;line-height:1.5;color:${INK_2};">${COPY.lede}</p>`, 290, 22)}
               </td>
             </tr>
             ${gap(26)}
             <tr>
               <td style="padding:0 30px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${button(COPY.ios, iosUrl, PINK, 'right', src.appleWhite)}${button(COPY.android, androidUrl, INK, 'left', src.androidWhite)}</tr></table>
+                ${sideBySide(button(COPY.ios, iosUrl, PINK, src.appleWhite), 276, button(COPY.android, androidUrl, INK, src.androidWhite), 264, 12)}
               </td>
             </tr>
             <tr><td align="center" style="padding:18px 0 0;">${tags(INK_2, 'rgba(17,17,20,0.12)')}</td></tr>
             ${gap(28)}
             <tr>
               <td style="padding:0 30px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-top:1px dashed rgba(17,17,20,0.2);">
-                  <tr>
-                    <td valign="top" style="padding:22px 18px 0 0;font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}<p style="margin:18px 0 0;">${COPY.reply}</p></td>
-                    <td valign="bottom" width="120" style="padding:22px 0 0;">${img(src.mailbox, `width="110" alt="A pink clay Poplur mailbox with its flag up" style="display:block;width:110px;height:auto;border:0;"`)}</td>
-                  </tr>
-                </table>
+                <div style="border-top:1px dashed rgba(17,17,20,0.2);padding-top:22px;">
+                ${sideBySide(`<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}<p style="margin:18px 0 0;">${COPY.reply}</p></div>`, 400, img(src.mailbox, `width="110" alt="A pink clay Poplur mailbox with its flag up" style="display:block;width:110px;height:auto;border:0;"`), 140)}
+                </div>
               </td>
             </tr>
             <tr><td style="padding:22px 30px 26px;font-family:${FONT};font-size:12px;line-height:1.5;color:${INK_3};"><span style="font-weight:700;color:${INK};">Poplur</span> · Toronto beta · ${COPY.foot} <a href="https://www.poplur.ca" style="color:${INK_2};text-decoration:underline;">poplur.ca</a>.</td></tr>

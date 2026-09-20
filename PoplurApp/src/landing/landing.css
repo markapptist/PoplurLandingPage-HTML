@@ -107,8 +107,26 @@
 .pl-signup h2 { font-size: clamp(32px, 5vw, 60px); letter-spacing: -0.035em; line-height: 1.02; }
 .pl-signup p { color: var(--ink-2); font-size: 18px; margin-top: 16px; max-width: 48ch; margin-left: auto; margin-right: auto; }
 .pl-form { display: flex; gap: 10px; justify-content: center; margin: 28px auto 0; max-width: 520px; flex-wrap: wrap; }
-.pl-form input { flex: 1 1 260px; height: 46px; border-radius: 999px; border: 1px solid rgba(17, 17, 20, .18); padding: 0 18px; font-size: 15px; font-family: var(--font); outline: none; background: #fff; color: var(--ink); }
-.pl-form input:focus { border-color: var(--ink); }
+/* The email field stands out: a thick border in the ink with a dark keyline inside it (so it reads on the white field too),
+   a glow in the ink that breathes until the field is touched, and a real shadow. The hint over the empty field is shader text. */
+.pl-field { position: relative; flex: 1 1 260px; display: block; }
+.pl-form input { width: 100%; height: 52px; border-radius: 999px; border: 3px solid var(--ink); padding: 0 20px; font-size: 16px; font-weight: 600; font-family: var(--font); outline: none; background: #fff; color: var(--ink);
+  box-shadow: inset 0 0 0 1.5px rgba(17, 17, 20, .18), 0 0 0 4px color-mix(in srgb, var(--ink) 22%, transparent), 0 0 24px color-mix(in srgb, var(--ink) 60%, transparent), 0 12px 30px rgba(0, 0, 0, .24);
+  animation: plFieldGlow 2.4s ease-in-out infinite alternate; }
+.pl-form input:focus { animation: none;
+  box-shadow: inset 0 0 0 1.5px rgba(17, 17, 20, .18), 0 0 0 6px color-mix(in srgb, var(--ink) 32%, transparent), 0 0 38px color-mix(in srgb, var(--ink) 85%, transparent), 0 12px 30px rgba(0, 0, 0, .24); }
+.pl-form input:disabled { animation: none; opacity: .7; }
+@keyframes plFieldGlow {
+  from { box-shadow: inset 0 0 0 1.5px rgba(17, 17, 20, .18), 0 0 0 3px color-mix(in srgb, var(--ink) 16%, transparent), 0 0 14px color-mix(in srgb, var(--ink) 40%, transparent), 0 12px 30px rgba(0, 0, 0, .24); }
+  to   { box-shadow: inset 0 0 0 1.5px rgba(17, 17, 20, .18), 0 0 0 6px color-mix(in srgb, var(--ink) 30%, transparent), 0 0 36px color-mix(in srgb, var(--ink) 85%, transparent), 0 12px 30px rgba(0, 0, 0, .24); } }
+@media (prefers-reduced-motion: reduce) { .pl-form input { animation: none; } }
+.pl-field-hint { position: absolute; left: 21px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 16px; font-weight: 800; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; }
+/* The hint's shader in the theme's accents rather than the headline's whites, which would vanish on the white field. */
+.pl .pl-field-hint, .pl[data-ink="dark"] .pl-field-hint {
+  background-image:
+    linear-gradient(105deg, rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, .9) 50%, rgba(255, 255, 255, 0) 58%),
+    linear-gradient(105deg, var(--accent) 0%, #ff8fc8 22%, var(--accent-2) 48%, var(--accent) 74%, #ff8fc8 100%);
+  filter: drop-shadow(0 1px 0 rgba(60, 0, 32, .16)); }
 .pl-form-note { font-size: 13px; color: var(--ink-3); margin-top: 14px; }
 .pl-form-note.err { color: #9b1a5c; } .pl-form-note.ok { color: #0d6b3d; }
 .pl-pills { display: flex; gap: 10px; justify-content: center; margin-top: 22px; flex-wrap: wrap; }

@@ -1,8 +1,10 @@
 import {
+  BETA_INVITE_IMAGES,
   betaInviteFrom,
   betaInviteSubject,
   createBetaInviteHtml,
   createBetaInviteText,
+  type BetaInviteImageKey,
 } from '@/emails/betaInviteEmail';
 
 declare const require: any;
@@ -12,8 +14,6 @@ const path = require('node:path');
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const LOGO_CONTENT_ID = 'poplur-logo';
-const FALLBACK_LOGO_URL = 'https://poplur.ca/favicon.ico';
 
 type SendEmailRequest = {
   email?: unknown;
@@ -44,8 +44,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const logoContent = await getLogoContent();
-  const logoSrc = logoContent ? `cid:${LOGO_CONTENT_ID}` : FALLBACK_LOGO_URL;
+  const { attachments, images } = await loadInlineImages();
 
   const response = await fetch(RESEND_ENDPOINT, {
     method: 'POST',
@@ -54,21 +53,11 @@ export async function POST(request: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      ...(logoContent
-        ? {
-            attachments: [
-              {
-                content: logoContent,
-                contentId: LOGO_CONTENT_ID,
-                filename: 'logo3.png',
-              },
-            ],
-          }
-        : {}),
+      ...(attachments.length ? { attachments } : {}),
       from,
       to: email,
       subject: betaInviteSubject,
-      html: createBetaInviteHtml({ logoSrc }),
+      html: createBetaInviteHtml({ images }),
       text: createBetaInviteText(),
     }),
   });
@@ -91,13 +80,23 @@ export async function POST(request: Request) {
   return Response.json({ id: result.id ?? null, ok: true });
 }
 
-async function getLogoContent() {
-  const logoPath = path.join(process.cwd(), 'assets/images/logo3.png');
-  try {
-    const logo = await readFile(logoPath);
-
-    return logo.toString('base64');
-  } catch {
-    return null;
+// The email's pictures ride along as inline parts, one per content id, so
+// they show without a "load images" click and without a hosted URL that a
+// bundle hash could move. A file the function bundle does not carry (see
+// vercel.json includeFiles) is simply left out of the mail rather than
+// failing the send.
+async function loadInlineImages() {
+  const attachments: { content: string; contentId: string; filename: string }[] = [];
+  const images: Partial<Record<BetaInviteImageKey, string>> = {};
+  for (const key of Object.keys(BETA_INVITE_IMAGES) as BetaInviteImageKey[]) {
+    const image = BETA_INVITE_IMAGES[key];
+    try {
+      const content = await readFile(path.join(process.cwd(), image.file));
+      attachments.push({ content: content.toString('base64'), contentId: image.contentId, filename: image.filename });
+      images[key] = `cid:${image.contentId}`;
+    } catch {
+      images[key] = '';
+    }
   }
+  return { attachments, images };
 }

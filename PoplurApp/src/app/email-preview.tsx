@@ -1,271 +1,54 @@
-import { Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Asset } from 'expo-asset';
+import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import {
-  betaInvitePreview,
   betaInviteFrom,
+  betaInvitePreview,
   betaInviteSubject,
-  getBetaInviteLinks,
+  createBetaInviteHtml,
+  createBetaInviteText,
 } from '@/emails/betaInviteEmail';
 
-const LOGO_SOURCE = require('@/assets/images/logo3.png');
+// /email-preview shows the beta invite exactly as the sender builds it: the
+// same createBetaInviteHtml, with the bundled images in place of the inline
+// parts. It used to be a hand-made lookalike, which drifted from the real
+// mail the moment the template changed.
+const ICON = require('@/assets/images/landing/app-icon.png');
+const MAILBOX = require('@/assets/emails/mailbox.png');
+const ENVELOPE = require('@/assets/emails/envelope.png');
 
 export default function EmailPreviewScreen() {
-  const { androidUrl, iosUrl } = getBetaInviteLinks();
-
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.mailShell}>
-          <View style={styles.mailChrome}>
-            <View style={styles.windowDots}>
-              <View style={[styles.windowDot, styles.dotRed]} />
-              <View style={[styles.windowDot, styles.dotYellow]} />
-              <View style={[styles.windowDot, styles.dotGreen]} />
-            </View>
-            <ThemedText type="smallBold" style={styles.chromeTitle}>
-              Beta invite email
-            </ThemedText>
-          </View>
-
-          <View style={styles.headerBar}>
-            <ThemedText type="smallBold" style={styles.label}>
-              From
-            </ThemedText>
-            <ThemedText style={styles.metaText}>{betaInviteFrom}</ThemedText>
-            <ThemedText type="smallBold" style={styles.label}>
-              Subject
-            </ThemedText>
-            <ThemedText type="subtitle" style={styles.subject}>
-              {betaInviteSubject}
-            </ThemedText>
-            <ThemedText style={styles.preview}>{betaInvitePreview}</ThemedText>
-          </View>
-
-          <View style={styles.emailBody}>
-            <View style={styles.hero}>
-              <View style={styles.brandRow}>
-                <Image source={LOGO_SOURCE} style={styles.logo} resizeMode="contain" />
-                <View>
-                  <ThemedText style={styles.wordmark}>Poplur</ThemedText>
-                  <ThemedText type="smallBold" style={styles.tagline}>
-                    Places are better live
-                  </ThemedText>
-                </View>
-              </View>
-              <ThemedText type="smallBold" style={styles.kicker}>
-                Poplur beta access
-              </ThemedText>
-              <ThemedText type="title" style={styles.heroTitle}>
-                Your beta access is ready.
-              </ThemedText>
-              <ThemedText style={styles.heroCopy}>
-                Thanks for joining early. Install Poplur once and future beta updates will
-                arrive through TestFlight or Google Play.
-              </ThemedText>
-            </View>
-
-            <View style={styles.innerBody}>
-              <ThemedText style={styles.bodyText}>Pick your platform:</ThemedText>
-              <EmailButton href={iosUrl} label="Get Poplur for iOS" tone="dark" />
-              <EmailButton href={androidUrl} label="Get Poplur for Android" tone="green" />
-
-              <View style={styles.tipBox}>
-                <ThemedText style={styles.tipText}>
-                  <ThemedText type="smallBold" style={styles.tipStrong}>
-                    Future updates:
-                  </ThemedText>{' '}
-                  once you join the beta, new iOS builds show up in TestFlight and Android
-                  updates show up through Google Play. You can reuse these links if you ever
-                  need to reinstall.
-                </ThemedText>
-              </View>
-
-              <View style={styles.tipBox}>
-                <ThemedText style={styles.tipText}>
-                  <ThemedText type="smallBold" style={styles.tipStrong}>
-                    What to try first:
-                  </ThemedText>{' '}
-                  open Poplur near a favorite place, check what people are sharing there,
-                  and post something useful for the next person who arrives.
-                </ThemedText>
-              </View>
-
-              <ThemedText style={styles.bodyTextMuted}>
-                Have feedback? Reply to this email. We are building Poplur with early users
-                and every note helps.
-              </ThemedText>
-            </View>
-
-            <View style={styles.footer}>
-              <ThemedText style={styles.footerText}>
-                You received this because you requested Poplur beta access from the website.
-              </ThemedText>
-              <ThemedText style={styles.footerText}>Poplur</ThemedText>
-            </View>
-          </View>
-        </View>
+  if (Platform.OS !== 'web') {
+    return (
+      <ScrollView contentContainerStyle={styles.native}>
+        <ThemedText type="smallBold">{betaInviteSubject}</ThemedText>
+        <ThemedText>{createBetaInviteText()}</ThemedText>
       </ScrollView>
-    </SafeAreaView>
-  );
-}
-
-function EmailButton({
-  href,
-  label,
-  tone,
-}: {
-  href: string;
-  label: string;
-  tone: 'dark' | 'green';
-}) {
-  const webProps =
-    Platform.OS === 'web'
-      ? ({ href, hrefAttrs: { target: '_blank', rel: 'noreferrer' } } as any)
-      : undefined;
-
+    );
+  }
+  const html = createBetaInviteHtml({
+    images: {
+      icon: Asset.fromModule(ICON).uri,
+      mailbox: Asset.fromModule(MAILBOX).uri,
+      envelope: Asset.fromModule(ENVELOPE).uri,
+    },
+  });
   return (
-    <Pressable
-      accessibilityRole="link"
-      style={[styles.emailButton, tone === 'green' ? styles.emailButtonGreen : styles.emailButtonDark]}
-      {...webProps}
-    >
-      <ThemedText type="smallBold" style={tone === 'green' ? styles.greenButtonText : styles.darkButtonText}>
-        {label}
-      </ThemedText>
-    </Pressable>
+    <View style={styles.page}>
+      <View style={styles.meta}>
+        <ThemedText style={styles.metaLine}><ThemedText type="smallBold">From</ThemedText> {betaInviteFrom}</ThemedText>
+        <ThemedText style={styles.metaLine}><ThemedText type="smallBold">Subject</ThemedText> {betaInviteSubject}</ThemedText>
+        <ThemedText style={styles.metaLine}><ThemedText type="smallBold">Preview</ThemedText> {betaInvitePreview}</ThemedText>
+      </View>
+      <iframe title="Beta invite email" srcDoc={html} style={{ width: '100%', maxWidth: 720, height: 1320, border: 0, borderRadius: 14, background: '#ff2d96', display: 'block', margin: '0 auto' }} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#eef1f5' },
-  content: {
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 28,
-  },
-  mailShell: {
-    width: '100%',
-    maxWidth: 760,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#dfe4ec',
-  },
-  mailChrome: {
-    minHeight: 44,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f8f9fb',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e9f0',
-  },
-  windowDots: {
-    position: 'absolute',
-    left: 16,
-    flexDirection: 'row',
-    gap: 7,
-  },
-  windowDot: { width: 10, height: 10, borderRadius: 999 },
-  dotRed: { backgroundColor: '#ff5f57' },
-  dotYellow: { backgroundColor: '#ffbd2e' },
-  dotGreen: { backgroundColor: '#28c840' },
-  chromeTitle: { color: '#505767', textAlign: 'center' },
-  headerBar: {
-    padding: 22,
-    gap: 7,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e8ebf1',
-  },
-  label: { color: '#777f90', textTransform: 'uppercase', fontSize: 12 },
-  metaText: { color: '#2b303b', marginBottom: 8 },
-  subject: { color: '#15151f' },
-  preview: { color: '#6a7280', lineHeight: 22 },
-  emailBody: {
-    backgroundColor: '#f3f5f8',
-    padding: 18,
-  },
-  hero: {
-    backgroundColor: '#18001f',
-    borderTopWidth: 8,
-    borderTopColor: '#ff0a8a',
-    borderTopLeftRadius: 8,
-    borderTopRightRadius: 8,
-    padding: 30,
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    marginBottom: 24,
-  },
-  logo: { width: 74, height: 74, borderRadius: 18 },
-  wordmark: {
-    color: '#ffffff',
-    fontSize: 30,
-    lineHeight: 34,
-    fontWeight: 900,
-  },
-  tagline: {
-    color: '#ffbfe1',
-    fontSize: 12,
-    marginTop: 3,
-    textTransform: 'uppercase',
-  },
-  kicker: {
-    color: '#9ee8d5',
-    textTransform: 'uppercase',
-    fontSize: 13,
-    marginBottom: 12,
-  },
-  heroTitle: { color: '#ffffff', maxWidth: 520, fontWeight: 900 },
-  heroCopy: {
-    color: '#f5ddea',
-    lineHeight: 26,
-    marginTop: 14,
-    maxWidth: 540,
-  },
-  innerBody: {
-    backgroundColor: '#ffffff',
-    padding: 30,
-    gap: 13,
-  },
-  bodyText: { color: '#2c303a', lineHeight: 24 },
-  bodyTextMuted: { color: '#596071', lineHeight: 24, marginTop: 6 },
-  emailButton: {
-    minHeight: 54,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  emailButtonDark: { backgroundColor: '#18001f' },
-  emailButtonGreen: { backgroundColor: '#ff0a8a' },
-  darkButtonText: { color: '#ffffff', textAlign: 'center' },
-  greenButtonText: { color: '#ffffff', textAlign: 'center' },
-  tipBox: {
-    marginTop: 8,
-    padding: 18,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e8ebf1',
-    backgroundColor: '#fafbfc',
-  },
-  tipText: { color: '#3c414d', lineHeight: 24 },
-  tipStrong: { color: '#15151f' },
-  footer: {
-    gap: 9,
-    backgroundColor: '#fff5fb',
-    borderTopWidth: 1,
-    borderTopColor: '#ffd3e9',
-    borderBottomLeftRadius: 8,
-    borderBottomRightRadius: 8,
-    padding: 22,
-  },
-  footerText: { color: '#777f90', fontSize: 13, lineHeight: 20 },
+  page: { flex: 1, minHeight: '100%', backgroundColor: '#f6f6f8', padding: 24 },
+  meta: { maxWidth: 720, width: '100%', alignSelf: 'center', marginBottom: 14, gap: 4 },
+  metaLine: { fontSize: 13, color: '#5c5c66' },
+  native: { padding: 24, gap: 12 },
 });

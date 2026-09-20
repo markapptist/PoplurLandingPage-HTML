@@ -4,7 +4,7 @@
   "functions": {
     "api/index.ts": {
       "runtime": "@vercel/node@5.1.8",
-      "includeFiles": "{dist/server/**,assets/images/logo3.png}"
+      "includeFiles": "{dist/server/**,assets/images/landing/app-icon.png,assets/emails/**}"
     }
   },
   "rewrites": [

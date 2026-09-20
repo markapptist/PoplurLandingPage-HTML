@@ -50,7 +50,9 @@ const HERO_TITLES = [
 ];
 const HERO_TITLE_MS = 4200;
 // The tour's stops, in page order, and its pace: long enough to read a chapter.
-const TOUR_STOPS = ['beta', 'live', 'features', ...SHOWCASE_STEPS.map(step => step.id)];
+// It ends where it began: once every section has had its turn the page comes
+// to rest on the sign-up, so an idle visit is left looking at "Join the beta".
+const TOUR_STOPS = ['beta', 'live', 'features', ...SHOWCASE_STEPS.map(step => step.id), 'beta'];
 const TOUR_FIRST_MS = 900;
 const TOUR_STEP_MS = 4200;
 const TOUR_CANCEL_EVENTS = ['wheel', 'touchmove', 'keydown'] as const;

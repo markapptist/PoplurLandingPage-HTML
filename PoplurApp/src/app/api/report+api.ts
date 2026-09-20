@@ -116,6 +116,8 @@ export async function POST(request: Request) {
 
   const answersIn = body.answers && typeof body.answers === 'object' ? (body.answers as Record<string, unknown>) : {};
   const answers = round.questions.map(q => ({ id: q.id, question: q.question, answer: text(answersIn[q.id], 2000) }));
+  const unanswered = round.questions.filter(q => q.required && !answers.find(a => a.id === q.id)?.answer);
+  if (unanswered.length) return Response.json({ error: `Every report needs your feedback — answer: ${unanswered.map(q => q.question).join(' ')}` }, { status: 400 });
 
   if (!process.env.RESEND_API_KEY) {
     return Response.json({ error: 'Email service is not configured. Set RESEND_API_KEY on the server.' }, { status: 503 });

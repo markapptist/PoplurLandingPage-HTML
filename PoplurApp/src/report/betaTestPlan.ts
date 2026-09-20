@@ -8,6 +8,11 @@
 // when a test or question changes so old reports stay readable.
 
 export const REPORT_VERSION = '2026-09-20';
+
+/** The Google Form that takes the reports (built by scripts/build-report-form-script.mjs →
+ *  .codex/beta-focus-group/poplur-beta-report-form.gs). Set, /report and the report
+ *  links in email send testers there; empty, the site's own form is used. */
+export const REPORT_FORM_URL = '';
 export const REPORT_POINTS = 10;
 export const REPORT_POINTS_LATE = 5;
 
@@ -27,7 +32,7 @@ export type ReportTask = {
   expect: string;
 };
 
-export type ReportQuestion = { id: string; question: string; hint?: string };
+export type ReportQuestion = { id: string; question: string; hint?: string; /** Must be answered: every report carries feedback. */ required?: boolean };
 
 export type ReportRound = {
   number: 1 | 2 | 3 | 4;
@@ -41,9 +46,9 @@ export type ReportRound = {
 };
 
 const COMMON_QUESTIONS: ReportQuestion[] = [
-  { id: 'broke', question: 'What broke, froze or looked wrong?', hint: 'Where you were in the app and what you expected instead. Screenshots go in #bugs on Discord.' },
-  { id: 'confused', question: 'What confused you, even for a second?' },
-  { id: 'change', question: 'If you could change one thing, what would it be?' },
+  { id: 'broke', question: 'What broke, froze or looked wrong?', hint: 'Where you were in the app and what you expected instead. Write “nothing” if nothing did. Screenshots go in #bugs on Discord.', required: true },
+  { id: 'confused', question: 'What confused you, even for a second?', required: true },
+  { id: 'change', question: 'If you could change one thing, what would it be?', required: true },
 ];
 
 export const REPORT_ROUNDS: ReportRound[] = [

@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import {
   PLATFORM_LABEL,
   RATINGS,
+  REPORT_FORM_URL,
   REPORT_POINTS,
   REPORT_ROUNDS,
   TASK_RESULTS,
@@ -65,6 +66,8 @@ export default function ReportScreen() {
   const openRound = (n: number) => { setRound(n); setDraft(readJson(draftKey(n), emptyDraft())); setError(null); };
 
   useEffect(() => {
+    // With a Google Form in place the page is only a stable address for it.
+    if (REPORT_FORM_URL) { window.location.replace(REPORT_FORM_URL); return; }
     // Everything stored on this device is read once the link is checked, in
     // the response callback: the page is prerendered on the server, where
     // there is no storage, and must hydrate to the same empty form first.
@@ -106,7 +109,8 @@ export default function ReportScreen() {
   const answered = current.tasks.filter(t => draft.results[t.id]?.result).length;
   const ratingsDone = RATINGS.every(r => draft.ratings[r.id] !== null);
   const identityDone = identity.name.trim().length >= 2 && (verified || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.email.trim())) && !!identity.platform && identity.device.trim().length > 0 && identity.osVersion.trim().length > 0;
-  const canSend = identityDone && answered === current.tasks.length && ratingsDone && !busy;
+  const feedbackDone = current.questions.every(q => !q.required || (draft.answers[q.id] ?? '').trim().length > 0);
+  const canSend = identityDone && answered === current.tasks.length && ratingsDone && feedbackDone && !busy;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,7 +161,7 @@ export default function ReportScreen() {
           <span className="rp-eyebrow">{filed ? 'Received' : 'Beta test report'}</span>
         </div>
 
-        {check === 'loading' && <div className="rp-state">Checking your link…</div>}
+        {check === 'loading' && <div className="rp-state">{REPORT_FORM_URL ? 'Taking you to the report form…' : 'Checking your link…'}</div>}
 
         {check !== 'loading' && !check.ok && (
           <div className="rp-state">
@@ -252,10 +256,10 @@ export default function ReportScreen() {
 
             <div className="rp-section">
               <h2>In your words</h2>
-              <p>Short is fine. Blank is fine too.</p>
+              <p>Short is fine. The first three are the part we read first, so they are required.</p>
               {current.questions.map(q => (
                 <label className="rp-q" key={q.id}>
-                  <span>{q.question}</span>
+                  <span>{q.question}{q.required ? ' *' : ''}</span>
                   {q.hint && <em>{q.hint}</em>}
                   <textarea value={draft.answers[q.id] ?? ''} onChange={e => setAnswer(q.id, e.target.value)} disabled={busy} maxLength={2000} />
                 </label>
@@ -263,7 +267,7 @@ export default function ReportScreen() {
             </div>
 
             <button type="submit" className="rp-cta" disabled={!canSend}>{busy ? 'Sending…' : `Send report ${current.number}`}</button>
-            {!canSend && !busy && <p className="rp-note">{!identityDone ? 'Fill in your name, phone, model and OS version first.' : answered < current.tasks.length ? `${current.tasks.length - answered} test${current.tasks.length - answered === 1 ? '' : 's'} still need an answer.` : !ratingsDone ? 'Give the three ratings.' : ''}</p>}
+            {!canSend && !busy && <p className="rp-note">{!identityDone ? 'Fill in your name, phone, model and OS version first.' : answered < current.tasks.length ? `${current.tasks.length - answered} test${current.tasks.length - answered === 1 ? '' : 's'} still need an answer.` : !ratingsDone ? 'Give the three ratings.' : !feedbackDone ? 'The three feedback questions marked * need an answer.' : ''}</p>}
             {error && <p className="rp-note err">{error}</p>}
           </form>
         )}

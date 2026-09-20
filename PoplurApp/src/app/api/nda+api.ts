@@ -28,6 +28,7 @@ import {
   pickBetaInviteVariant,
 } from '@/emails/betaInviteEmail';
 import { NDA_VERSION, type NdaAcceptance } from '@/nda/betaTesterNda';
+import { REPORT_FORM_URL } from '@/report/betaTestPlan';
 import { maskEmail, ndaSha256, verifyNdaToken, type NdaTokenCheck } from '@/server/betaNda.server';
 import { createReportToken } from '@/server/betaReport.server';
 import { replyToAddress, sendWithResend } from '@/server/resend.server';
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
     : null;
 
   // The tester's own report page (app/report.tsx) travels with the links.
-  const reportUrl = `${siteOrigin()}/report?t=${encodeURIComponent(createReportToken(acceptance.email))}`;
+  const reportUrl = REPORT_FORM_URL || `${siteOrigin()}/report?t=${encodeURIComponent(createReportToken(acceptance.email))}`;
   const variant = pickBetaInviteVariant();
   const links = await sendWithResend({
     to: acceptance.email,

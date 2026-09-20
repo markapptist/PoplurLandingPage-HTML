@@ -617,6 +617,36 @@ import {
 
 export const LIVE_ENGAGEMENT_FUNCTION_URL = 'https://us-central1-poplur2025.cloudfunctions.net/recordPostEngagement';
 export const LIVE_ENGAGEMENT_KINDS = new Set(['view', 'like']);
+
+/**
+ * Tester telemetry (poplur-clay-map/src/testActivity.ts) has no slot in the
+ * live ledger. A heartbeat seats the caller on the desk's tester table, the
+ * `simulation` read widens what the actor's feed discovers and starts ambient
+ * pulse writes, and `simulationFeed` is the cohort's own output. The app skips
+ * every one of those calls for a synthetic account (isSyntheticAccountUid), so
+ * a request here is an app regression: refused by name, so the log says which
+ * rule fired instead of the generic production refusal.
+ */
+export const LIVE_TEST_ACTIVITY_CONTROL_URL = 'https://us-central1-poplur2025.cloudfunctions.net/testActivityControl';
+export const LIVE_TELEMETRY_BLOCKED_REASON = 'Synthetic actors never report tester telemetry; testActivityControl has no live ledger slot.';
+
+/** Auth uids are random, so the prefix cannot collide with a person. The same
+ *  rule as SYNTHETIC_ACCOUNT_UID_PATTERN in the clay app and isSyntheticAccount
+ *  in functions/src/syntheticIdentity.ts. */
+export const SYNTHETIC_ACCOUNT_UID_PATTERN = /^(sim|synthetic)-/;
+
+export function isSyntheticAccountUid(uid) {
+  return typeof uid === 'string' && SYNTHETIC_ACCOUNT_UID_PATTERN.test(uid);
+}
+
+function isTestActivityControlTarget(value) {
+  try {
+    const target = new URL(value);
+    return `${target.origin}${target.pathname}` === LIVE_TEST_ACTIVITY_CONTROL_URL;
+  } catch {
+    return false;
+  }
+}
 const MAX_PROFILE_WRITES = 2;
 
 function isEngagementTarget(value) {
@@ -1099,6 +1129,12 @@ export function createLiveCohortNetworkPolicy(identity, runId) {
       return { allow: true, kind: 'read' };
     }
 
+    if (isTestActivityControlTarget(url)) {
+      // Name the action so the log says which reporter leaked, not only that one did.
+      const body = exactJSON(postData);
+      const action = typeof body?.data?.action === 'string' ? body.data.action.slice(0, 40) : 'unknown';
+      return { allow: false, kind: 'live-telemetry-blocked', reason: `${LIVE_TELEMETRY_BLOCKED_REASON} action=${action}`, action };
+    }
     if (isProductionFirebaseTarget(url)) {
       return { allow: false, kind: 'live-production-blocked', reason: 'Production request is outside the live cohort ledger.' };
     }

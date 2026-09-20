@@ -695,3 +695,109 @@ test('the cohort engages the owner unless the plist says cohort', () => {
   assert.equal(engagementTarget({ POPLUR_ENGAGE_TARGET: 'Cohort' }), 'owner', 'exact spelling only');
   assert.equal(engagementTarget({ POPLUR_ENGAGE_TARGET: 'students' }), 'owner', 'never a human');
 });
+
+import { existsSync, readFileSync } from 'node:fs';
+import {
+  LIVE_TEST_ACTIVITY_CONTROL_URL, LIVE_TELEMETRY_BLOCKED_REASON, SYNTHETIC_ACCOUNT_UID_PATTERN, isSyntheticAccountUid,
+} from './synthetic-live-actions.mjs';
+
+test('tester telemetry has no live ledger slot: every app call to testActivityControl is refused by name', () => {
+  const policy = bound();
+  const call = (data, headers = { authorization: 'Bearer id-token-1' }) => policy.inspect({
+    method: 'POST', url: LIVE_TEST_ACTIVITY_CONTROL_URL, postData: JSON.stringify({ data }), headers,
+  });
+  // Every action poplur-clay-map/src/testActivity.ts can send, as the actor
+  // itself, with its own bound token. None of them is harmless enough to
+  // admit: the desk must never hear from the cohort it drives (19 Sep: 1,142
+  // of 2,000 log lines were this one refusal, unnamed).
+  const appActions = [
+    { action: 'getConsent' },
+    { action: 'setConsent', enabled: true },
+    { action: 'simulation' },
+    { action: 'simulation', enabled: true },
+    { action: 'simulationFeed', afterEventAtMs: 0 },
+    { action: 'heartbeat', screen: 'feed', status: 'foreground', platform: 'browser', appVersion: '0.1.0' },
+    { action: 'post', postKey: POST, place: 'Toronto region', radiusKm: 5 },
+    { action: 'radius', postKey: POST, radiusKm: 5, deltaKm: 1, signal: 'like' },
+    { action: 'simulationPulse', actor: 'sim-food-001', kind: 'like', place: 'Toronto region', radiusKm: 5 },
+    { action: 'dashboard' },
+  ];
+  for (const data of appActions) {
+    const verdict = call(data);
+    assert.equal(verdict.allow, false, data.action);
+    assert.equal(verdict.kind, 'live-telemetry-blocked', data.action);
+    assert.equal(verdict.reason, `${LIVE_TELEMETRY_BLOCKED_REASON} action=${data.action}`, data.action);
+    assert.equal(verdict.action, data.action);
+  }
+  // Not a matter of who asks or how: a stolen token, an empty body, a GET
+  // with a query string, all get the same named refusal.
+  assert.equal(call({ action: 'getConsent' }, { authorization: 'Bearer stolen' }).kind, 'live-telemetry-blocked');
+  const bodyless = policy.inspect({ method: 'POST', url: LIVE_TEST_ACTIVITY_CONTROL_URL, postData: '' });
+  assert.equal(bodyless.kind, 'live-telemetry-blocked');
+  assert.equal(bodyless.action, 'unknown');
+  assert.equal(policy.inspect({ method: 'GET', url: `${LIVE_TEST_ACTIVITY_CONTROL_URL}?action=dashboard` }).kind, 'live-telemetry-blocked');
+  // The rule is exactly that endpoint. Any other production function still
+  // falls to the generic ledger refusal, and the engagement slot is untouched.
+  const other = policy.inspect({
+    method: 'POST', url: 'https://us-central1-poplur2025.cloudfunctions.net/testSessionIngest',
+    postData: '{}', headers: { authorization: 'Bearer id-token-1' },
+  });
+  assert.equal(other.allow, false);
+  assert.equal(other.kind, 'live-production-blocked');
+  assert.equal(policy.inspect({
+    method: 'POST', url: LIVE_ENGAGEMENT_FUNCTION_URL,
+    postData: JSON.stringify({ data: { postId: 'post-0123456789abcdef', eventId: 'evt_view_000001', kind: 'view' } }),
+    headers: { authorization: 'Bearer id-token-1' },
+  }).allow, true);
+  // A refusal spends nothing from the actor's budgets.
+  assert.equal(policy.state.likesGiven, 0);
+  assert.equal(policy.state.postIds.size, 0);
+  assert.equal(policy.state.profileWrites, 0);
+});
+
+test('every live actor is a synthetic account by uid, the rule the app keys telemetry off', () => {
+  assert.equal(String(SYNTHETIC_ACCOUNT_UID_PATTERN), '/^(sim|synthetic)-/');
+  for (const identity of liveActorIdentities()) {
+    assert.equal(identity.uid, identity.actorId, `${identity.actorId} uid is pinned to its actor id`);
+    assert.equal(isSyntheticAccountUid(identity.uid), true, identity.actorId);
+  }
+  assert.equal(isSyntheticAccountUid('synthetic-conquer-blue'), true, 'a Radius Lab poster');
+  assert.equal(isSyntheticAccountUid('LiEG6SNtKEZN6eEGeybf0afZnHm1'), false, 'a Firebase uid');
+  assert.equal(isSyntheticAccountUid('simone-2024'), false, 'the prefix needs its hyphen');
+  assert.equal(isSyntheticAccountUid(''), false);
+  assert.equal(isSyntheticAccountUid(null), false);
+  assert.equal(isSyntheticAccountUid(undefined), false);
+});
+
+test('the clay app keys telemetry off the same synthetic-uid rule and never reports as a cohort actor', () => {
+  // The live runner drives the clay app from the sibling checkout (5173), so
+  // that checkout is the app under test here, not a copy of it.
+  const appSource = new URL('../../../poplur-clay-map/src/testActivity.ts', import.meta.url);
+  assert.ok(existsSync(appSource), `poplur-clay-map is expected beside PoplurLandingPage-HTML: ${appSource.pathname}`);
+  const source = readFileSync(appSource, 'utf8');
+  const fnBody = name => {
+    const start = source.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `${name} exists in testActivity.ts`);
+    return source.slice(start, source.indexOf('\n}\n', start));
+  };
+  // One rule, byte-for-byte the runner's.
+  assert.match(source, /export const SYNTHETIC_ACCOUNT_UID_PATTERN = \/\^\(sim\|synthetic\)-\/\n/);
+  assert.match(fnBody('isSyntheticAccountUid'), /SYNTHETIC_ACCOUNT_UID_PATTERN\.test\(uid\)/);
+  // telemetryUid() is the one gate: null for a synthetic account.
+  assert.match(fnBody('telemetryUid'), /!isSyntheticAccountUid\(uid\) \? uid : null/);
+  // Every automatic reporter and every sync the reporter hook runs sits
+  // behind it; consent itself reads as off for the cohort.
+  for (const name of ['reportTestActivity', 'reportTestPost', 'reportTestRadius', 'reportSimulationPulse']) {
+    assert.match(fnBody(name), /^\s*if \(!telemetryUid\(\)/m, `${name} is gated`);
+  }
+  assert.match(fnBody('readConsent'), /const uid = telemetryUid\(\)/);
+  assert.match(fnBody('loadTestActivityConsent'), /const uid = telemetryUid\(\)/);
+  assert.match(fnBody('loadTestSimulation'), /if \(!telemetryUid\(\)\) return isLiveSimulationEnabled\(\)/);
+  assert.match(fnBody('pollSimulationFeed'), /!telemetryUid\(\) \|\| simulationFeedInFlight\) return/);
+  const hook = fnBody('useTestActivityReporter');
+  assert.match(hook, /const syncConsent = \(\) => \{\s+if \(!telemetryUid\(\)\) \{/);
+  assert.match(hook, /const syncSimulation = \(\) => \{\s+if \(!telemetryUid\(\) \|\| document\.hidden\) return/);
+  assert.match(hook, /document\.hidden \|\| !telemetryUid\(\)\) return\s+void pollSimulationFeed\(\)/);
+  // No reporter is left on the old "any signed-in account" gate.
+  assert.doesNotMatch(source, /!accountSnapshot\(\)\.authenticated/);
+});

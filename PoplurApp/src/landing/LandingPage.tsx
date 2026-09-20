@@ -45,6 +45,7 @@ const HERO_TITLES = [
   'Inside a radius, you are in the feed.',
   'See what is popping around you.',
   'One live pop per place.',
+  'AI tells you where to post.',
   'Found without followers.',
 ];
 const HERO_TITLE_MS = 4200;
@@ -376,7 +377,7 @@ export default function LandingPage() {
         </a>
         <div className="pl-nav-links">
           <a href="#live" className={current === 'live' ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo('live'); }}>Live</a>
-          {SHOWCASE_STEPS.slice(0, 4).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
+          {SHOWCASE_STEPS.slice(0, 5).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
         <div className="pl-nav-tools">
           <RadioBadge />

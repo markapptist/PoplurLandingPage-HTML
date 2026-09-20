@@ -318,6 +318,9 @@
 .pl-signup-top .wrap { width: min(1120px, calc(100% - 48px)); }
 
 /* the hero's TV spot (heroSpot.ts): full-bleed under the headline, darkened at the foot so the copy reads */
+/* A dark ground under the spot, so its white words and the toolbar read even in the seconds before the poster or
+   the first frame arrives — on a light theme the backdrop alone would sit near-white behind them. */
+.pl-hero.has-spot { background: #14080f; }
 .pl-hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .pl-hero.has-spot::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .72) 0%, rgba(0, 0, 0, .28) 42%, transparent 72%); pointer-events: none; }
 .pl-hero.has-spot .pl-hero-lockup { z-index: 1; }
@@ -360,10 +363,13 @@
   filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .5)) drop-shadow(0 10px 24px rgba(0, 0, 0, .5)); }
 .pl-hero.has-spot .pl-sound { color: #fff; }
 
-/* ── over the video the toolbar has no background: only its controls, in white, until the page scrolls on ── */
-.pl-nav.is-over-video::before { opacity: 0; }
-.pl-nav::before { transition: opacity .35s ease; }
-.pl-nav-pill { transition: background .35s ease, border-color .35s ease, box-shadow .35s ease; }
-.pl-nav.is-over-video .pl-nav-pill, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-pill { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; color: #fff; }
-.pl-nav.is-over-video .pl-nav-links a { text-shadow: 0 1px 2px rgba(0, 0, 0, .55), 0 4px 14px rgba(0, 0, 0, .35); }
+/* ── the toolbar has no background, anywhere: only its controls. Its ink follows the page (white on the coloured
+   themes, the theme's ink on the light ones) with a shadow to lift it off the dots, and over the video it is white
+   with a dark shadow whatever theme rolled, since the footage is the ground there. ── */
+.pl-nav::before { display: none; }
+.pl-nav-pill, .pl[data-ink="dark"] .pl-nav-pill { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; color: var(--ink); }
+.pl-nav-links a { text-shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 4px 14px rgba(0, 0, 0, .3); }
+.pl[data-ink="dark"] .pl-nav-links a { text-shadow: 0 1px 0 rgba(255, 255, 255, .7); }
+.pl-nav.is-over-video .pl-nav-pill, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-pill { color: #fff; }
+.pl-nav.is-over-video .pl-nav-links a, .pl[data-ink="dark"] .pl-nav.is-over-video .pl-nav-links a { text-shadow: 0 1px 2px rgba(0, 0, 0, .55), 0 4px 14px rgba(0, 0, 0, .35); }
 .pl[data-ink="dark"] .pl-nav.is-over-video .pl-badge { background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .4); color: #fff; }

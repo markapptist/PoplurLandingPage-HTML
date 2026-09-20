@@ -61,22 +61,27 @@ export const SHOWCASE_STEPS: ShowcaseStep[] = [
     body: 'Free posting is where you are. Post again within 5 km of your own pop and it replaces it, carrying its reach forward — the map stays honest about who was actually there.',
     fine: 'Posting anywhere else is a placement, and placements are paid.',
     model: '/models/landing/poplur_pin_lite.glb', object: 'The map pin' },
+  { id: 'ai', nav: 'AI', eyebrow: 'Where to post, recommended by AI', title: 'Post where it will travel.',
+    body: 'Every pop leaves a record of how far it spread, from where, at what time, as what kind of post. Poplur\u2019s recommendation model reads that data \u2014 how similar content travelled in each region \u2014 and tells you where and when your next pop will reach the most people.',
+    fine: 'The recommendation comes from the radius itself: what grew where, and why. The same models help people make the post.',
+    model: '/models/landing/poplur_airplane_lite.glb', object: 'The Poplur airplane' },
   { id: 'types', nav: 'Post types', eyebrow: 'More than photos', title: 'Photos, carousels, video, music, podcasts.',
-    body: 'Games and apps are designed into the same post pipeline. AI tools help people make posts and recommend where to post, by comparing how similar content has spread in different regions.',
+    body: 'Games and apps are designed into the same post pipeline, and AI tools help people make the post itself.',
     model: '/models/landing/poplur_camera_kodak.glb', object: 'The camera' },
   { id: 'business', nav: 'Business', eyebrow: 'For businesses', title: 'Reach the people who can walk in.',
     body: 'A café posts the same way anyone does; its pop reaches the people nearby. Businesses pay to extend a radius or to place a pop somewhere they are not.',
     model: '/models/landing/poplur_cube_shopping_bag.glb', object: 'The Store bag' },
 ];
 
-// One pose per step in SHOWCASE_STEPS order: right, left, above, below, left,
-// right — six arrangements, each object starting from its own turn, so the
-// walk down the page never repeats a picture.
+// One pose per step in SHOWCASE_STEPS order: right, left, above, below,
+// right, left, right — seven arrangements, each object starting from its own
+// turn, so the walk down the page never repeats a picture.
 export const POSES: readonly Pose[] = [
   { side: 'right',  yaw: -28, pitch: 0.16 },
   { side: 'left',   yaw: 24,  pitch: 0.2 },
   { side: 'top',    yaw: -12, pitch: 0.26 },
   { side: 'bottom', yaw: 34,  pitch: 0.12 },
+  { side: 'right',  yaw: -22, pitch: 0.2 },
   { side: 'left',   yaw: -40, pitch: 0.18 },
   { side: 'right',  yaw: 18,  pitch: 0.22 },
 ];

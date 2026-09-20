@@ -86,9 +86,13 @@ function scrollTo(id: string) {
 // Sound: browsers autoplay video only when it is muted, so the spot starts
 // silent and is unmuted by the first gesture anywhere on the page — the same
 // click, tap or key that unlocks the pops — and by the chip on the hero,
-// which also mutes it again. It plays once; when it ends, `onSpotEnded` lets
-// the page take over (the tour below).
+// which also mutes it again. It plays through once on arrival; when that
+// first run ends, `onSpotEnded` lets the page take over (the tour below).
+// After that the hero is hover-to-play: the pointer entering the hero plays
+// the spot (from the top if it had finished), leaving pauses it, and a tap
+// plays it where there is no pointer.
 function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
+  const firstRunDone = useRef(false);
   const ref = useRef<HTMLElement | null>(null);
   const phoneRef = useRef<HTMLDivElement | null>(null);
   const copyRef = useRef<HTMLDivElement | null>(null);
@@ -121,11 +125,29 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
     const v = videoRef.current; if (!v) return;
     v.muted = !v.muted; v.volume = 1; setSound(!v.muted);
   };
+  const playSpot = () => {
+    const v = videoRef.current; if (!v) return;
+    if (v.ended) v.currentTime = 0;
+    if (!v.paused) return;
+    // An unmuted play() needs a prior gesture on the page; without one the
+    // browser rejects it, and the spot plays silent rather than not at all.
+    v.play().catch(() => { v.muted = true; setSound(false); v.play().catch(() => { /* not now */ }); });
+  };
+  const pauseSpot = () => {
+    const v = videoRef.current; if (!v || !firstRunDone.current) return;
+    v.pause();
+  };
+  const ended = () => {
+    if (firstRunDone.current) return;
+    firstRunDone.current = true;
+    onSpotEnded();
+  };
   const spot = HERO_SPOT === null ? null : Asset.fromModule(HERO_SPOT).uri;
   const poster = HERO_SPOT_POSTER === null ? undefined : Asset.fromModule(HERO_SPOT_POSTER).uri;
-  return <header ref={ref} className={`pl-hero${spot ? ' has-spot' : ''}`} id="top">
+  return <header ref={ref} className={`pl-hero${spot ? ' has-spot' : ''}`} id="top"
+    onMouseEnter={spot ? playSpot : undefined} onMouseLeave={spot ? pauseSpot : undefined}>
     {spot
-      ? <video ref={videoRef} className="pl-hero-video" src={spot} poster={poster} autoPlay muted playsInline preload="auto" aria-label="People using Poplur" onEnded={onSpotEnded} />
+      ? <video ref={videoRef} className="pl-hero-video" src={spot} poster={poster} autoPlay muted playsInline preload="auto" aria-label="People using Poplur" onEnded={ended} onClick={playSpot} />
       : <div className="pl-hero-stage">
         <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
       </div>}

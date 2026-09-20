@@ -281,22 +281,16 @@ function shell(bg: string, subject: string, preview: string, body: string): stri
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
     <title>${subject}</title>
-    <style>
-      /* Gmail on iOS repaints colours for its dark mode: on the owner's phone
-         the white ink on the pink came out near-black and the postcard's
-         white card went dark. Gmail prefixes the body with a <u>, so these
-         two rules reach only that app; there, the pair of blends cancels
-         its repaint. Everywhere else a screen or difference blend over black
-         changes nothing. (Rémi Parmentier's trick.) */
-      u + .body .gmail-blend-screen { background: #000000; mix-blend-mode: screen; }
-      u + .body .gmail-blend-difference { background: #000000; mix-blend-mode: difference; }
-    </style>
   </head>
-  <body class="body" style="margin:0;padding:0;background:${bg};font-family:${FONT};-webkit-font-smoothing:antialiased;">
-    <div class="gmail-blend-screen"><div class="gmail-blend-difference">
+  <!-- Gmail on the phone repaints light mail for its dark mode: light
+       backgrounds darken, dark text lightens, pink stays pink. That is
+       legible and it cannot be switched off from inside the mail; the
+       night design, dark to begin with, goes through untouched. The
+       blend-mode trick that tried to cancel the repaint inverted the
+       pictures instead — green clay — and is gone. -->
+  <body style="margin:0;padding:0;background:${bg};font-family:${FONT};-webkit-font-smoothing:antialiased;">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:${bg};">${preview}</div>
     ${body}
-    </div></div>
   </body>
 </html>`;
 }

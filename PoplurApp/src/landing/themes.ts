@@ -30,17 +30,20 @@ export const LANDING_THEMES: readonly LandingTheme[] = [
   { id: 'glamPink', name: 'Glam Pink', accent: '#ff2d9b', accent2: '#49ddf7', bg: '#ff2d9b', ink: '#ffffff', background: require('@/assets/images/landing/themes/glamPink.jpg'), thumb: require('@/assets/images/landing/themes/thumbs/glamPink.jpg') },
 ]
 
+/** Remembers only which theme the last visit wore, so the next one is different. */
 export const LANDING_THEME_STORAGE_KEY = 'poplur.landing.theme'
 
-export function readLandingThemeId(): LandingThemeId {
-  try {
-    const stored = window.localStorage.getItem(LANDING_THEME_STORAGE_KEY)
-    return LANDING_THEMES.some(t => t.id === stored) ? (stored as LandingThemeId) : 'default'
-  } catch { return 'default' }
-}
-
-export function saveLandingThemeId(id: LandingThemeId): void {
-  try { window.localStorage.setItem(LANDING_THEME_STORAGE_KEY, id) } catch { /* private mode */ }
+/** A theme at random for this visit — never the one the previous visit
+ *  showed, so a refresh always changes the page (owner's ask, 19 Sep). The
+ *  colour badge still lets a visitor pick one for the rest of the visit; that
+ *  choice is not kept, the next load rolls again. */
+export function randomLandingThemeId(): LandingThemeId {
+  let last: string | null = null
+  try { last = window.localStorage.getItem(LANDING_THEME_STORAGE_KEY) } catch { /* private mode */ }
+  const pool = LANDING_THEMES.filter(t => t.id !== last)
+  const pick = pool[Math.floor(Math.random() * pool.length)] ?? LANDING_THEMES[0]
+  try { window.localStorage.setItem(LANDING_THEME_STORAGE_KEY, pick.id) } catch { /* private mode */ }
+  return pick.id
 }
 
 export const themeById = (id: LandingThemeId): LandingTheme => LANDING_THEMES.find(t => t.id === id) ?? LANDING_THEMES[0]

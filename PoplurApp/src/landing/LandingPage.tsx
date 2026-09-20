@@ -18,7 +18,7 @@ import Backdrop from './Backdrop';
 import ColourBadge from './ColourBadge';
 import DottedWorld from './DottedWorld';
 import RadioBadge from './RadioBadge';
-import { readLandingThemeId, saveLandingThemeId, themeById, type LandingThemeId } from './themes';
+import { randomLandingThemeId, themeById, type LandingThemeId } from './themes';
 
 // Web-only product page: white, sleek, minimal. Plain DOM on purpose — the
 // native app never renders this route (see app/index.tsx).
@@ -268,9 +268,12 @@ function Signup() {
 export default function LandingPage() {
   const { scorecard, state } = useBetaScorecard();
   const [themeId, setThemeId] = useState<LandingThemeId>('default');
-  useEffect(() => { setThemeId(readLandingThemeId()); }, []);
+  // The page wears a different theme on every load (themes.ts): the server
+  // renders the default, the client rolls on mount. A pick from the colour
+  // badge lasts the visit only.
+  useEffect(() => { setThemeId(randomLandingThemeId()); }, []);
   const theme = themeById(themeId);
-  const changeTheme = (id: LandingThemeId) => { setThemeId(id); saveLandingThemeId(id); };
+  const changeTheme = (id: LandingThemeId) => setThemeId(id);
   const inkMode = /^#f/i.test(theme.ink) ? 'light' : 'dark';
   // The chapter under the reader — one answer (spy.ts) that both the nav's
   // highlight and the scroll pop use. The pop plays on every change after the

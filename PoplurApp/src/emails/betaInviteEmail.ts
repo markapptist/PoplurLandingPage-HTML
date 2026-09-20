@@ -22,6 +22,7 @@
 // max-width) so they stack on a phone instead of squeezing the copy.
 
 import { NDA_SECTIONS, NDA_SUBTITLE, NDA_SUMMARY, NDA_TITLE, NDA_PARTIES, type NdaAcceptance } from '@/nda/betaTesterNda';
+import { PLATFORM_LABEL, TASK_RESULTS, RATINGS, roundByNumber, type BetaReport } from '@/report/betaTestPlan';
 
 export const betaInviteFrom = 'Poplur <hello@poplur.ca>';
 
@@ -90,6 +91,8 @@ type BetaInviteEmailOptions = {
   stage?: BetaInviteStage;
   /** The signing link; required for the `nda` stage. */
   ndaUrl?: string;
+  /** The tester's report page (app/report.tsx); shown in the `links` stage when given. */
+  reportUrl?: string;
   /** A src per image. Missing keys fall back to the hosted copies on the site;
    *  an empty string leaves that image out. */
   images?: Partial<Record<BetaInviteImageKey, string>>;
@@ -142,7 +145,7 @@ type Content = {
   foot: string;
 };
 
-function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl: string }, ndaUrl: string): Content {
+function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl: string }, ndaUrl: string, reportUrl = ''): Content {
   const tags = ['iOS · TestFlight', 'Android · Google Play', 'Toronto first'];
   const foot = 'You asked for beta access at';
   if (stage === 'nda') {
@@ -172,6 +175,7 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
     notes: [
       { strong: 'Future updates.', body: 'New iPhone builds land in TestFlight and Android updates through Google Play. Keep this email: the links work again if you ever need to reinstall.' },
       { strong: 'What to try first.', body: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Every pop starts with a 5&nbsp;km radius and spreads as people engage.' },
+      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the prize board, five minutes apiece. The first is due Sun 4 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
     ],
     reply: 'Have feedback? Reply to this email. Every note shapes the beta.',
     foot,
@@ -207,6 +211,7 @@ export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
     '',
     'What to try first: open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Every pop starts with a 5 km radius and spreads as people engage.',
     '',
+    ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the prize board. The first is due Sun 4 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
     'Have feedback? Reply to this email. Every note shapes the beta.',
     '',
     'Poplur · Toronto beta',
@@ -483,7 +488,7 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
   const variant = options.variant ?? pickBetaInviteVariant();
   const stage = options.stage ?? 'links';
   if (stage === 'nda' && !options.ndaUrl) throw new Error('The nda stage needs ndaUrl.');
-  const content = contentFor(stage, getBetaInviteLinks(options), options.ndaUrl ?? '');
+  const content = contentFor(stage, getBetaInviteLinks(options), options.ndaUrl ?? '', options.reportUrl ?? '');
   return DESIGNS[variant]({ src: getBetaInviteImageSources(options), content, subject: BETA_INVITE_SUBJECTS[stage], preview: BETA_INVITE_PREVIEWS[stage] });
 }
 
@@ -563,6 +568,90 @@ export function createNdaReceiptText(acceptance: NdaAcceptance, { forPoplur = fa
     `Document hash (SHA-256): ${acceptance.ndaSha256}`,
     ...(forPoplur ? [`From address: ${acceptance.ip ?? 'unknown'}`, `Browser: ${acceptance.userAgent ?? 'unknown'}`] : []),
     '',
+  ];
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------- the test report receipt
+
+export function reportReceiptSubject(report: BetaReport, forPoplur = false): string {
+  const worked = report.results.filter(r => r.result === 'worked').length;
+  return forPoplur
+    ? `Report ${report.round} · ${report.name} · ${PLATFORM_LABEL[report.platform]} · ${worked}/${report.results.length} worked${report.late ? ' · late' : ''}${report.verified ? '' : ' · unverified'}`
+    : `Report ${report.round} received — thank you`;
+}
+
+const resultLabel = (value: string) => TASK_RESULTS.find(r => r.value === value)?.label ?? value;
+const resultColor = (value: string) => value === 'worked' ? '#0f8a4e' : value === 'failed' ? '#c8102e' : INK_3;
+
+/** The receipt for a filed test report: what was answered, then the points.
+ *  Poplur's copy (`forPoplur`) adds the address and browser it came from; the
+ *  API attaches the JSON alongside it. */
+export function createReportReceiptHtml(report: BetaReport, { forPoplur = false, images }: { forPoplur?: boolean; images?: Partial<Record<BetaInviteImageKey, string>> } = {}) {
+  const src = getBetaInviteImageSources({ images });
+  const round = roundByNumber(report.round);
+  const row = (k: string, v: string) => `<tr><td style="padding:6px 14px 6px 0;font-family:${FONT};font-size:13px;color:${INK_3};white-space:nowrap;vertical-align:top;">${k}</td><td style="padding:6px 0;font-family:${FONT};font-size:14px;color:${INK};vertical-align:top;word-break:break-word;">${v}</td></tr>`;
+  const rows = [
+    row('Report', `${report.round} · ${esc(report.roundName)} (due ${esc(round?.dueLabel ?? report.dueAt)})`),
+    row('From', `${esc(report.name)} · ${esc(report.email)}${report.discord ? ` · Discord ${esc(report.discord)}` : ''}`),
+    row('Phone', `${PLATFORM_LABEL[report.platform]} · ${esc(report.device)} · ${esc(report.osVersion)}`),
+    row('Received', `${esc(torontoTime(report.receivedAt))} (Toronto)${report.late ? ' · <b style="color:#c8102e;">late</b>' : ''}`),
+    row('Points', `${report.points} pending on the board${report.verified ? '' : ' · <b>unverified link</b> (filed without a signed link; match the email to an NDA)'}`),
+    forPoplur ? row('From address', esc(report.ip ?? 'unknown')) : '',
+    forPoplur ? row('Browser', esc(report.userAgent ?? 'unknown')) : '',
+  ].join('');
+  const tasks = report.results.map(r => `
+    <tr>
+      <td style="padding:8px 12px 8px 0;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${resultColor(r.result)};white-space:nowrap;vertical-align:top;">${esc(resultLabel(r.result))}</td>
+      <td style="padding:8px 0;font-family:${FONT};font-size:14px;color:${INK};vertical-align:top;">${esc(r.title)}${r.note ? `<div style="margin-top:3px;font-size:13px;color:${INK_2};">${esc(r.note)}</div>` : ''}</td>
+    </tr>`).join('');
+  const ratings = RATINGS.map(r => `${esc(r.label)}: <b>${report.ratings[r.id] ?? '—'}</b>/5`).join(' &nbsp;·&nbsp; ');
+  const answers = report.answers.filter(a => a.answer.trim()).map(a => `<p style="margin:0 0 10px;font-family:${FONT};font-size:14px;line-height:1.55;color:${INK_2};"><b style="color:${INK};">${esc(a.question)}</b><br>${esc(a.answer)}</p>`).join('');
+  const lead = forPoplur
+    ? `${esc(report.name)} filed test report ${report.round} (${esc(report.roundName)}) on poplur.ca. The JSON is attached.`
+    : `Thank you — report ${report.round} is in. ${report.late ? `It arrived after ${esc(round?.dueLabel ?? 'the due day')}, so it counts for ${report.points} points.` : `${report.points} points go on the board with Monday's standings.`} Here is what you sent.`;
+  return shell('#f6f6f8', reportReceiptSubject(report, forPoplur), lead, `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6f8;">
+      <tr>
+        <td align="center" style="padding:32px 16px 40px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid rgba(17,17,20,0.08);border-radius:22px;">
+            <tr>
+              <td style="padding:24px 32px 0;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+                  <td valign="middle">${brand(src.icon, 34, INK, 19)}</td>
+                  <td align="right" valign="middle" style="font-family:${FONT};font-size:12px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${PINK};">${forPoplur ? 'Report · for Poplur' : 'Report received'}</td>
+                </tr></table>
+              </td>
+            </tr>
+            <tr><td style="padding:26px 32px 0;"><h1 style="margin:0;font-family:${FONT};font-size:28px;line-height:1.1;font-weight:700;letter-spacing:-0.03em;color:${INK};">Test report ${report.round}: ${esc(report.roundName)}</h1></td></tr>
+            <tr><td style="padding:16px 32px 0;font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${lead}</td></tr>
+            <tr><td style="padding:18px 32px 0;"><table role="presentation" cellspacing="0" cellpadding="0" style="border-top:1px solid rgba(17,17,20,0.08);border-bottom:1px solid rgba(17,17,20,0.08);padding:10px 0;width:100%;">${rows}</table></td></tr>
+            <tr><td style="padding:22px 32px 0;"><h2 style="margin:0 0 6px;font-family:${FONT};font-size:16px;font-weight:700;color:${INK};">The tests</h2><table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;">${tasks}</table></td></tr>
+            <tr><td style="padding:22px 32px 0;font-family:${FONT};font-size:14px;color:${INK_2};"><b style="color:${INK};">Ratings.</b> ${ratings}</td></tr>
+            <tr><td style="padding:18px 32px 30px;">${answers || `<p style="margin:0;font-family:${FONT};font-size:14px;color:${INK_3};">No written answers.</p>`}</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>`);
+}
+
+export function createReportReceiptText(report: BetaReport, { forPoplur = false }: { forPoplur?: boolean } = {}) {
+  const round = roundByNumber(report.round);
+  const lines = [
+    forPoplur ? `${report.name} filed test report ${report.round} (${report.roundName}) on poplur.ca. The JSON is attached.` : `Thank you — report ${report.round} (${report.roundName}) is in. ${report.points} points pending on the board${report.late ? ' (late)' : ''}.`,
+    '',
+    `From: ${report.name} · ${report.email}${report.discord ? ` · Discord ${report.discord}` : ''}`,
+    `Phone: ${PLATFORM_LABEL[report.platform]} · ${report.device} · ${report.osVersion}`,
+    `Received: ${report.receivedAt}${report.late ? ' (late)' : ''} · due ${round?.dueLabel ?? report.dueAt}`,
+    `Verified link: ${report.verified ? 'yes' : 'no'}`,
+    ...(forPoplur ? [`From address: ${report.ip ?? 'unknown'}`, `Browser: ${report.userAgent ?? 'unknown'}`] : []),
+    '',
+    'The tests:',
+    ...report.results.map(r => `- [${resultLabel(r.result)}] ${r.title}${r.note ? ` — ${r.note}` : ''}`),
+    '',
+    `Ratings: ${RATINGS.map(r => `${r.label} ${report.ratings[r.id] ?? '—'}/5`).join(' · ')}`,
+    '',
+    ...report.answers.filter(a => a.answer.trim()).flatMap(a => [a.question, a.answer, '']),
   ];
   return lines.join('\n');
 }

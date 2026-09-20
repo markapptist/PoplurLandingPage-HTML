@@ -17,7 +17,7 @@ const ICON = require('@/assets/images/landing/app-icon.png');
 const WORDMARK = require('@/assets/images/landing/wordmark.png');
 
 type Check = { ok: true; email: string; version: string } | { ok: false; error: string };
-type Signed = { signedAt: string; links: { iosUrl: string; androidUrl: string }; emailed: { receipt: boolean; links: boolean; record: boolean } };
+type Signed = { signedAt: string; links: { iosUrl: string; androidUrl: string }; reportUrl?: string; emailed: { receipt: boolean; links: boolean; record: boolean } };
 
 export default function NdaScreen() {
   const params = useLocalSearchParams<{ t?: string }>();
@@ -53,7 +53,7 @@ export default function NdaScreen() {
       const r = await fetch('/api/nda', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: token, name, discord, agree, adult }) });
       const body = (await r.json().catch(() => ({}))) as Partial<Signed> & { ok?: boolean; error?: string };
       if (!r.ok || !body.ok || !body.links || !body.signedAt) throw new Error(body.error || 'Could not record your signature. Try again.');
-      setSigned({ signedAt: body.signedAt, links: body.links, emailed: body.emailed ?? { receipt: false, links: false, record: false } });
+      setSigned({ signedAt: body.signedAt, links: body.links, reportUrl: body.reportUrl, emailed: body.emailed ?? { receipt: false, links: false, record: false } });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not record your signature. Try again.');
@@ -89,6 +89,11 @@ export default function NdaScreen() {
               <a className="nda-link ios" href={signed.links.iosUrl}><img src="/emails/apple-white.png" alt="" />Get Poplur for iPhone</a>
               <a className="nda-link android" href={signed.links.androidUrl}><img src="/emails/android-white.png" alt="" />Get Poplur for Android</a>
             </div>
+            {signed.reportUrl && (
+              <div className="nda-for" style={{ marginTop: 18 }}>
+                <b>Your test reports.</b> Four short reports over the beta, ten points each on the prize board. The first is due Sun 4 Oct. <a href={signed.reportUrl} style={{ color: 'inherit', fontWeight: 600 }}>Open your report page</a> — it is also in your links email.
+              </div>
+            )}
             <p className="nda-note">Signed {new Date(signed.signedAt).toLocaleString()} · agreement version {check.version}.</p>
           </>
         )}

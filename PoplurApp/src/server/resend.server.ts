@@ -2,12 +2,20 @@
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 
+export type ResendAttachment = {
+  filename: string;
+  /** The file's bytes, base64. */
+  content: string;
+  contentType?: string;
+};
+
 export type ResendMessage = {
   to: string;
   subject: string;
   html: string;
   text: string;
   replyTo?: string | null;
+  attachments?: ResendAttachment[];
 };
 
 export type ResendResult = { ok: true; id: string | null } | { ok: false; error: string };
@@ -26,6 +34,9 @@ export async function sendWithResend(message: ResendMessage): Promise<ResendResu
       subject: message.subject,
       html: message.html,
       text: message.text,
+      ...(message.attachments && message.attachments.length
+        ? { attachments: message.attachments.map(a => ({ filename: a.filename, content: a.content, ...(a.contentType ? { content_type: a.contentType } : {}) })) }
+        : {}),
     }),
   });
   if (!response.ok) {

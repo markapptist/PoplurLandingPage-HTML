@@ -29,7 +29,9 @@ import {
 } from '@/emails/betaInviteEmail';
 import { NDA_VERSION, type NdaAcceptance } from '@/nda/betaTesterNda';
 import { maskEmail, ndaSha256, verifyNdaToken, type NdaTokenCheck } from '@/server/betaNda.server';
+import { createReportToken } from '@/server/betaReport.server';
 import { replyToAddress, sendWithResend } from '@/server/resend.server';
+import { siteOrigin } from '@/server/site.server';
 
 const REASONS: Record<Exclude<NdaTokenCheck, { ok: true }>['reason'], string> = {
   missing: 'This page needs the signing link from your invite email.',
@@ -105,13 +107,15 @@ export async function POST(request: Request) {
       })
     : null;
 
+  // The tester's own report page (app/report.tsx) travels with the links.
+  const reportUrl = `${siteOrigin()}/report?t=${encodeURIComponent(createReportToken(acceptance.email))}`;
   const variant = pickBetaInviteVariant();
   const links = await sendWithResend({
     to: acceptance.email,
     replyTo,
     subject: BETA_INVITE_SUBJECTS.links,
-    html: createBetaInviteHtml({ images, variant, stage: 'links' }),
-    text: createBetaInviteText({ stage: 'links' }),
+    html: createBetaInviteHtml({ images, variant, stage: 'links', reportUrl }),
+    text: createBetaInviteText({ stage: 'links', reportUrl }),
   });
 
   return Response.json({
@@ -119,6 +123,7 @@ export async function POST(request: Request) {
     signedAt: acceptance.signedAt,
     version: acceptance.ndaVersion,
     links: getBetaInviteLinks(),
+    reportUrl,
     emailed: { receipt: receipt.ok, links: links.ok, record: record ? record.ok : false },
   });
 }

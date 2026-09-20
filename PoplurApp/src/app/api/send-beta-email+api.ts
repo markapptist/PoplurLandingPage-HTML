@@ -17,6 +17,7 @@ import {
 } from '@/emails/betaInviteEmail';
 import { createNdaToken, ndaTokenConfigured } from '@/server/betaNda.server';
 import { replyToAddress, sendWithResend } from '@/server/resend.server';
+import { siteOrigin } from '@/server/site.server';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -25,11 +26,6 @@ type SendEmailRequest = {
   /** Pins a design instead of rolling one — for checking a design in a real inbox. */
   variant?: unknown;
 };
-
-/** Where the signing page lives. BETA_SITE_ORIGIN points a preview deployment at itself. */
-export function siteOrigin(): string {
-  return (process.env.BETA_SITE_ORIGIN || BETA_INVITE_ASSET_ORIGIN).replace(/\/+$/, '');
-}
 
 export async function POST(request: Request) {
   let body: SendEmailRequest;

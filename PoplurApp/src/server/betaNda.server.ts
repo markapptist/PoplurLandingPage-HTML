@@ -36,17 +36,15 @@ function sign(payload: string): string {
   return b64url(createHmac('sha256', key).update(payload).digest());
 }
 
-/** A token for this address, valid for NDA_TOKEN_TTL_MS from now. */
-export function createNdaToken(email: string, issuedAtMs: number = Date.now()): string {
-  const payload = `${email.trim().toLowerCase()}|${issuedAtMs}`;
+/** `payload` signed: what every link the site issues is made of. */
+export function signPayload(payload: string): string {
   return `${b64url(payload)}.${sign(payload)}`;
 }
 
-export type NdaTokenCheck =
-  | { ok: true; email: string; issuedAtMs: number }
-  | { ok: false; reason: 'missing' | 'malformed' | 'bad-signature' | 'expired' };
+export type OpenedPayload = { ok: true; payload: string } | { ok: false; reason: 'missing' | 'malformed' | 'bad-signature' };
 
-export function verifyNdaToken(token: string | null | undefined, nowMs: number = Date.now()): NdaTokenCheck {
+/** The payload back out of a signed token, or why not. Constant-time on the signature. */
+export function openPayload(token: string | null | undefined): OpenedPayload {
   if (!token) return { ok: false, reason: 'missing' };
   const dot = token.lastIndexOf('.');
   if (dot <= 0) return { ok: false, reason: 'malformed' };
@@ -54,15 +52,32 @@ export function verifyNdaToken(token: string | null | undefined, nowMs: number =
   const given = token.slice(dot + 1);
   let payload: string;
   try { payload = unb64url(encoded); } catch { return { ok: false, reason: 'malformed' }; }
-  const bar = payload.lastIndexOf('|');
-  if (bar <= 0) return { ok: false, reason: 'malformed' };
-  const email = payload.slice(0, bar);
-  const issuedAtMs = Number(payload.slice(bar + 1));
-  if (!Number.isFinite(issuedAtMs) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, reason: 'malformed' };
   let expected: string;
   try { expected = sign(payload); } catch { return { ok: false, reason: 'bad-signature' }; }
   const a = Buffer.from(given), b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false, reason: 'bad-signature' };
+  return { ok: true, payload };
+}
+
+/** A token for this address, valid for NDA_TOKEN_TTL_MS from now. */
+export function createNdaToken(email: string, issuedAtMs: number = Date.now()): string {
+  return signPayload(`${email.trim().toLowerCase()}|${issuedAtMs}`);
+}
+
+export type NdaTokenCheck =
+  | { ok: true; email: string; issuedAtMs: number }
+  | { ok: false; reason: 'missing' | 'malformed' | 'bad-signature' | 'expired' };
+
+export function verifyNdaToken(token: string | null | undefined, nowMs: number = Date.now()): NdaTokenCheck {
+  const opened = openPayload(token);
+  if (!opened.ok) return opened;
+  // Exactly `email|issuedAt`: a token issued for another purpose (server/betaReport.server.ts
+  // prefixes its payloads) carries more bars and is not a signing link.
+  const parts = opened.payload.split('|');
+  if (parts.length !== 2) return { ok: false, reason: 'malformed' };
+  const [email, issued] = parts;
+  const issuedAtMs = Number(issued);
+  if (!Number.isFinite(issuedAtMs) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, reason: 'malformed' };
   if (nowMs - issuedAtMs > NDA_TOKEN_TTL_MS || issuedAtMs - nowMs > 5 * 60 * 1000) return { ok: false, reason: 'expired' };
   return { ok: true, email, issuedAtMs };
 }

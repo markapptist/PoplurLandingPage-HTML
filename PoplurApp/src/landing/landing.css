@@ -167,7 +167,9 @@
    every child relative — including this nav, whose own `sticky` is (0,1,0) — so it is restated here at (0,2,0).
    It is an overlay: its own height is pulled back out of the flow so the hero (and its video) run up behind it. */
 .pl { --nav-h: 62px; }
-.pl > .pl-nav { position: sticky; top: 0; margin-bottom: calc(-1 * var(--nav-h)); }
+/* z-index too: the same (0,2,0) rule gave every child z-index 1, so once the hero ran up behind the nav it
+   painted OVER it (later in the DOM at the same level) — the toolbar vanished under the video. */
+.pl > .pl-nav { position: sticky; top: 0; z-index: 20; margin-bottom: calc(-1 * var(--nav-h)); }
 @media (max-width: 720px) { .pl { --nav-h: 54px; } }
 
 /* ── the page snaps section to section (LandingPage sets `scroll-snap-type: y mandatory` on the root) ── */
@@ -259,11 +261,14 @@
 .pl-hero-text { max-width: 560px; display: flex; flex-direction: column; align-items: flex-start; }
 .pl-hero-text .pl-eyebrow { font-size: 22px; letter-spacing: -0.01em; text-transform: none; font-weight: 600; opacity: 1; }
 .pl-hero h1 { font-size: clamp(34px, 4.6vw, 62px); line-height: 1.02; letter-spacing: -0.04em; font-weight: 700; margin: 10px 0 0; max-width: 12ch; }
-.pl-offer { margin-top: 24px; display: flex; align-items: center; gap: 18px; padding: 10px 10px 10px 22px; border-radius: 999px; background: rgba(20, 10, 16, 0.62); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.12); color: #fff; font-size: 14px; line-height: 1.25; text-shadow: none; }
-.pl-offer small { font-size: 12px; opacity: .8; }
-.pl-offer .pl-cta { background: var(--accent-2); color: #08101a; border: 0; box-shadow: none; height: 44px; padding: 0 20px; }
-@media (max-width: 860px) { .pl-hero-text { max-width: 100%; } .pl-offer { justify-content: space-between; width: 100%; } .pl-hero-stage { padding: 72px 0 44vh 0; } .pl-hero-phone .pl-iphone { width: min(230px, 50vw); } }
+/* the offer under the headline: the same white as the eyebrow, the same white pill as the toolbar */
+.pl-hero-sub { margin-top: 16px; font-size: clamp(15px, 1.4vw, 18px); font-weight: 600; color: #fff; opacity: .95; max-width: 40ch; }
+.pl-hero-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.pl-hero-actions .pl-cta { height: 44px; padding: 0 22px; font-size: 15px; }
+.pl-sound { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 16px; border-radius: 999px; background: rgba(0, 0, 0, .34); color: #fff;
+  border: 1px solid rgba(255, 255, 255, .45); font: 600 13px/1 var(--font); cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.pl-sound.is-on { background: #fff; color: #111; border-color: #fff; }
+@media (max-width: 860px) { .pl-hero-text { max-width: 100%; } .pl-hero-stage { padding: 72px 0 44vh 0; } .pl-hero-phone .pl-iphone { width: min(230px, 50vw); } }
 
 /* chapter lockups */
 .pl-lockup { min-height: 62vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 10vh 24px;

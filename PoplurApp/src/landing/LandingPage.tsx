@@ -1,6 +1,6 @@
 import { Asset } from 'expo-asset';
 import { Image } from 'expo-image';
-import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { sendBetaInviteEmail } from '@/services/betaEmailService';
 import { saveBetaSignupEmail } from '@/services/betaSignupService';
@@ -13,7 +13,7 @@ import ShaderText from './ShaderText';
 import { HERO_SPOT, HERO_SPOT_POSTER } from './heroSpot';
 import { armLandingPop, landingPop } from './landingPop';
 import { pickCurrent } from './spy';
-import { clamp01, easeOut, onScrollFrame, progressOf, reducedMotion } from './scroll';
+import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
 import Backdrop from './Backdrop';
 import ColourBadge from './ColourBadge';
 import DottedWorld from './DottedWorld';
@@ -46,6 +46,11 @@ const HERO_TITLES = [
   'Found without followers.',
 ];
 const HERO_TITLE_MS = 4200;
+// The tour's stops, in page order, and its pace: long enough to read a chapter.
+const TOUR_STOPS = ['beta', 'live', 'features', ...SHOWCASE_STEPS.map(step => step.id)];
+const TOUR_FIRST_MS = 900;
+const TOUR_STEP_MS = 4200;
+const TOUR_CANCEL_EVENTS = ['wheel', 'touchmove', 'keydown'] as const;
 const HERO_FLIP_MS = 700;
 
 // All the titles are stacked in one grid cell, so the block is as tall as the
@@ -74,13 +79,21 @@ function scrollTo(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// The product hero, Apple-style: the phone fills the first screen, the
-// eyebrow and headline sit bottom-left, the offer pill bottom-right. As you
-// scroll, the phone settles back and everything eases away.
-function Hero() {
+// The product hero, Apple-style: the TV spot fills the first screen (the
+// phone stands in without one), the eyebrow, the flipping headline and the
+// offer sit bottom-left. As you scroll, everything eases away.
+//
+// Sound: browsers autoplay video only when it is muted, so the spot starts
+// silent and is unmuted by the first gesture anywhere on the page — the same
+// click, tap or key that unlocks the pops — and by the chip on the hero,
+// which also mutes it again. It plays once; when it ends, `onSpotEnded` lets
+// the page take over (the tour below).
+function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
   const ref = useRef<HTMLElement | null>(null);
   const phoneRef = useRef<HTMLDivElement | null>(null);
   const copyRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [sound, setSound] = useState(false);
   useEffect(() => {
     const el = ref.current; if (!el || reducedMotion()) return;
     return onScrollFrame((y, h) => {
@@ -90,15 +103,29 @@ function Hero() {
       if (copyRef.current) { copyRef.current.style.opacity = String(1 - p * 1.4); copyRef.current.style.transform = `translateY(${p * 40}px)`; }
     });
   }, []);
+  // React never writes `muted` into server-rendered HTML (facebook/react#10389),
+  // so the element is silenced here for the autoplay, once, on mount.
+  useEffect(() => {
+    const v = videoRef.current; if (!v) return;
+    v.muted = true; v.defaultMuted = true;
+  }, []);
+  useEffect(() => {
+    const v = videoRef.current; if (!v) return;
+    const unmute = () => { v.muted = false; v.volume = 1; setSound(true); off(); };
+    const off = () => { document.removeEventListener('pointerdown', unmute); document.removeEventListener('keydown', unmute); };
+    document.addEventListener('pointerdown', unmute, { passive: true });
+    document.addEventListener('keydown', unmute);
+    return off;
+  }, []);
+  const toggleSound = () => {
+    const v = videoRef.current; if (!v) return;
+    v.muted = !v.muted; v.volume = 1; setSound(!v.muted);
+  };
   const spot = HERO_SPOT === null ? null : Asset.fromModule(HERO_SPOT).uri;
   const poster = HERO_SPOT_POSTER === null ? undefined : Asset.fromModule(HERO_SPOT_POSTER).uri;
   return <header ref={ref} className={`pl-hero${spot ? ' has-spot' : ''}`} id="top">
     {spot
-      ? <video className="pl-hero-video" src={spot} poster={poster} autoPlay muted loop playsInline preload="auto" aria-label="People using Poplur"
-        // React never writes `muted` into server-rendered HTML (facebook/react#10389), so the
-        // element is silenced here too — before hydration the static <video autoplay> could
-        // otherwise start with sound on a browser that allows it.
-        ref={el => { if (el) { el.muted = true; el.defaultMuted = true; el.volume = 0; } }} />
+      ? <video ref={videoRef} className="pl-hero-video" src={spot} poster={poster} autoPlay muted playsInline preload="auto" aria-label="People using Poplur" onEnded={onSpotEnded} />
       : <div className="pl-hero-stage">
         <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
       </div>}
@@ -106,9 +133,21 @@ function Hero() {
       <div className="pl-hero-text">
         <div className="pl-eyebrow">Poplur</div>
         <HeroTitle />
-        <div className="pl-offer">
-          <span>Free on iPhone · Toronto beta<br /><small>Every pop starts with a 5 km radius.</small></span>
+        <p className="pl-hero-sub">Free on iPhone · Toronto beta. Every pop starts with a 5 km radius.</p>
+        <div className="pl-hero-actions">
           <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
+          {spot && <button type="button" className={`pl-sound${sound ? ' is-on' : ''}`} aria-pressed={sound}
+            // The chip's own press must not reach the document's one-time unmute, or the
+            // click that follows would toggle the sound straight back off.
+            onPointerDown={e => e.stopPropagation()} onClick={toggleSound}>
+            <svg viewBox="0 0 32 32" width="16" height="16" aria-hidden="true">
+              <path d="M6 12h4l6-5v18l-6-5H6z" fill="currentColor" />
+              {sound
+                ? <><path d="M20 11a6 6 0 0 1 0 10" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /><path d="M23 8a10 10 0 0 1 0 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></>
+                : <path d="M20 11l7 10M27 11l-7 10" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />}
+            </svg>
+            <span>{sound ? 'Sound on' : 'Tap for sound'}</span>
+          </button>}
         </div>
       </div>
     </div>
@@ -219,6 +258,27 @@ export default function LandingPage() {
   const currentRef = useRef<string | null>(null);
   const settledRef = useRef(false);
   useEffect(() => armLandingPop(), []);
+  // The tour: when the spot has played, the page walks itself section to
+  // section — each stop a snap, each snap a pop — until the reader takes the
+  // wheel (a scroll, a touch, a key), which ends it at once.
+  const tourTimer = useRef<number | null>(null);
+  const stopTour = useCallback(() => {
+    if (tourTimer.current !== null) { window.clearTimeout(tourTimer.current); tourTimer.current = null; }
+    for (const type of TOUR_CANCEL_EVENTS) document.removeEventListener(type, stopTour);
+  }, []);
+  const startTour = useCallback(() => {
+    if (reducedMotion() || tourTimer.current !== null) return;
+    let at = 0;
+    const step = () => {
+      const id = TOUR_STOPS[at++];
+      if (!id) { stopTour(); return; }
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      tourTimer.current = window.setTimeout(step, TOUR_STEP_MS);
+    };
+    tourTimer.current = window.setTimeout(step, TOUR_FIRST_MS);
+    for (const type of TOUR_CANCEL_EVENTS) document.addEventListener(type, stopTour, { passive: true });
+  }, [stopTour]);
+  useEffect(() => stopTour, [stopTour]);
   useEffect(() => {
     const ids = ['top', 'beta', 'live', 'features', ...SHOWCASE_STEPS.map(step => step.id)];
     return onScrollFrame((_y, h) => {
@@ -275,7 +335,7 @@ export default function LandingPage() {
       </div>
     </nav>
 
-    <Hero />
+    <Hero onSpotEnded={startTour} />
 
     <Signup />
 

@@ -166,7 +166,9 @@ function tags(color: string, border: string): string {
 /** Two blocks side by side where they fit, stacked where they do not: the
  *  hybrid pattern mail clients honour without media queries. The gap lives
  *  inside the first block — to its right when side by side, below it when
- *  stacked — so the sum of the max widths must fit the container. */
+ *  stacked — so the sum of the max widths must fit the container at a 600 px
+ *  viewport, where the card has already lost 32 px to the body padding
+ *  (a 600 card is 568 wide there, a 560 card 528). */
 function sideBySide(left: string, leftMax: number, right: string, rightMax: number, pad = 18): string {
   return `<div style="font-size:0;line-height:0;text-align:left;">
     <div style="display:inline-block;width:100%;max-width:${leftMax}px;vertical-align:top;"><div style="padding:0 ${pad}px ${pad}px 0;">${left}</div></div>
@@ -275,7 +277,7 @@ function paperDesign(src: Src, { iosUrl, androidUrl }: Links): string {
             <tr>
               <td style="padding:0 32px;">
                 <div style="border-top:1px solid rgba(17,17,20,0.08);padding-top:22px;">
-                ${sideBySide(img(src.envelope, `width="100" alt="A striped Poplur airmail envelope" style="display:block;width:100px;height:auto;border:0;"`), 116, `<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}</div>`, 420)}
+                ${sideBySide(img(src.envelope, `width="100" alt="A striped Poplur airmail envelope" style="display:block;width:100px;height:auto;border:0;"`), 116, `<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}</div>`, 380)}
                 </div>
               </td>
             </tr>
@@ -337,7 +339,7 @@ function postcardDesign(src: Src, { iosUrl, androidUrl }: Links): string {
             <tr>
               <td style="padding:26px 30px 0;">
                 ${sideBySide(
-                  img(src.envelope, `width="220" alt="A striped Poplur airmail envelope" style="display:block;width:220px;max-width:100%;height:auto;border:0;"`), 250,
+                  img(src.envelope, `width="208" alt="A striped Poplur airmail envelope" style="display:block;width:208px;max-width:100%;height:auto;border:0;"`), 230,
                   `<table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                     <tr>
                       <td valign="middle" style="font-family:${FONT};font-size:12px;line-height:16px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${PINK};">${COPY.eyebrow}</td>
@@ -347,13 +349,13 @@ function postcardDesign(src: Src, { iosUrl, androidUrl }: Links): string {
                     </tr>
                   </table>
                   <h1 style="margin:12px 0 0;font-family:${FONT};font-size:34px;line-height:1.06;font-weight:700;letter-spacing:-0.035em;color:${INK};">${COPY.title}</h1>
-                  <p style="margin:12px 0 0;font-family:${FONT};font-size:15px;line-height:1.5;color:${INK_2};">${COPY.lede}</p>`, 290, 22)}
+                  <p style="margin:12px 0 0;font-family:${FONT};font-size:15px;line-height:1.5;color:${INK_2};">${COPY.lede}</p>`, 278, 22)}
               </td>
             </tr>
             ${gap(26)}
             <tr>
               <td style="padding:0 30px;">
-                ${sideBySide(button(COPY.ios, iosUrl, PINK, src.appleWhite), 276, button(COPY.android, androidUrl, INK, src.androidWhite), 264, 12)}
+                ${sideBySide(button(COPY.ios, iosUrl, PINK, src.appleWhite), 254, button(COPY.android, androidUrl, INK, src.androidWhite), 254, 12)}
               </td>
             </tr>
             <tr><td align="center" style="padding:18px 0 0;">${tags(INK_2, 'rgba(17,17,20,0.12)')}</td></tr>
@@ -361,7 +363,7 @@ function postcardDesign(src: Src, { iosUrl, androidUrl }: Links): string {
             <tr>
               <td style="padding:0 30px;">
                 <div style="border-top:1px dashed rgba(17,17,20,0.2);padding-top:22px;">
-                ${sideBySide(`<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}<p style="margin:18px 0 0;">${COPY.reply}</p></div>`, 400, img(src.mailbox, `width="110" alt="A pink clay Poplur mailbox with its flag up" style="display:block;width:110px;height:auto;border:0;"`), 140)}
+                ${sideBySide(`<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:${INK_2};">${notes(INK, INK_2)}<p style="margin:18px 0 0;">${COPY.reply}</p></div>`, 368, img(src.mailbox, `width="110" alt="A pink clay Poplur mailbox with its flag up" style="display:block;width:110px;height:auto;border:0;"`), 140)}
                 </div>
               </td>
             </tr>

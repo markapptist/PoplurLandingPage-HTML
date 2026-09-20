@@ -310,7 +310,7 @@ function Signup() {
         <button type="submit" className="pl-cta accent" disabled={busy}>{busy ? 'Sending…' : 'Send me the beta'}</button>
       </form>
       {note && <p className={`pl-form-note ${note.tone}`}>{note.text}</p>}
-      <div className="pl-pills"><span>iOS · TestFlight</span><span>Android · beta</span><span>Toronto first</span></div>
+      <div className="pl-pills"><span>iOS · TestFlight</span><span>Android · Google Play</span><span>Toronto first</span></div>
     </div>
   </section>;
 }

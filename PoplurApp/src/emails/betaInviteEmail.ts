@@ -90,7 +90,7 @@ const COPY = {
   lede: 'Thanks for joining early. Install Poplur once; every beta update after that arrives through TestFlight or Google&nbsp;Play.',
   ios: 'Get Poplur for iPhone',
   android: 'Get Poplur for Android',
-  tags: ['iOS · TestFlight', 'Android · beta', 'Toronto first'],
+  tags: ['iOS · TestFlight', 'Android · Google Play', 'Toronto first'],
   updates: 'New iPhone builds land in TestFlight and Android updates through Google Play. Keep this email: the links work again if you ever need to reinstall.',
   first: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Every pop starts with a 5&nbsp;km radius and spreads as people engage.',
   reply: 'Have feedback? Reply to this email. Every note shapes the beta.',

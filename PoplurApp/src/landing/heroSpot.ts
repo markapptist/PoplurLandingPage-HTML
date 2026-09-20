@@ -13,6 +13,10 @@ export const HERO_SPOTS: readonly HeroSpot[] = [
   // Spot 2, "Radius" (.codex/landing-tv-spot-2-script.md): wordless, aerial,
   // the ring drawn by people around Noor's yellow coat, 8 s.
   { id: 'radius', video: require('@/assets/videos/landing/tv-spot-2.mp4'), poster: require('@/assets/images/landing/tv-spot-2-poster.jpg') },
+  // Spot 3, "Biscuit" (.codex/landing-tv-spot-3-script.md): spot 1's three
+  // people on a summer night after rain — Rosa's dog runs off, she posts,
+  // Maya's tap carries it to Dev, who finds the dog. 8 s.
+  { id: 'biscuit', video: require('@/assets/videos/landing/tv-spot-3.mp4'), poster: require('@/assets/images/landing/tv-spot-3-poster.jpg') },
 ]
 
 /** Remembers only which spot the last visit played, so this one differs. */

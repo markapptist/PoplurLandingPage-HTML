@@ -4,6 +4,7 @@ import {
   betaInviteSubject,
   createBetaInviteHtml,
   createBetaInviteText,
+  pickBetaInviteVariant,
   type BetaInviteImageKey,
 } from '@/emails/betaInviteEmail';
 
@@ -45,6 +46,8 @@ export async function POST(request: Request) {
   }
 
   const { attachments, images } = await loadInlineImages();
+  // One of the four designs per email, rolled here so the answer knows which.
+  const variant = pickBetaInviteVariant();
 
   const response = await fetch(RESEND_ENDPOINT, {
     method: 'POST',
@@ -57,7 +60,7 @@ export async function POST(request: Request) {
       from,
       to: email,
       subject: betaInviteSubject,
-      html: createBetaInviteHtml({ images }),
+      html: createBetaInviteHtml({ images, variant }),
       text: createBetaInviteText(),
     }),
   });
@@ -77,7 +80,7 @@ export async function POST(request: Request) {
 
   const result = (await response.json()) as { id?: string };
 
-  return Response.json({ id: result.id ?? null, ok: true });
+  return Response.json({ id: result.id ?? null, ok: true, variant });
 }
 
 // The email's pictures ride along as inline parts, one per content id, so

@@ -1,7 +1,8 @@
 // The beta invite, in the landing page's own clothes (landing/landing.css, the
 // default theme), carried by the two clay mail objects — the mailbox and the
 // airmail envelope, rendered from the app's own models
-// (poplur-clay-map/public/navigator-sprites, /sprites).
+// (poplur-clay-map/public/navigator-sprites, /sprites). The mailbox is the
+// y-24 p16 render, the three-quarter seen from slightly below, the owner's pick.
 //
 // It comes in four designs and the sender rolls one per email
 // (pickBetaInviteVariant), the way the landing rolls a theme per visit:

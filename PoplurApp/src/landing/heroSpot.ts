@@ -17,6 +17,10 @@ export const HERO_SPOTS: readonly HeroSpot[] = [
   // people on a summer night after rain — Rosa's dog runs off, she posts,
   // Maya's tap carries it to Dev, who finds the dog. 8 s.
   { id: 'biscuit', video: require('@/assets/videos/landing/tv-spot-3.mp4'), poster: require('@/assets/images/landing/tv-spot-3-poster.jpg') },
+  // Spot 5, "Clay" (.codex/landing-tv-spot-5-script.md): stop-motion claymation
+  // on a tabletop Toronto — Lou posts, the pink ring rolls out, and every clay
+  // person that taps makes it bigger. The one spot that looks like the app. 8 s.
+  { id: 'clay', video: require('@/assets/videos/landing/tv-spot-5.mp4'), poster: require('@/assets/images/landing/tv-spot-5-poster.jpg') },
 ]
 
 /** Remembers only which spot the last visit played, so this one differs. */

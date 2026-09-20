@@ -801,3 +801,180 @@ test('the clay app keys telemetry off the same synthetic-uid rule and never repo
   // No reporter is left on the old "any signed-in account" gate.
   assert.doesNotMatch(source, /!accountSnapshot\(\)\.authenticated/);
 });
+
+// ---------------------------------------------------------------------------
+// Live pacing: why an actor never got past its first post (19 Sep 2026).
+// ---------------------------------------------------------------------------
+import {
+  LIVE_ENGAGEMENT_INTERVAL_MS, LIVE_MAX_POSTS_PER_ACTOR, LIVE_POST_INTERVAL_MS, LIVE_POST_RETRY_MS,
+  chooseLiveStep, liveStepIsDue, rescheduleFailedLiveStep,
+} from './synthetic-live-actions.mjs';
+import { LIVE_MAX_CALLS_PER_ACTOR } from './synthetic-social-contract.mjs';
+
+const T0 = Date.parse('2026-09-19T20:00:00Z');
+const MIN = 60_000;
+/** A signed-in actor the way the runner keeps it, at the moment its first post landed. */
+function liveActor(overrides = {}) {
+  return {
+    journeyIndex: 1,
+    postsPublished: 1,
+    nextPostAtMs: T0 + LIVE_POST_INTERVAL_MS,
+    nextEngageAtMs: T0,
+    nextDMAtMs: T0,
+    nextReplyAtMs: T0,
+    callsPlaced: 0,
+    policy: { state: { dmSentTo: new Set(), dmRecipients: new Set() } },
+    ...overrides,
+  };
+}
+const stepOf = (plan, method) => plan.find(step => step.method === method);
+
+test('a post is due exactly LIVE_POST_INTERVAL_MS after the last one, and never past the cap', () => {
+  const plan = livePlanForActor('sim-food-001');
+  const post = stepOf(plan, 'post');
+  const actor = liveActor();
+  assert.equal(liveStepIsDue(post, actor, T0), false, 'just posted');
+  assert.equal(liveStepIsDue(post, actor, T0 + LIVE_POST_INTERVAL_MS - 1), false, 'one ms early');
+  assert.equal(liveStepIsDue(post, actor, T0 + LIVE_POST_INTERVAL_MS), true, 'twenty minutes later');
+  assert.equal(liveStepIsDue(post, liveActor({ postsPublished: LIVE_MAX_POSTS_PER_ACTOR }), T0 + 2 * LIVE_POST_INTERVAL_MS), false, 'cap reached');
+  assert.equal(liveStepIsDue(post, liveActor({ postsPublished: LIVE_MAX_POSTS_PER_ACTOR - 1 }), T0 + LIVE_POST_INTERVAL_MS), true, 'last allowed post');
+});
+
+test('timed steps follow their own clocks; navigation steps are always due', () => {
+  const plan = livePlanForActor('sim-sports-002');
+  const actor = liveActor({ nextEngageAtMs: T0 + 4 * MIN, nextDMAtMs: T0 + 4 * MIN, nextReplyAtMs: T0 + 3 * MIN });
+  assert.equal(liveStepIsDue(stepOf(plan, 'engage'), actor, T0), false);
+  assert.equal(liveStepIsDue(stepOf(plan, 'engage'), actor, T0 + 4 * MIN), true);
+  assert.equal(liveStepIsDue(stepOf(plan, 'dm'), actor, T0 + 4 * MIN), true);
+  // The reply step exists only once the opener went out; the DM step then retires.
+  assert.equal(liveStepIsDue(stepOf(plan, 'reply'), actor, T0 + 3 * MIN), false, 'nothing to answer before the opener');
+  const wrote = liveActor({ policy: { state: { dmSentTo: new Set([LIVE_OWNER_UID]), dmRecipients: new Set([LIVE_OWNER_UID]) } } });
+  assert.equal(liveStepIsDue(stepOf(plan, 'reply'), wrote, T0), true);
+  assert.equal(liveStepIsDue(stepOf(plan, 'dm'), wrote, T0), false, 'one opener per owner');
+  // The owner-call slot is cohort-wide and capped per actor.
+  assert.equal(liveStepIsDue(stepOf(plan, 'call'), actor, T0, { nextOwnerCallAtMs: T0 + MIN }), false, 'slot reserved');
+  assert.equal(liveStepIsDue(stepOf(plan, 'call'), actor, T0 + MIN, { nextOwnerCallAtMs: T0 + MIN }), true);
+  assert.equal(liveStepIsDue(stepOf(plan, 'call'), liveActor({ callsPlaced: LIVE_MAX_CALLS_PER_ACTOR }), T0 + MIN, { nextOwnerCallAtMs: T0 }), false, 'call cap');
+  for (const step of plan.filter(step => ['current', 'right', 'left', 'hold', 'escape'].includes(step.method))) {
+    assert.equal(liveStepIsDue(step, actor, T0), true, `${step.action} is navigation`);
+  }
+});
+
+test('a due post is chosen ahead of the lap, wherever the plan keeps it', () => {
+  for (const actorId of ACTOR_IDS) {
+    const plan = livePlanForActor(actorId);
+    const postIndex = plan.findIndex(step => step.method === 'post');
+    assert.ok(postIndex > 0, `${actorId} posts`);
+    // Twenty minutes after the first post the lap is back at the social steps
+    // (index 1) — the exact spot that used to cost a whole lap of Feed walks.
+    const actor = liveActor({ journeyIndex: 1 });
+    const choice = chooseLiveStep(plan, actor, T0 + LIVE_POST_INTERVAL_MS, { nextOwnerCallAtMs: T0 });
+    assert.equal(choice.step.method, 'post', `${actorId}: the post outranks like/DM/call`);
+    assert.equal(choice.index, postIndex);
+    assert.equal(choice.outOfTurn, postIndex !== 1, `${actorId}: out of turn unless the lap was already there`);
+  }
+});
+
+test('with no post due, the lap continues from journeyIndex and wraps to 1, never to the opening step', () => {
+  const plan = livePlanForActor('sim-sports-002');
+  // ['screen-view', like, dm, reply, call, open-map, open-feed, like, dm, post, hold, back, open-feed]
+  const early = T0 + MIN;
+  const actor = liveActor({ journeyIndex: 1, nextEngageAtMs: T0 + 4 * MIN, nextDMAtMs: T0 + 4 * MIN });
+  const choice = chooseLiveStep(plan, actor, early, { nextOwnerCallAtMs: T0 + 5 * MIN });
+  assert.equal(choice.step.action, 'open-map', 'like/DM/reply/call are not due; the first navigation step is');
+  assert.equal(choice.index, 5);
+  assert.equal(choice.outOfTurn, false);
+  const atEnd = liveActor({ journeyIndex: plan.length - 1, nextEngageAtMs: T0 + 4 * MIN, nextDMAtMs: T0 + 4 * MIN });
+  assert.equal(chooseLiveStep(plan, atEnd, early, { nextOwnerCallAtMs: T0 + 5 * MIN }).step, plan[plan.length - 1]);
+  const past = liveActor({ journeyIndex: plan.length, nextEngageAtMs: T0 + 4 * MIN, nextDMAtMs: T0 + 4 * MIN });
+  const wrapped = chooseLiveStep(plan, past, early, { nextOwnerCallAtMs: T0 + 5 * MIN });
+  assert.equal(wrapped.index, 5, 'wraps to index 1 and walks on to the first due step');
+  assert.notEqual(wrapped.step, plan[0], 'the opening screen-view is never replayed');
+  assert.equal(chooseLiveStep(plan, liveActor({ journeyIndex: 0 }), early, {}).index >= 1, true, 'index 0 is normalised to 1');
+  assert.equal(chooseLiveStep([plan[0]], liveActor(), early, {}), null, 'a plan with nothing after the opener has nothing to run');
+});
+
+test('an actor reaches its second, third and fourth post within one run under the real pacing', () => {
+  // Reproduce the 19 Sep shape: every social step is due and takes minutes
+  // (the Feed walks for an owner post that is not there), the lap is long,
+  // and the post used to be looked at only when the lap reached it. With the
+  // post outranking the lap, each post lands the moment its clock says so.
+  const plan = livePlanForActor('sim-sports-002');
+  const cost = { engage: 3 * MIN, dm: 2 * MIN, reply: MIN, call: 2 * MIN, post: 3 * MIN };
+  const shared = { nextOwnerCallAtMs: T0 };
+  const actor = liveActor({ journeyIndex: 1, postsPublished: 0, nextPostAtMs: T0 + 5 * MIN });
+  const published = [];
+  let now = T0;
+  for (let steps = 0; steps < 400 && published.length < LIVE_MAX_POSTS_PER_ACTOR; steps += 1) {
+    const choice = chooseLiveStep(plan, actor, now, shared);
+    assert.ok(choice, 'a plan with navigation steps always has something due');
+    const { step, outOfTurn } = choice;
+    if (!outOfTurn) actor.journeyIndex = choice.index;
+    now += 5_000 + (cost[step.method] ?? 5_000);
+    if (step.method === 'post') {
+      actor.postsPublished += 1;
+      actor.nextPostAtMs = now + LIVE_POST_INTERVAL_MS;
+      published.push(now);
+    } else if (step.method === 'engage') actor.nextEngageAtMs = now + LIVE_ENGAGEMENT_INTERVAL_MS;
+    else if (step.method === 'dm') actor.nextDMAtMs = now + LIVE_ENGAGEMENT_INTERVAL_MS;
+    else if (step.method === 'reply') actor.nextReplyAtMs = now + LIVE_ENGAGEMENT_INTERVAL_MS;
+    else if (step.method === 'call') shared.nextOwnerCallAtMs = now + 5 * MIN;
+    if (!outOfTurn) actor.journeyIndex += 1;
+    if (actor.journeyIndex >= plan.length) actor.journeyIndex = 1;
+  }
+  assert.equal(published.length, LIVE_MAX_POSTS_PER_ACTOR, 'all four posts land');
+  for (let index = 1; index < published.length; index += 1) {
+    const gapMin = (published[index] - published[index - 1]) / MIN;
+    assert.ok(gapMin >= 20 && gapMin < 27, `post ${index + 1} followed post ${index} after ${gapMin.toFixed(1)} min — twenty plus at most one step in flight`);
+  }
+  assert.ok(published[3] - T0 < 90 * MIN, `four posts inside ninety minutes (took ${((published[3] - T0) / MIN).toFixed(0)} min)`);
+});
+
+test('a failed step reschedules itself: a post retries in five minutes, social steps wait one interval, navigation is simply retried', () => {
+  assert.equal(LIVE_POST_RETRY_MS, LIVE_POST_INTERVAL_MS / 4);
+  assert.equal(LIVE_POST_RETRY_MS, 5 * MIN);
+  assert.deepEqual(rescheduleFailedLiveStep({ method: 'post' }, T0), { nextPostAtMs: T0 + 5 * MIN });
+  assert.deepEqual(rescheduleFailedLiveStep({ method: 'engage' }, T0), { nextEngageAtMs: T0 + LIVE_ENGAGEMENT_INTERVAL_MS });
+  assert.deepEqual(rescheduleFailedLiveStep({ method: 'dm' }, T0), { nextDMAtMs: T0 + LIVE_ENGAGEMENT_INTERVAL_MS });
+  assert.deepEqual(rescheduleFailedLiveStep({ method: 'reply' }, T0), { nextReplyAtMs: T0 + LIVE_ENGAGEMENT_INTERVAL_MS });
+  for (const method of ['right', 'left', 'hold', 'escape', 'current', 'call']) {
+    assert.deepEqual(rescheduleFailedLiveStep({ method }, T0), {}, `${method} keeps its clock`);
+  }
+  // A retried post is still the next thing the actor does once its five minutes are up.
+  const actor = liveActor({ journeyIndex: 1, ...rescheduleFailedLiveStep({ method: 'post' }, T0) });
+  assert.equal(chooseLiveStep(livePlanForActor('sim-food-001'), actor, T0 + 5 * MIN - 1, {}).step.method, 'engage');
+  assert.equal(chooseLiveStep(livePlanForActor('sim-food-001'), actor, T0 + 5 * MIN, {}).step.method, 'post');
+});
+
+test('the live runner paces its lap with these helpers and treats an unreachable owner post as a skip', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('./synthetic-live-runner.mjs', import.meta.url), 'utf8');
+  assert.match(source, /chooseLiveStep\(plan, actor, Date\.now\(\), \{ nextOwnerCallAtMs \}\)/, 'the loop asks chooseLiveStep');
+  assert.match(source, /Object\.assign\(actor, rescheduleFailedLiveStep\(step, Date\.now\(\)\)\)/, 'failures reschedule through the shared helper');
+  assert.doesNotMatch(source, /const stepIsDue = /, 'no private copy of the due rule');
+  assert.doesNotMatch(source, /throw new Error\('The owner post is not available in the live Feed\.'\)/, 'an absent owner post is not a strike');
+  assert.match(source, /if \(!post\) return null;/, 'openOwnerChat answers null instead');
+  // The two UI reads behind the 19 Sep strikes: the hold menu is an overlay
+  // over a still-visible tab, and a kept composer spot is re-picked through
+  // the composer's own LOCATION row instead of waiting for a picker that
+  // never mounts.
+  assert.match(source, /if \(screens\.includes\('hold'\)\) return 'hold';/, 'the hold menu wins the screen read');
+  assert.match(source, /getByRole\('button', \{ name: \/\^LOCATION\\b\/i \}\)/, 'the composer is asked for the picker');
+  assert.match(source, /await dismissFailedPost\(actor\);/, 'a failed post is dismissed before the next step');
+  assert.match(source, /getByRole\('alertdialog', \{ name: 'This pop replaces one of yours' \}\)/, 'the one-pop-per-place prompt is answered, not waited out');
+  assert.match(source, /name: 'Replace it', exact: true/, 'answered by replacing the actor\'s own pop');
+  assert.match(source, /\$\{new Date\(\)\.toISOString\(\)\} \[live\]/, 'log lines carry a clock');
+});
+
+test('the app runner waits out a Cloud Run "no instance to spare" answer instead of retiring the cohort on it', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('./synthetic-app-runner.mjs', import.meta.url), 'utf8');
+  assert.match(source, /const CLOUD_BUSY_STATUSES = new Set\(\[429, 500, 503\]\);/, '429, 500 and 503 are the platform\'s busy answers');
+  assert.match(source, /if \(body === null && CLOUD_BUSY_STATUSES\.has\(response\.status\) && busyRetries < CLOUD_BUSY_RETRIES\)/, 'only a non-JSON (platform) answer is retried, bounded');
+  const retries = Number(source.match(/const CLOUD_BUSY_RETRIES = (\d+);/)?.[1]);
+  const backoff = Number(source.match(/const CLOUD_BUSY_BACKOFF_MS = ([\d_]+);/)?.[1].replace(/_/g, ''));
+  assert.ok(retries >= 3 && retries <= 6, 'a few retries, not forever');
+  // Linear backoff: the last wait must still be shorter than the scheduler's
+  // own start timeout (180 s), or the scheduler gives up on a start that is
+  // about to succeed.
+  const totalWaitMs = backoff * (retries * (retries + 1)) / 2;
+  assert.ok(totalWaitMs < 180_000, `total busy wait ${totalWaitMs} ms fits inside the scheduler's 180 s start timeout`);
+});

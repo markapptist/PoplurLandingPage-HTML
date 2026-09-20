@@ -1,4 +1,4 @@
-import { LIVE_OWNER_UID, inspectSocialCallWrite, isSocialThreadStateWrite } from './synthetic-social-contract.mjs';
+import { LIVE_OWNER_UID, LIVE_MAX_CALLS_PER_ACTOR, inspectSocialCallWrite, isSocialThreadStateWrite } from './synthetic-social-contract.mjs';
 import {
   ACTOR_IDS,
   SYNTHETIC_ACTORS,
@@ -541,6 +541,89 @@ export function livePlanForActor(actorId) {
     { screen: 'feed', action: 'reply-dm', method: 'reply' },
     { screen: 'feed', action: 'call-owner', method: 'call' },
     ...plan.slice(1)];
+}
+
+/**
+ * A post that failed retries after a quarter interval, not a whole one, so a
+ * remounted picker or a covered button costs the actor five minutes and not
+ * twenty.
+ */
+export const LIVE_POST_RETRY_MS = Math.round(LIVE_POST_INTERVAL_MS / 4);
+
+/**
+ * Whether one plan step is due for an actor at `now`. Pure: `actor` is the
+ * runner's per-actor clock (nextPostAtMs, postsPublished, nextEngageAtMs,
+ * nextDMAtMs, nextReplyAtMs, callsPlaced) plus the write guard's DM ledger
+ * under `policy.state`, and `shared` carries the cohort-wide owner-call
+ * slot (`nextOwnerCallAtMs`). Navigation steps are always due.
+ */
+export function liveStepIsDue(step, actor, now = Date.now(), shared = {}) {
+  const ledger = actor?.policy?.state ?? {};
+  const dmSentTo = ledger.dmSentTo ?? new Set();
+  const dmRecipients = ledger.dmRecipients ?? null;
+  switch (step?.method) {
+    case 'post':
+      return now >= (actor.nextPostAtMs ?? 0) && (actor.postsPublished ?? 0) < LIVE_MAX_POSTS_PER_ACTOR;
+    case 'engage':
+      return now >= (actor.nextEngageAtMs ?? 0);
+    case 'call':
+      return now >= (shared.nextOwnerCallAtMs ?? 0) && (actor.callsPlaced ?? 0) < LIVE_MAX_CALLS_PER_ACTOR;
+    case 'reply':
+      return dmSentTo.has(LIVE_OWNER_UID) && now >= (actor.nextReplyAtMs ?? 0);
+    case 'dm':
+      if (dmSentTo.has(LIVE_OWNER_UID)) return false;
+      return now >= (actor.nextDMAtMs ?? 0)
+        && (dmRecipients?.size ?? LIVE_MAX_DMS_PER_ACTOR) < LIVE_MAX_DMS_PER_ACTOR;
+    default:
+      return true;
+  }
+}
+
+/**
+ * The plan step the live runner should run next.
+ *
+ * A due post outranks everything else, wherever the plan keeps it. Before
+ * this the runner only looked at the post when its lap reached that slot,
+ * and a lap is long: the like/DM/call steps each walk the Feed for minutes
+ * before they find (or fail to find) a post to act on, so an actor whose
+ * second post came due at +20 min could sit through a whole lap of social
+ * walks first, and any failure along the way pushed it further. 19 Sep
+ * 2026: 409 first posts against 17 second ones.
+ *
+ * When nothing timed is due, the lap continues from `journeyIndex`, wrapping
+ * past the end to 1 — index 0 is the session's opening screen-view and is
+ * never replayed. Returns null only when no step at all is due, which a
+ * plan with navigation steps never does.
+ */
+export function chooseLiveStep(plan, actor, now = Date.now(), shared = {}) {
+  if (!Array.isArray(plan) || plan.length < 2) return null;
+  const postIndex = plan.findIndex((step, index) => index > 0 && step.method === 'post');
+  if (postIndex > 0 && liveStepIsDue(plan[postIndex], actor, now, shared)) {
+    return { index: postIndex, step: plan[postIndex], outOfTurn: postIndex !== actor.journeyIndex };
+  }
+  let index = Number.isInteger(actor.journeyIndex) && actor.journeyIndex >= 1 && actor.journeyIndex < plan.length
+    ? actor.journeyIndex : 1;
+  for (let looked = 0; looked < plan.length - 1; looked += 1) {
+    const step = plan[index];
+    if (liveStepIsDue(step, actor, now, shared)) return { index, step, outOfTurn: false };
+    index = index + 1 >= plan.length ? 1 : index + 1;
+  }
+  return null;
+}
+
+/**
+ * When a failed step next runs. Pure; returns the clock fields to assign.
+ * A post retries after LIVE_POST_RETRY_MS; the social steps wait out one
+ * engagement interval; a navigation step is simply retried on the next lap.
+ */
+export function rescheduleFailedLiveStep(step, now = Date.now()) {
+  switch (step?.method) {
+    case 'post': return { nextPostAtMs: now + LIVE_POST_RETRY_MS };
+    case 'engage': return { nextEngageAtMs: now + LIVE_ENGAGEMENT_INTERVAL_MS };
+    case 'dm': return { nextDMAtMs: now + LIVE_ENGAGEMENT_INTERVAL_MS };
+    case 'reply': return { nextReplyAtMs: now + LIVE_ENGAGEMENT_INTERVAL_MS };
+    default: return {};
+  }
 }
 
 /** Frames the live runner may record. Sign-in is deliberately absent. */

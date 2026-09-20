@@ -17,12 +17,13 @@ import {
   LIVE_REPLY_CHECK_INTERVAL_MS,
   replyForOwnerMessage,
   LIVE_ENGAGEMENT_INTERVAL_MS,
-  LIVE_MAX_DMS_PER_ACTOR,
   LIVE_MAX_LIKES_PER_ACTOR,
   LIVE_MAX_POSTS_PER_ACTOR,
   LIVE_MODE,
   LIVE_POST_INTERVAL_MS,
   LIVE_POST_STAGGER_MS,
+  chooseLiveStep,
+  rescheduleFailedLiveStep,
   SYNTHETIC_COHORT_ID,
   accountForActor,
   cloudEventForLiveStep,
@@ -195,6 +196,11 @@ async function visibleClayScreen(frame) {
     })
     .map(element => element.getAttribute('data-poplur-screen') || '')
     .filter(Boolean));
+  // The hold menu is an overlay: the tab under it stays visible and comes
+  // first in the DOM, so "first visible marker" answered 'feed' for an open
+  // menu and every hold step "did not settle" (3,193 times by 19 Sep 2026 —
+  // the runner's read, not the menu).
+  if (screens.includes('hold')) return 'hold';
   return screens[0] || '';
 }
 
@@ -317,7 +323,10 @@ export function createSyntheticLiveRunner({
     stopping: null,
   };
 
-  const log = message => { if (verdictLog) console.error(`[live] ${message}`); };
+  // Timestamped so a run reads back in order (the launchd log had no clock,
+  // and 19 Sep's post cadence could not be reconstructed from it). The Test
+  // Center report gatherer keys its 24 h window off this leading ISO stamp.
+  const log = message => { if (verdictLog) console.error(`${new Date().toISOString()} [live] ${message}`); };
 
   const publicState = () => ({
     ok: true,
@@ -355,6 +364,8 @@ export function createSyntheticLiveRunner({
         postsPublished: actor.postsPublished,
         lastPostId: actor.lastPostId,
         lastPostAtMs: actor.lastPostAtMs,
+        nextPostAtMs: actor.nextPostAtMs,
+        consecutiveFailures: actor.consecutiveFailures,
         viewsGiven: actor.viewsApplied || 0,
         likesGiven: actor.likesApplied || 0,
         engagementAttempts: actor.policy?.state.engagementEvents.size || 0,
@@ -474,7 +485,7 @@ export function createSyntheticLiveRunner({
         method: request.method(), url: target, postData: request.postData() || '', headers: request.headers(),
       });
       if (verdictLog && verdict.kind !== 'local-app' && verdict.kind !== 'read' && verdict.kind !== 'live-firestore-read') {
-        console.error(`[verdict:${actor.actorId}] ${verdict.allow ? 'allow' : 'BLOCK'} ${verdict.kind ?? '-'} ${request.method()} ${target.slice(0, 140)}${verdict.allow ? '' : ` reason=${verdict.reason ?? ''}`}`);
+        console.error(`${new Date().toISOString()} [verdict:${actor.actorId}] ${verdict.allow ? 'allow' : 'BLOCK'} ${verdict.kind ?? '-'} ${request.method()} ${target.slice(0, 140)}${verdict.allow ? '' : ` reason=${verdict.reason ?? ''}`}`);
       }
       if (!verdict.allow) { await route.abort('blockedbyclient'); return; }
       if (verdict.kind === 'live-auth-sign-in') {
@@ -733,6 +744,75 @@ export function createSyntheticLiveRunner({
     }
   };
 
+  // A post that failed part-way leaves the camera up with the capture review
+  // or the composer over it; the next hold-menu step then "did not settle
+  // (saw camera)" and a third strike retired the actor — 56 of the last 3rd
+  // strikes by 19 Sep 2026, and the scheduler restarts the whole batch for one
+  // retired actor. Close what is open (Retake on the review; the composer's
+  // own Escape walks its steps back, and on a resumed draft opens the picker,
+  // which leaving the Map then discards) and stand on the Feed again.
+  const dismissFailedPost = async actor => {
+    try {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const clay = await clayFrame(actor, 5_000);
+        const retake = clay.getByRole('dialog', { name: 'Review your capture' }).getByRole('button', { name: /^Discard and/ }).first();
+        if (await retake.isVisible().catch(() => false)) {
+          await retake.click({ timeout: 5_000 }).catch(() => retake.evaluate(element => element.click()).catch(() => {}));
+          await sleep(600);
+          continue;
+        }
+        const composer = clay.getByRole('dialog', { name: /^(Post composer|Posted)$/ }).first();
+        if (await composer.isVisible().catch(() => false)) {
+          const back = composer.getByRole('button', { name: /BACK TO (CAMERA|MAP)/i }).first();
+          if (await back.isVisible().catch(() => false)) await back.click({ timeout: 5_000 }).catch(() => {});
+          else {
+            await clay.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })), undefined, { timeout: 5_000 }).catch(() => {});
+          }
+          await sleep(600);
+          continue;
+        }
+        break;
+      }
+      await moveCubeTo(await clayFrame(actor), 'feed', 'left');
+      actor.currentScreen = 'feed';
+    } catch (error) {
+      log(`${actor.actorId} could not leave the failed post: ${error instanceof Error ? error.message.slice(0, 120) : error}`);
+    }
+  };
+
+  // HomeTwin hands the Camera the spot picked for the previous post as its
+  // `postTarget`, and the Camera clears it only when the composer CLOSES — a
+  // camera-first post ends on the Map with the composer unmounted, so the
+  // target survives into the next capture. That composer opens with a spot
+  // already selected, "Use original" goes straight to the channel step, and
+  // the picker never mounts: 19 Sep 2026, 1,142 of the 1,250 second-post
+  // failures were "The Map picker never accepted a spot" with the home frame
+  // showing camera + "Post composer" and no map iframe at all. The channel
+  // step's LOCATION row is the app's own "Change" control for exactly this:
+  // it parks the draft and launches the picker at the actor's current fix.
+  // Returns true when it had to ask; false when the picker is already up or
+  // the composer is still on its way there.
+  const SPOT_ROW_PROBE_MS = 4_000;
+  const reopenSpotPickerIfKept = async actor => {
+    const deadline = Date.now() + SPOT_ROW_PROBE_MS;
+    while (Date.now() < deadline) {
+      for (const frame of actor.page.frames()) {
+        const picker = frame.getByRole('button', { name: /Use this spot.*Attach the post here/i }).first();
+        if (await picker.isVisible().catch(() => false)) return false;
+      }
+      const clay = await clayFrame(actor, 2_000).catch(() => null);
+      if (clay) {
+        const row = clay.getByRole('dialog', { name: 'Post composer' }).getByRole('button', { name: /^LOCATION\b/i }).first();
+        if (await row.isVisible().catch(() => false)) {
+          await row.click({ timeout: 8_000 }).catch(() => row.evaluate(element => element.click(), undefined, { timeout: 5_000 }));
+          return true;
+        }
+      }
+      await sleep(250);
+    }
+    return false;
+  };
+
   const moveActorForPost = async (actor, clay) => {
     // Every actor's pops push away from the cohort's latest pops, not only
     // from its own last one, so the five of them spread over the board
@@ -770,8 +850,20 @@ export function createSyntheticLiveRunner({
       await cube.press('Enter');
       const captureReview = frame.getByRole('dialog', { name: 'Review your capture' });
       await captureReview.waitFor({ state: 'visible', timeout: APP_TIMEOUT_MS });
-      await captureReview.getByRole('button', { name: /Use this/ }).click();
-      await frame.getByRole('dialog', { name: 'Post composer' }).waitFor({ state: 'visible', timeout: APP_TIMEOUT_MS });
+      // The rail button can sit under a banner or a remounting layer, and one
+      // pointer click then waits out APP_TIMEOUT_MS (73 posts died here, 17 of
+      // them fourth posts). Bounded presses with a DOM fallback, the way the
+      // like button is pressed.
+      const composer = frame.getByRole('dialog', { name: 'Post composer' });
+      let accepted = false;
+      for (let attempt = 0; attempt < 3 && !accepted; attempt += 1) {
+        const use = captureReview.getByRole('button', { name: /Use this/ }).first();
+        await use.click({ timeout: 10_000 }).catch(() => (
+          use.evaluate(element => { element.scrollIntoView({ block: 'center', inline: 'center' }); element.click(); }, undefined, { timeout: 5_000 }).catch(() => {})
+        ));
+        accepted = await composer.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true).catch(() => false);
+      }
+      if (!accepted) throw new Error('The capture review never handed the shot to the composer.');
     });
     actor.currentScreen = 'composer';
     actor.action = 'capture-photo';
@@ -785,6 +877,7 @@ export function createSyntheticLiveRunner({
     let spotChosen = false;
     for (let attempt = 0; attempt < 3 && !spotChosen; attempt += 1) {
       try {
+        if (await reopenSpotPickerIfKept(actor)) log(`${actor.actorId} composer kept the previous spot; asked it for the picker`);
         const spotButton = await findVisibleRole(page, 'button', { name: /Use this spot.*Attach the post here/i }, 30_000);
         await spotButton.click({ timeout: 15_000 });
         spotChosen = true;
@@ -837,15 +930,49 @@ export function createSyntheticLiveRunner({
     await review.getByRole('button', { name: /Post to TV/i }).click();
     const postedDialog = review.getByRole('dialog', { name: 'Posted' });
     const uploadAlert = review.getByRole('alert').first();
-    const outcome = await Promise.race([
-      postedDialog.waitFor({ state: 'visible', timeout: UPLOAD_OUTCOME_TIMEOUT_MS }).then(() => ({ kind: 'posted' })),
-      waitForScreen(review, 'map', UPLOAD_OUTCOME_TIMEOUT_MS).then(() => ({ kind: 'map' })),
-      uploadAlert.waitFor({ state: 'visible', timeout: UPLOAD_OUTCOME_TIMEOUT_MS })
-        .then(async () => ({ kind: 'error', text: (await uploadAlert.innerText()).trim() })),
-    ]);
+    // The write guard binding the post IS the completion signal; the visible
+    // outcomes only say how the app ended. The old race let the Map screen
+    // (shown the moment a camera-first upload starts) win before the guard
+    // had seen the write — 42 "no bound post upload was observed".
+    const guardSawPost = () => actor.policy.state.postIds.size > before && Boolean(actor.policy.state.lastPostId);
+    // One live pop per place: when the spot is within 5 km of one of the
+    // actor's own pops (a campus draw, most often) the composer stops at an
+    // alertdialog and publishes nothing until it is answered — two second
+    // posts timed out here on 20 Sep 2026 with no upload traffic at all.
+    // The actor replaces its own pop, which is the app's rule for a person
+    // re-posting from the same ground; the earlier pop's reach carries over.
+    const replaceNotice = review.getByRole('alertdialog', { name: 'This pop replaces one of yours' });
+    let answeredReplace = false;
+    const outcome = await (async () => {
+      const deadline = Date.now() + UPLOAD_OUTCOME_TIMEOUT_MS;
+      let visible = null;
+      let visibleAtMs = 0;
+      while (Date.now() < deadline) {
+        if (guardSawPost()) return { kind: visible ?? 'bound' };
+        if (await uploadAlert.isVisible().catch(() => false)) {
+          return { kind: 'error', text: (await uploadAlert.innerText().catch(() => '')).trim() };
+        }
+        if (!answeredReplace && await replaceNotice.isVisible().catch(() => false)) {
+          const detail = (await replaceNotice.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+          const replaceIt = replaceNotice.getByRole('button', { name: 'Replace it', exact: true });
+          await replaceIt.click({ timeout: 8_000 }).catch(() => replaceIt.evaluate(element => element.click()).catch(() => {}));
+          answeredReplace = true;
+          log(`${actor.actorId} answered the composer's replace prompt with "Replace it": ${detail}`);
+          continue;
+        }
+        if (!visible && await postedDialog.isVisible().catch(() => false)) { visible = 'posted'; visibleAtMs = Date.now(); }
+        if (!visible && (await visibleClayScreen(review).catch(() => '')) === 'map') { visible = 'map'; visibleAtMs = Date.now(); }
+        // The app has finished; give the guard a bounded moment to record
+        // the write it saw, then judge.
+        if (visible && Date.now() - visibleAtMs > 20_000) break;
+        await sleep(300);
+      }
+      return { kind: visible ?? 'timeout' };
+    })();
     if (outcome.kind === 'error') throw new Error(`Visible upload failed: ${outcome.text || 'Poplur showed an empty upload error.'}`);
-    if (actor.policy.state.postIds.size <= before || !actor.policy.state.lastPostId) {
-      throw new Error(`The app reported a post (${outcome.kind}) but no bound post upload was observed.`);
+    if (!guardSawPost()) {
+      const stillAsking = await replaceNotice.isVisible().catch(() => false);
+      throw new Error(`The app reported a post (${outcome.kind}) but no bound post upload was observed${stillAsking ? ' (the replace prompt is still up)' : answeredReplace ? ' (after answering the replace prompt)' : ''}.`);
     }
     actor.postsPublished += 1;
     actor.lastPostId = actor.policy.state.lastPostId;
@@ -1020,9 +1147,16 @@ export function createSyntheticLiveRunner({
     return null;
   };
 
+  // Null when the owner has no post the actor can reach. An owner post older
+  // than the Feed's newest-N pool is on no channel at all, which was true of
+  // every owner post for most of 19 Sep 2026 (3,879 "not available" DM
+  // failures, 815 for calls). Callers treat null as a skip, never a failure:
+  // it says nothing about the actor, and counted as a strike it chained with
+  // one navigation hiccup into the three that retire an actor — after which
+  // the scheduler restarts the whole batch and every post counter with it.
   const openOwnerChat = async actor => {
     const post = await findOwnerPost(actor);
-    if (!post) throw new Error('The owner post is not available in the live Feed.');
+    if (!post) return null;
     actor.policy.bindDMRecipient(LIVE_OWNER_UID);
     await activateControl(post.clay.getByRole('button', { name: 'Message the poster', exact: true }), 'Message the poster');
     const clay = await clayFrame(actor);
@@ -1032,7 +1166,13 @@ export function createSyntheticLiveRunner({
 
   const runDMFlow = async actor => {
     if (actor.policy.state.dmSentTo.has(LIVE_OWNER_UID)) return;
-    const { clay, id } = await openOwnerChat(actor);
+    const chat = await openOwnerChat(actor);
+    if (!chat) {
+      actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
+      log(`${actor.actorId} dm skipped: no owner post reachable in the Feed; next try in ${Math.round(LIVE_ENGAGEMENT_INTERVAL_MS / 60_000)} min`);
+      return;
+    }
+    const { clay, id } = chat;
     actor.action = 'send-dm';
     const text = `Hey Mark, ${actor.handle} here — one of your Poplur testers. ${LIVE_DM_MESSAGES[ACTOR_IDS.indexOf(actor.actorId) % LIVE_DM_MESSAGES.length]}`.slice(0, 240);
     await clay.evaluate(() => {
@@ -1072,7 +1212,9 @@ export function createSyntheticLiveRunner({
   const runReplyFlow = async actor => {
     actor.nextReplyAtMs = Date.now() + LIVE_REPLY_CHECK_INTERVAL_MS;
     if (!actor.policy.state.dmSentTo.has(LIVE_OWNER_UID)) return;
-    const { clay } = await openOwnerChat(actor);
+    const chat = await openOwnerChat(actor);
+    if (!chat) { log(`${actor.actorId} reply check skipped: no owner post reachable in the Feed`); return; }
+    const { clay } = chat;
     actor.action = 'reply-dm';
     const thread = await clay.evaluate(() => Array.from(document.querySelectorAll('[data-dm-message-from]'))
       .map(element => ({
@@ -1119,7 +1261,9 @@ export function createSyntheticLiveRunner({
     if (Date.now() < nextOwnerCallAtMs || actor.callsPlaced >= LIVE_MAX_CALLS_PER_ACTOR) return;
     // Reserve before awaiting UI: eight independent journeys share one owner.
     nextOwnerCallAtMs = Date.now() + LIVE_CALL_INTERVAL_MS;
-    const { clay } = await openOwnerChat(actor);
+    const chat = await openOwnerChat(actor);
+    if (!chat) { log(`${actor.actorId} call skipped: no owner post reachable in the Feed; the cohort's next call slot is in ${Math.round(LIVE_CALL_INTERVAL_MS / 60_000)} min`); return; }
+    const { clay } = chat;
     actor.policy.bindCallRecipient(LIVE_OWNER_UID);
     const video = nextOwnerCallVideo;
     await installSyntheticCallMedia(clay, actor);
@@ -1239,21 +1383,6 @@ export function createSyntheticLiveRunner({
     }
   };
 
-  const stepIsDue = (actor, step) => {
-    if (step.method === 'post') return Date.now() >= actor.nextPostAtMs && actor.postsPublished < LIVE_MAX_POSTS_PER_ACTOR;
-    if (step.method === 'engage') return Date.now() >= actor.nextEngageAtMs;
-    if (step.method === 'call') return Date.now() >= nextOwnerCallAtMs && actor.callsPlaced < LIVE_MAX_CALLS_PER_ACTOR;
-    if (step.method === 'reply') {
-      return Boolean(actor.policy?.state.dmSentTo.has(LIVE_OWNER_UID)) && Date.now() >= actor.nextReplyAtMs;
-    }
-    if (step.method === 'dm') {
-      if (actor.policy?.state.dmSentTo.has(LIVE_OWNER_UID)) return false;
-      return Date.now() >= actor.nextDMAtMs
-        && (actor.policy?.state.dmRecipients.size ?? LIVE_MAX_DMS_PER_ACTOR) < LIVE_MAX_DMS_PER_ACTOR;
-    }
-    return true;
-  };
-
   const waitForEpoch = async (milliseconds, epoch) => {
     const deadline = Date.now() + milliseconds;
     while (Date.now() < deadline) {
@@ -1266,8 +1395,13 @@ export function createSyntheticLiveRunner({
     const plan = livePlanForActor(actor.actorId);
     while (runtime.status === 'live' && runtime.epoch === epoch && actor.status === 'live') {
       if (actor.journeyIndex >= plan.length) actor.journeyIndex = 1;
-      const step = plan[actor.journeyIndex];
-      if (!stepIsDue(actor, step)) { actor.journeyIndex += 1; continue; }
+      // A due post outranks the lap (chooseLiveStep): the social walks take
+      // minutes each, and a post checked once per lap came 20-40 min late.
+      const choice = chooseLiveStep(plan, actor, Date.now(), { nextOwnerCallAtMs });
+      if (!choice) { await waitForEpoch(1_000, epoch); continue; }
+      const { step, outOfTurn } = choice;
+      if (outOfTurn) log(`${actor.actorId} post is due; running it ahead of ${plan[actor.journeyIndex]?.action ?? 'the lap'}`);
+      else actor.journeyIndex = choice.index;
       const dwell = ACTOR_DWELL_BASE_MS + ((ACTOR_IDS.indexOf(actor.actorId) * 977 + actor.journeyIndex * 613) % ACTOR_DWELL_SPREAD_MS);
       await waitForEpoch(dwell, epoch);
       const priorScreen = actor.currentScreen;
@@ -1282,26 +1416,24 @@ export function createSyntheticLiveRunner({
         actor.action = step.action;
         actor.consecutiveFailures = 0;
         actor.lastError = '';
-        actor.journeyIndex += 1;
+        if (!outOfTurn) actor.journeyIndex += 1;
       } catch (error) {
         if (error instanceof LiveStoppedError || error instanceof CloudPausedError) throw error;
         actor.consecutiveFailures += 1;
         actor.lastError = error instanceof Error ? error.message.slice(0, 200) : 'step failed';
         log(`${actor.actorId} step ${step.action} failed (${actor.consecutiveFailures}): ${actor.lastError}`);
+        Object.assign(actor, rescheduleFailedLiveStep(step, Date.now()));
         if (step.method === 'post') {
-          actor.nextPostAtMs = Date.now() + Math.round(LIVE_POST_INTERVAL_MS / 4);
           if (actor.policy) actor.policy.state.expectedLocation = null;
           await returnActorHome(actor);
+          await dismissFailedPost(actor);
         }
-        if (step.method === 'engage') actor.nextEngageAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-        if (step.method === 'dm') actor.nextDMAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
-        if (step.method === 'reply') actor.nextReplyAtMs = Date.now() + LIVE_ENGAGEMENT_INTERVAL_MS;
         if (actor.consecutiveFailures >= MAX_CONSECUTIVE_STEP_FAILURES) {
           actor.status = 'error';
           actor.action = 'actor-error';
           break;
         }
-        actor.journeyIndex += 1;
+        if (!outOfTurn) actor.journeyIndex += 1;
       } finally {
         actor.transitioning = false;
       }

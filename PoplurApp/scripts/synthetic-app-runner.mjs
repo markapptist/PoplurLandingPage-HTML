@@ -230,16 +230,37 @@ function internalCredentialMatches(value) {
   return timingSafeEqual(Buffer.from(supplied), Buffer.from(LOCAL_CREDENTIAL));
 }
 
+/** Cloud Run answers 429/503 "Rate exceeded." when the project's regional
+ *  CPU-allocation quota (20 vCPU in us-central1) is full and no instance
+ *  can start — 20 Sep 2026: with ~45 warm 1-vCPU function instances that
+ *  happened on the first call of a fresh start and retired every actor.
+ *  It clears within a minute or two, so wait and try again, a few times. */
+// The platform answers with plain text ("Rate exceeded.", "no available
+// instance") where a function that ran answers JSON — so a JSON 500 is the
+// function's own error and is not retried.
+const CLOUD_BUSY_STATUSES = new Set([429, 500, 503]);
+const CLOUD_BUSY_RETRIES = 4;
+const CLOUD_BUSY_BACKOFF_MS = 15_000;
+
 async function fetchJSON(url, options, timeoutMs = NETWORK_TIMEOUT_MS, { retries = 1 } = {}) {
   // A cold Cloud Run instance can take longer than the timeout on its first
   // hop; that used to abort the whole cohort start with the bare message
   // "This operation was aborted" (12 Sep). Retry once and name the URL.
+  let busyRetries = 0;
   for (let attempt = 0; ; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       const body = await response.json().catch(() => null);
+      if (body === null && CLOUD_BUSY_STATUSES.has(response.status) && busyRetries < CLOUD_BUSY_RETRIES) {
+        busyRetries += 1;
+        const waitMs = CLOUD_BUSY_BACKOFF_MS * busyRetries;
+        console.error(`${new Date().toISOString()} [runner] ${new URL(url).pathname} answered HTTP ${response.status} (Cloud Run has no instance to spare); retry ${busyRetries}/${CLOUD_BUSY_RETRIES} in ${Math.round(waitMs / 1000)} s`);
+        clearTimeout(timeout);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
       if (!response.ok) throw new Error(`Cloud request failed with HTTP ${response.status}.`);
       if (!body || typeof body !== 'object') throw new Error('Cloud request returned no JSON result.');
       return body.result && typeof body.result === 'object' ? body.result : body;

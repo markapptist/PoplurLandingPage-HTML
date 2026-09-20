@@ -125,28 +125,32 @@
   transform: rotateY(-17deg) rotateX(5deg) rotateZ(1.5deg); transition: transform .9s cubic-bezier(.2, .7, .2, 1); will-change: transform; }
 .pl-iphone-screen { position: absolute; inset: 11px; border-radius: 42px; overflow: hidden; background: #141018; }
 .pl-iphone-island { position: absolute; top: 22px; left: 50%; width: 96px; height: 28px; transform: translateX(-50%); border-radius: 999px; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, .04); }
-/* A chapter is a grid of two cells — copy and phone — that hug the centre with a gap; the side decides the order. */
+/* A chapter is a grid of two cells — copy and object — that hug the centre with a gap; the side decides the order. */
 .pl-step { display: grid; grid-template-columns: minmax(0, 560px) auto; justify-content: center; align-items: center; column-gap: clamp(48px, 6vw, 110px); row-gap: 40px;
   min-height: 100vh; padding: 8vh clamp(20px, 5vw, 80px); }
 .pl-step[data-side="left"] { grid-template-columns: auto minmax(0, 560px); }
-.pl-step[data-side="left"] .pl-step-phone { order: -1; }
+.pl-step[data-side="left"] .pl-step-object { order: -1; }
 .pl-step[data-side="top"], .pl-step[data-side="bottom"] { grid-template-columns: minmax(0, 640px); justify-items: center; text-align: center; }
-.pl-step[data-side="top"] .pl-step-phone { order: -1; }
+.pl-step[data-side="top"] .pl-step-object { order: -1; }
 .pl-step[data-side="top"] .pl-step-copy p, .pl-step[data-side="bottom"] .pl-step-copy p { margin-left: auto; margin-right: auto; }
 .pl-step-copy { min-width: 0; }
 .pl-step h2 { font-size: clamp(30px, 4.2vw, 52px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 700; margin-top: 14px; }
 .pl-step p { font-size: 18px; color: var(--ink-2); margin-top: 18px; max-width: 44ch; }
 .pl-step .pl-fine { font-size: 13px; color: var(--ink-3); margin-top: 14px; }
-/* The phone: big beside the copy, a touch smaller stacked over or under it, each on the chapter's own slant. */
-.pl-step-phone { perspective: 1600px; padding: 24px 0; }
-.pl-step-phone .pl-iphone { width: min(400px, 30vw); transition: none;
-  transform: rotateY(calc(var(--ry, 0) * 1deg)) rotateX(calc(var(--rx, 0) * 1deg)) rotateZ(calc(var(--rz, 0) * 1deg)); }
-.pl-step[data-side="top"] .pl-step-phone .pl-iphone, .pl-step[data-side="bottom"] .pl-step-phone .pl-iphone { width: min(360px, 34vw); }
-/* Narrow screens: every chapter stacks, phone first, still large. */
+/* The object: the app's clay GLB, live, big beside the copy and a touch smaller stacked over or under it. */
+.pl-step-object { display: grid; place-items: center; }
+.pl-clay { position: relative; width: min(520px, 38vw); aspect-ratio: 1; touch-action: pan-y; cursor: grab; }
+.pl-clay:active { cursor: grabbing; }
+.pl-clay canvas { display: block; }
+/* Its shadow on the table, under the object, so it sits rather than floats. */
+.pl-clay::after { content: ''; position: absolute; left: 18%; right: 18%; bottom: 4%; height: 10%; border-radius: 50%; background: radial-gradient(ellipse at center, rgba(40, 0, 24, .34), transparent 70%); filter: blur(6px); opacity: 0; transition: opacity .8s ease; z-index: -1; }
+.pl-clay.is-ready::after { opacity: 1; }
+.pl-step[data-side="top"] .pl-clay, .pl-step[data-side="bottom"] .pl-clay { width: min(420px, 34vw); }
+/* Narrow screens: every chapter stacks, object first, still large. */
 @media (max-width: 860px) {
-  .pl-step, .pl-step[data-side] { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; min-height: 0; padding: 7vh 20px; row-gap: 28px; }
-  .pl-step[data-side] .pl-step-phone { order: -1; padding: 12px 0; }
-  .pl-step-phone .pl-iphone, .pl-step[data-side="top"] .pl-step-phone .pl-iphone, .pl-step[data-side="bottom"] .pl-step-phone .pl-iphone { width: min(300px, 66vw); border-radius: 44px; }
+  .pl-step, .pl-step[data-side] { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; min-height: 0; padding: 7vh 20px; row-gap: 20px; }
+  .pl-step[data-side] .pl-step-object { order: -1; }
+  .pl-clay, .pl-step[data-side="top"] .pl-clay, .pl-step[data-side="bottom"] .pl-clay { width: min(320px, 74vw); }
   .pl-step-copy p { margin-left: auto; margin-right: auto; }
   .pl-step h2 { font-size: clamp(24px, 6.5vw, 36px); }
   .pl-step p { font-size: 15px; }

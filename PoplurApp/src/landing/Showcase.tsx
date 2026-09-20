@@ -1,14 +1,16 @@
 import { Image } from 'expo-image';
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useRef } from 'react';
+import ClayObject from './ClayObject';
 import ShaderText from './ShaderText';
 import { centreBell, onScrollFrame, reducedMotion } from './scroll';
 
-// Every chapter has its own iPhone, large, laid out beside its copy — right
-// of it, left of it, above it or below it — on its own slant, so scrolling
-// reads as a walk past six different arrangements and the phone is never over
-// the words. The frame is CSS; every screen is a real render of the app
-// (approved Good Copy stills today, device captures as they arrive) — never a
-// drawn stand-in.
+// Every chapter shows one of the app's own clay objects, live (ClayObject):
+// the globe, the reach trophy, the Feed's TV, the pin, the Kodak, the Store's
+// bag — the same GLBs the app's navigator cube wears — laid out beside its
+// copy: right of it, left of it, above it or below it, so scrolling reads as
+// a walk past six different arrangements and the object is never over the
+// words. The iPhone frame stays for the hero when there is no TV spot; its
+// screens are real renders of the app, never a drawn stand-in.
 
 export type ShowcaseStep = {
   id: string;
@@ -18,19 +20,22 @@ export type ShowcaseStep = {
   title: string;
   body: string;
   fine?: string;
-  /** a real app screen (390×845), or null while a capture is still owed */
-  screen: number | null;
+  /** the app's clay object for this chapter: a GLB under public/models/landing */
+  model: string;
+  /** what the object is, for a screen reader */
+  object: string;
 };
 
-/** Where a step's phone stands relative to its copy, and its slant. */
+/** Where a step's object stands relative to its copy, and how it is turned. */
 export type Pose = {
   side: 'right' | 'left' | 'top' | 'bottom';
-  /** degrees; small around Z beside text — a big tilt widens the phone into the column next to it */
-  rz: number; ry: number; rx: number;
+  /** starting turn, degrees, and lean toward the camera, radians */
+  yaw: number; pitch: number;
 };
 
 // Real renders only: the clay map from the map surface, the runner's recorded
 // app frames (a signed-in session, phone-sized), and approved Good Copy stills.
+// The hero's phone (when there is no TV spot) wears these.
 export const SCREENS = {
   map: require('@/assets/images/landing/screens/map.jpg'),
   radius: require('@/assets/images/landing/screens/radius.jpg'),
@@ -44,41 +49,39 @@ export const SCREENS = {
 export const SHOWCASE_STEPS: ShowcaseStep[] = [
   { id: 'map', nav: 'Map', eyebrow: 'The map is the home screen', title: 'See what is popping around you.',
     body: 'A stylised 3D clay world with live weather and time of day. Every pop sits on the map where it was made — you see what is near, claim ground, and watch pops spread.',
-    screen: SCREENS.map },
+    model: '/models/landing/poplur-globe-lite.glb', object: 'The Poplur globe' },
   { id: 'radius', nav: 'Radius', eyebrow: 'Every pop has a radius', title: 'Reach is earned per post, not per account.',
     body: 'A pop starts with a 5 km radius. As people engage, the radius grows — all the way to the whole world. Left alone, it decays and the pop disappears. Someone with no following can be seen by everyone around them.',
-    fine: 'Earned reach can be claimed on your next pop, once. It is never minted by posting more.', screen: SCREENS.radius },
+    fine: 'Earned reach can be claimed on your next pop, once. It is never minted by posting more.',
+    model: '/models/landing/poplur_cube_trophy.glb', object: 'The reach trophy' },
   { id: 'feed', nav: 'Feed', eyebrow: 'Found without followers', title: 'Inside a radius, you are in the feed.',
     body: 'Whether or not you follow the poster. Discovery is interception, not subscription: the feed is what has reached where you stand.',
-    screen: SCREENS.feed },
+    model: '/models/landing/clay_tv_navigator.glb', object: 'The Feed television' },
   { id: 'place', nav: 'Place', eyebrow: 'Post from where you stand', title: 'One live pop per place.',
     body: 'Free posting is where you are. Post again within 5 km of your own pop and it replaces it, carrying its reach forward — the map stays honest about who was actually there.',
-    fine: 'Posting anywhere else is a placement, and placements are paid.', screen: SCREENS.place },
+    fine: 'Posting anywhere else is a placement, and placements are paid.',
+    model: '/models/landing/poplur_pin_lite.glb', object: 'The map pin' },
   { id: 'types', nav: 'Post types', eyebrow: 'More than photos', title: 'Photos, carousels, video, music, podcasts.',
     body: 'Games and apps are designed into the same post pipeline. AI tools help people make posts and recommend where to post, by comparing how similar content has spread in different regions.',
-    screen: SCREENS.types },
+    model: '/models/landing/poplur_camera_kodak.glb', object: 'The camera' },
   { id: 'business', nav: 'Business', eyebrow: 'For businesses', title: 'Reach the people who can walk in.',
     body: 'A café posts the same way anyone does; its pop reaches the people nearby. Businesses pay to extend a radius or to place a pop somewhere they are not.',
-    screen: SCREENS.store },
+    model: '/models/landing/poplur_cube_shopping_bag.glb', object: 'The Store bag' },
 ];
 
 // One pose per step in SHOWCASE_STEPS order: right, left, above, below, left,
-// right — six arrangements, six slants, so the walk down the page never
-// repeats a picture.
+// right — six arrangements, each object starting from its own turn, so the
+// walk down the page never repeats a picture.
 export const POSES: readonly Pose[] = [
-  { side: 'right',  rz: 2,   ry: -17, rx: 5 },
-  { side: 'left',   rz: -6,  ry: 16,  rx: 4 },
-  { side: 'top',    rz: -12, ry: 0,   rx: 8 },
-  { side: 'bottom', rz: 9,   ry: -8,  rx: -4 },
-  { side: 'left',   rz: 7,   ry: 18,  rx: 3 },
-  { side: 'right',  rz: -5,  ry: -20, rx: 6 },
+  { side: 'right',  yaw: -28, pitch: 0.16 },
+  { side: 'left',   yaw: 24,  pitch: 0.2 },
+  { side: 'top',    yaw: -12, pitch: 0.26 },
+  { side: 'bottom', yaw: 34,  pitch: 0.12 },
+  { side: 'left',   yaw: -40, pitch: 0.18 },
+  { side: 'right',  yaw: 18,  pitch: 0.22 },
 ];
 
 export const poseForStep = (index: number): Pose => POSES[index % POSES.length];
-
-/** Which screen the phone shows for a step: its own, else the app's splash —
- *  a real screen, and honest about a capture that has not arrived. */
-export const screenForStep = (step: ShowcaseStep) => step.screen ?? SCREENS.splash;
 
 export function IPhone({ screens, active, className = '' }: { screens: readonly number[]; active: number; className?: string }) {
   return <div className={`pl-iphone ${className}`} aria-hidden="true">
@@ -106,7 +109,6 @@ export default function Showcase({ steps = SHOWCASE_STEPS }: { steps?: ShowcaseS
   return <section className="pl-showcase">
     {steps.map((step, i) => {
       const pose = poseForStep(i);
-      const slant = { '--rz': pose.rz, '--ry': pose.ry, '--rx': pose.rx } as CSSProperties;
       return <article key={step.id} id={step.id} ref={el => { refs.current[i] = el; }} data-side={pose.side} className="pl-step">
         <div className="pl-step-copy">
           <div className="pl-eyebrow">{step.eyebrow}</div>
@@ -114,8 +116,8 @@ export default function Showcase({ steps = SHOWCASE_STEPS }: { steps?: ShowcaseS
           <p>{step.body}</p>
           {step.fine && <p className="pl-fine">{step.fine}</p>}
         </div>
-        <div className="pl-step-phone" style={slant} aria-hidden="true">
-          <IPhone screens={[screenForStep(step)]} active={0} />
+        <div className="pl-step-object">
+          <ClayObject model={step.model} label={step.object} yaw={pose.yaw} pitch={pose.pitch} />
         </div>
       </article>;
     })}

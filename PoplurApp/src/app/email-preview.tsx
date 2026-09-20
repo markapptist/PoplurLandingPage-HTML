@@ -1,6 +1,6 @@
 import { Asset } from 'expo-asset';
 import { Link, useLocalSearchParams } from 'expo-router';
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -19,9 +19,11 @@ import {
 // /email-preview shows the beta invite exactly as the sender builds it: the
 // same createBetaInviteHtml, with the bundled images in place of the inline
 // parts. It rolls one of the four designs per load the way the sender rolls
-// one per email; ?variant=pink|paper|night|postcard pins one. It used to be a
-// hand-made lookalike, which drifted from the real mail the moment the
-// template changed.
+// one per email; ?variant=pink|paper|night|postcard pins one. The roll
+// happens after mount, as the landing hero's does: the route is prerendered,
+// and a design baked in at build time would disagree with the client's roll
+// on three loads in four (React 418). It used to be a hand-made lookalike,
+// which drifted from the real mail the moment the template changed.
 const ICON = require('@/assets/images/landing/app-icon.png');
 const MAILBOX = require('@/assets/emails/mailbox.png');
 const ENVELOPE = require('@/assets/emails/envelope.png');
@@ -32,10 +34,10 @@ const ANDROID_INK = require('@/assets/emails/android-ink.png');
 
 export default function EmailPreviewScreen() {
   const params = useLocalSearchParams<{ variant?: string }>();
-  const variant: BetaInviteVariant = useMemo(
-    () => (isBetaInviteVariant(params.variant) ? params.variant : pickBetaInviteVariant()),
-    [params.variant],
-  );
+  const [variant, setVariant] = useState<BetaInviteVariant | null>(null);
+  useEffect(() => {
+    setVariant(isBetaInviteVariant(params.variant) ? params.variant : pickBetaInviteVariant());
+  }, [params.variant]);
   if (Platform.OS !== 'web') {
     return (
       <ScrollView contentContainerStyle={styles.native}>
@@ -44,7 +46,7 @@ export default function EmailPreviewScreen() {
       </ScrollView>
     );
   }
-  const html = createBetaInviteHtml({
+  const html = variant && createBetaInviteHtml({
     variant,
     images: {
       icon: Asset.fromModule(ICON).uri,
@@ -63,13 +65,13 @@ export default function EmailPreviewScreen() {
         <ThemedText style={styles.metaLine}><ThemedText type="smallBold">Subject</ThemedText> {betaInviteSubject}</ThemedText>
         <ThemedText style={styles.metaLine}><ThemedText type="smallBold">Preview</ThemedText> {betaInvitePreview}</ThemedText>
         <View style={styles.variants}>
-          <ThemedText style={styles.metaLine}><ThemedText type="smallBold">Design</ThemedText> {variant} · </ThemedText>
+          <ThemedText style={styles.metaLine}><ThemedText type="smallBold">Design</ThemedText> {variant ?? '…'} · </ThemedText>
           {BETA_INVITE_VARIANTS.map(id => (
             <Link key={id} href={{ pathname: '/email-preview', params: { variant: id } }} style={[styles.variantLink, id === variant && styles.variantCurrent]}>{id}</Link>
           ))}
         </View>
       </View>
-      <iframe title="Beta invite email" srcDoc={html} style={{ width: '100%', maxWidth: 720, height: 1320, border: 0, borderRadius: 14, background: '#f6f6f8', display: 'block', margin: '0 auto' }} />
+      {html && <iframe title="Beta invite email" srcDoc={html} style={{ width: '100%', maxWidth: 720, height: 1320, border: 0, borderRadius: 14, background: '#f6f6f8', display: 'block', margin: '0 auto' }} />}
     </View>
   );
 }

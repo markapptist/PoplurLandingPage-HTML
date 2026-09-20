@@ -10,6 +10,9 @@ export type HeroSpot = { id: string; video: number; poster: number }
 
 export const HERO_SPOTS: readonly HeroSpot[] = [
   { id: 'kensington', video: require('@/assets/videos/landing/tv-spot.mp4'), poster: require('@/assets/images/landing/tv-spot-poster.jpg') },
+  // Spot 2, "Radius" (.codex/landing-tv-spot-2-script.md): wordless, aerial,
+  // the ring drawn by people around Noor's yellow coat, 8 s.
+  { id: 'radius', video: require('@/assets/videos/landing/tv-spot-2.mp4'), poster: require('@/assets/images/landing/tv-spot-2-poster.jpg') },
 ]
 
 /** Remembers only which spot the last visit played, so this one differs. */

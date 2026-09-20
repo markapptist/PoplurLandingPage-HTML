@@ -963,6 +963,7 @@ test('the live runner paces its lap with these helpers and treats an unreachable
   assert.match(source, /getByRole\('alertdialog', \{ name: 'This pop replaces one of yours' \}\)/, 'the one-pop-per-place prompt is answered, not waited out');
   assert.match(source, /name: 'Replace it', exact: true/, 'answered by replacing the actor\'s own pop');
   assert.match(source, /\$\{new Date\(\)\.toISOString\(\)\} \[live\]/, 'log lines carry a clock');
+  assert.match(source, /await context\.route\('\*\*\/\*', async route => \{\n\s+try \{ await guardRoute\(route\); \} catch/, 'a request-guard failure aborts that request instead of exiting the process');
 });
 
 test('the app runner waits out a Cloud Run "no instance to spare" answer instead of retiring the cohort on it', async () => {

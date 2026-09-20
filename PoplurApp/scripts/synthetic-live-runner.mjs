@@ -473,7 +473,7 @@ export function createSyntheticLiveRunner({
       }
       socket.connectToServer();
     });
-    await context.route('**/*', async route => {
+    const guardRoute = async route => {
       const request = route.request();
       const target = request.url();
       if (request.isNavigationRequest() && target !== 'about:blank') {
@@ -543,6 +543,18 @@ export function createSyntheticLiveRunner({
         return;
       }
       await route.continue();
+    };
+    // One request's failure must stay one request's failure. 20 Sep 2026
+    // 05:00: route.fetch threw "socket hang up" on an upload while the
+    // machine sat at load 900+; the rejection had no catcher, Node exited 1,
+    // launchd respawned the runner paused, and every actor's counters were
+    // gone. Abort that request and say so; the actor's own step reports it.
+    await context.route('**/*', async route => {
+      try { await guardRoute(route); } catch (error) {
+        const reason = error instanceof Error ? error.message.split('\n')[0].slice(0, 120) : String(error);
+        log(`${actor.actorId} request guard failed for ${route.request().url().slice(0, 100)}: ${reason}`);
+        await route.abort('failed').catch(() => {});
+      }
     });
     page.on('popup', popup => { void popup.close().catch(() => {}); });
     page.on('download', download => { void download.cancel().catch(() => {}); });

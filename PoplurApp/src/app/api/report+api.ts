@@ -17,6 +17,7 @@
 
 import { BETA_INVITE_ASSET_ORIGIN, betaInviteHostedImages, createReportReceiptHtml, createReportReceiptText, reportReceiptSubject } from '@/emails/betaInviteEmail';
 import { RATINGS, REPORT_ROUNDS, REPORT_VERSION, TASK_RESULTS, currentRound, pointsFor, roundByNumber, type BetaReport, type Platform, type RatingId, type TaskResult } from '@/report/betaTestPlan';
+import { recordTesterEvent } from '@/server/betaFunnel.server';
 import { maskEmail } from '@/server/betaNda.server';
 import { verifyReportToken, type ReportTokenCheck } from '@/server/betaReport.server';
 import { replyToAddress, sendWithResend } from '@/server/resend.server';
@@ -43,6 +44,7 @@ export async function GET(request: Request) {
   if (!token) return Response.json({ ok: true, verified: false, round: round.number, version: REPORT_VERSION });
   const check = verifyReportToken(token);
   if (!check.ok) return Response.json({ ok: false, reason: check.reason, error: REASONS[check.reason] }, { status: 400 });
+  await recordTesterEvent(check.email, 'report_opened', { round: round.number });
   return Response.json({ ok: true, verified: true, email: maskEmail(check.email), round: round.number, version: REPORT_VERSION });
 }
 
@@ -159,6 +161,7 @@ export async function POST(request: Request) {
         subject: reportReceiptSubject(report, true),
         html: createReportReceiptHtml(report, { forPoplur: true, images }),
         text: createReportReceiptText(report, { forPoplur: true }),
+        tag: 'record',
         attachments: [{
           filename: `poplur-report-${report.round}-${email.replace(/[^a-z0-9]+/gi, '-')}-${receivedAt.toISOString().slice(0, 10)}.json`,
           content: Buffer.from(JSON.stringify(report, null, 2), 'utf8').toString('base64'),
@@ -174,10 +177,16 @@ export async function POST(request: Request) {
     subject: reportReceiptSubject(report),
     html: createReportReceiptHtml(report, { images }),
     text: createReportReceiptText(report),
+    tag: 'report-receipt',
+  });
+
+  const funnel = await recordTesterEvent(email, 'report_filed', {
+    round: round.number, roundName: round.name, points, late, verified, platform, device, name,
   });
 
   return Response.json({
     ok: true,
+    recorded: funnel.recorded,
     receivedAt: report.receivedAt,
     round: round.number,
     late,

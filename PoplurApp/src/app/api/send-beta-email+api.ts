@@ -15,7 +15,9 @@ import {
   isBetaInviteVariant,
   pickBetaInviteVariant,
 } from '@/emails/betaInviteEmail';
+import { linkVisitor, recordTesterEvent } from '@/server/betaFunnel.server';
 import { createNdaToken, ndaTokenConfigured } from '@/server/betaNda.server';
+import { readVisitorId } from '@/server/betaVisitor.server';
 import { replyToAddress, sendWithResend } from '@/server/resend.server';
 import { siteOrigin } from '@/server/site.server';
 
@@ -65,9 +67,15 @@ export async function POST(request: Request) {
     subject: BETA_INVITE_SUBJECTS.nda,
     html: createBetaInviteHtml({ images, variant, stage: 'nda', ndaUrl }),
     text: createBetaInviteText({ stage: 'nda', ndaUrl }),
+    tag: 'invite',
   });
 
   if (!sent.ok) return Response.json({ error: sent.error }, { status: 502 });
 
-  return Response.json({ id: sent.id, ok: true, variant, stage: 'nda' });
+  // The funnel: this address entered, from this visitor (server/betaFunnel.server.ts).
+  const visitorId = readVisitorId(request);
+  const funnel = await recordTesterEvent(email, 'email_entered', { variant, resendId: sent.id }, visitorId);
+  if (visitorId) await linkVisitor(visitorId, email);
+
+  return Response.json({ id: sent.id, ok: true, variant, stage: 'nda', recorded: funnel.recorded });
 }

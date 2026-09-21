@@ -40,6 +40,9 @@ export type ReportRound = {
   /** Toronto end of the due day, as UTC. */
   dueAt: string;
   dueLabel: string;
+  /** The week's Google Form, when there is one: the report page links it
+   *  through /api/go so the funnel sees it opened. Empty until Mark makes it. */
+  formUrl?: string;
   blurb: string;
   tasks: ReportTask[];
   questions: ReportQuestion[];

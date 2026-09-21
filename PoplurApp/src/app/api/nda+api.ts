@@ -11,9 +11,9 @@
 //
 // The record of an acceptance is those two emails: the signer's copy and
 // Poplur's, each carrying the name, address, time, agreement version and the
-// SHA-256 of the exact text signed. There is no database write from here —
-// the server holds no Firebase credentials — so keep BETA_NDA_RECORDS_TO
-// pointed at an inbox that is kept.
+// SHA-256 of the exact text signed. Keep BETA_NDA_RECORDS_TO pointed at an
+// inbox that is kept. The funnel (server/betaFunnel.server.ts) also notes the
+// link being opened and the signature, when the store is configured.
 
 import {
   BETA_INVITE_ASSET_ORIGIN,
@@ -23,12 +23,12 @@ import {
   createBetaInviteText,
   createNdaReceiptHtml,
   createNdaReceiptText,
-  getBetaInviteLinks,
   ndaReceiptSubject,
   pickBetaInviteVariant,
 } from '@/emails/betaInviteEmail';
 import { NDA_VERSION, type NdaAcceptance } from '@/nda/betaTesterNda';
 import { REPORT_FORM_URL } from '@/report/betaTestPlan';
+import { recordTesterEvent } from '@/server/betaFunnel.server';
 import { maskEmail, ndaSha256, verifyNdaToken, type NdaTokenCheck } from '@/server/betaNda.server';
 import { createReportToken } from '@/server/betaReport.server';
 import { replyToAddress, sendWithResend } from '@/server/resend.server';
@@ -45,6 +45,7 @@ export async function GET(request: Request) {
   const token = new URL(request.url).searchParams.get('t');
   const check = verifyNdaToken(token);
   if (!check.ok) return Response.json({ ok: false, reason: check.reason, error: REASONS[check.reason] }, { status: 400 });
+  await recordTesterEvent(check.email, 'nda_opened', { userAgent: (request.headers.get('user-agent') ?? '').slice(0, 200) });
   return Response.json({ ok: true, email: maskEmail(check.email), version: NDA_VERSION });
 }
 
@@ -96,6 +97,7 @@ export async function POST(request: Request) {
     subject: ndaReceiptSubject,
     html: createNdaReceiptHtml(acceptance, { images }),
     text: createNdaReceiptText(acceptance),
+    tag: 'nda-receipt',
   });
   if (!receipt.ok) return Response.json({ error: receipt.error }, { status: 502 });
 
@@ -105,25 +107,37 @@ export async function POST(request: Request) {
         subject: `Signed: ${acceptance.name} · ${acceptance.email}`,
         html: createNdaReceiptHtml(acceptance, { forPoplur: true, images }),
         text: createNdaReceiptText(acceptance, { forPoplur: true }),
+        tag: 'record',
       })
     : null;
 
   // The tester's own report page (app/report.tsx) travels with the links.
-  const reportUrl = REPORT_FORM_URL || `${siteOrigin()}/report?t=${encodeURIComponent(createReportToken(acceptance.email))}`;
+  // Every link the tester gets passes through /api/go with their report token,
+  // so the funnel sees which store they chose and when the report page opened.
+  const reportToken = createReportToken(acceptance.email);
+  const go = (to: string) => `${siteOrigin()}/api/go?to=${to}&t=${encodeURIComponent(reportToken)}`;
+  const reportUrl = REPORT_FORM_URL || go('report');
+  const storeLinks = { iosUrl: go('ios'), androidUrl: go('android') };
   const variant = pickBetaInviteVariant();
   const links = await sendWithResend({
     to: acceptance.email,
     replyTo,
     subject: BETA_INVITE_SUBJECTS.links,
-    html: createBetaInviteHtml({ images, variant, stage: 'links', reportUrl }),
-    text: createBetaInviteText({ stage: 'links', reportUrl }),
+    html: createBetaInviteHtml({ images, variant, stage: 'links', reportUrl, ...storeLinks }),
+    text: createBetaInviteText({ stage: 'links', reportUrl, ...storeLinks }),
+    tag: 'links',
+  });
+
+  await recordTesterEvent(acceptance.email, 'nda_signed', {
+    name: acceptance.name, discord: acceptance.discord, ndaVersion: acceptance.ndaVersion,
+    receiptId: receipt.id, linksId: links.ok ? links.id : null, linksSent: links.ok,
   });
 
   return Response.json({
     ok: true,
     signedAt: acceptance.signedAt,
     version: acceptance.ndaVersion,
-    links: getBetaInviteLinks(),
+    links: storeLinks,
     reportUrl,
     emailed: { receipt: receipt.ok, links: links.ok, record: record ? record.ok : false },
   });

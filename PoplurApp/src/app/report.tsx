@@ -186,6 +186,10 @@ export default function ReportScreen() {
           <form onSubmit={submit}>
             <h1 className="rp-title">Report {current.number}: {current.name}</h1>
             <p className="rp-sub">{current.blurb} About five minutes: run each test on your phone, tap what happened, then the questions. Due <b>{current.dueLabel}</b> for {REPORT_POINTS} points (late still counts for half, until the next one is due).</p>
+            {current.formUrl && <div className="rp-form">
+              <b>This week&rsquo;s form.</b> Part of the report: a few questions on Google Forms, then come back here for the tests.
+              <a className="rp-form-link" href={`/api/go?to=form&r=${current.number}${token ? `&t=${encodeURIComponent(token)}` : ''}`} target="_blank" rel="noreferrer">Open the week {current.number} form</a>
+            </div>}
             {verified
               ? <div className="rp-for">This link belongs to <b>{check.email}</b>. Your report is recorded against that address.</div>
               : <div className="rp-for">No personal link? That is fine: use the <b>email you signed the tester agreement with</b> below, so your points land on the right name.</div>}

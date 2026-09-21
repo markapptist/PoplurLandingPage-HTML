@@ -1,0 +1,45 @@
+/* The funnel page (app/funnel.tsx). Same voice as the report page: ink on
+   paper, one pink, no chrome. */
+.fn { --ink: #111114; --ink-2: #5c5c66; --ink-3: #9a9aa3; --line: #e6e6ea; --paper: #fff; --pink: #ff2d96;
+  min-height: 100vh; background: var(--paper); color: var(--ink); padding: 32px 16px 64px; box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+.fn-eyebrow { margin: 0 0 4px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--pink); font-weight: 700; }
+.fn-title { margin: 0; font-size: 34px; letter-spacing: -.02em; font-weight: 800; }
+.fn-gate { max-width: 360px; margin: 12vh auto 0; display: grid; gap: 10px; }
+.fn-label { font-size: 13px; color: var(--ink-2); margin-top: 12px; }
+.fn-input { font: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafafa; color: var(--ink); }
+.fn-input:focus { outline: none; border-color: var(--pink); background: #fff; }
+.fn-btn { font: inherit; font-weight: 700; font-size: 15px; padding: 10px 16px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; cursor: pointer; }
+.fn-btn:disabled { opacity: .45; cursor: default; }
+.fn-error { color: #c8102e; font-size: 14px; margin: 8px 0; }
+.fn-head { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; justify-content: space-between; max-width: 1200px; margin: 0 auto 20px; }
+.fn-tools { display: flex; gap: 8px; align-items: center; }
+.fn-filter { width: 220px; }
+.fn-totals { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; max-width: 1200px; margin: 0 auto 8px; }
+.fn-total { border: 1px solid var(--line); border-radius: 12px; padding: 10px 8px; display: grid; gap: 2px; text-align: center; }
+.fn-num { font-size: 22px; font-weight: 800; letter-spacing: -.02em; }
+.fn-cap { font-size: 11px; color: var(--ink-2); }
+.fn-meta { max-width: 1200px; margin: 6px auto 12px; color: var(--ink-3); font-size: 13px; }
+.fn-tablewrap { max-width: 1200px; margin: 0 auto; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.fn-table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 14px; }
+.fn-table th { font-size: 11px; font-weight: 600; color: var(--ink-2); text-align: center; padding: 6px 4px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.fn-th-email { text-align: left !important; }
+.fn-row { cursor: pointer; }
+.fn-row:hover { background: #fafafa; }
+.fn-row.is-open { background: #fff5fa; }
+.fn-row td { padding: 9px 4px; border-bottom: 1px solid var(--line); text-align: center; }
+.fn-email { text-align: left !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fn-flag { margin-left: 8px; font-style: normal; font-size: 11px; color: #c8102e; }
+.fn-cell { color: var(--ink-3); }
+.fn-cell.is-on { color: var(--pink); font-weight: 700; }
+.fn-last { white-space: nowrap; color: var(--ink-2); font-size: 13px; }
+.fn-empty { padding: 28px 8px !important; color: var(--ink-3); text-align: center; }
+.fn-detail td { padding: 8px 12px 14px; background: #fff5fa; border-bottom: 1px solid var(--line); }
+.fn-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.fn-timeline li { display: grid; grid-template-columns: 130px 130px 1fr; gap: 10px; align-items: baseline; }
+.fn-tl-when { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.fn-tl-stage { font-weight: 600; }
+.fn-tl-detail { color: var(--ink-2); word-break: break-word; }
+@media (max-width: 640px) { .fn-title { font-size: 28px; } .fn-timeline li { grid-template-columns: 1fr; gap: 2px; } }
+@media (prefers-color-scheme: dark) { .fn { --ink: #f2f2f5; --ink-2: #b4b4bd; --ink-3: #7c7c86; --line: #2a2a31; --paper: #111114; }
+  .fn-input { background: #1a1a1f; } .fn-btn { background: #fff; color: #111; } .fn-row:hover { background: #17171c; } .fn-row.is-open, .fn-detail td { background: #22141c; } }

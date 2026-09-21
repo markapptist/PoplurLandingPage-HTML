@@ -16,6 +16,9 @@ export type ResendMessage = {
   text: string;
   replyTo?: string | null;
   attachments?: ResendAttachment[];
+  /** Which mail this is, for the webhook (api/resend-webhook+api.ts): `invite`,
+   *  `links`, `nda-receipt`, `report-receipt`, `record`. */
+  tag?: string;
 };
 
 export type ResendResult = { ok: true; id: string | null } | { ok: false; error: string };
@@ -34,6 +37,7 @@ export async function sendWithResend(message: ResendMessage): Promise<ResendResu
       subject: message.subject,
       html: message.html,
       text: message.text,
+      ...(message.tag ? { tags: [{ name: 'poplur', value: message.tag }] } : {}),
       ...(message.attachments && message.attachments.length
         ? { attachments: message.attachments.map(a => ({ filename: a.filename, content: a.content, ...(a.contentType ? { content_type: a.contentType } : {}) })) }
         : {}),

@@ -4,6 +4,7 @@ import { Slot } from 'expo-router';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { VisitBeacon } from '@/components/VisitBeacon';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -13,6 +14,7 @@ export default function TabLayout() {
         <title>Poplur</title>
       </Head>
       <AnimatedSplashOverlay />
+      <VisitBeacon />
       <Slot />
     </ThemeProvider>
   );

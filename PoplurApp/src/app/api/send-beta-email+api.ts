@@ -60,13 +60,16 @@ export async function POST(request: Request) {
   // One of the four designs per email, rolled here so the answer knows which.
   const variant = isBetaInviteVariant(body.variant) ? body.variant : pickBetaInviteVariant();
   const ndaUrl = `${siteOrigin()}/nda?t=${encodeURIComponent(createNdaToken(email))}`;
+  // With BETA_DISCORD_INVITE set, the mail leads with the Discord (Mark, 21 Sep: the
+  // sign-up must point at the Discord, not straight at the builds).
+  const discordUrl = (process.env.BETA_DISCORD_INVITE || '').trim() || undefined;
 
   const sent = await sendWithResend({
     to: email,
     replyTo: replyToAddress(),
     subject: BETA_INVITE_SUBJECTS.nda,
-    html: createBetaInviteHtml({ images, variant, stage: 'nda', ndaUrl }),
-    text: createBetaInviteText({ stage: 'nda', ndaUrl }),
+    html: createBetaInviteHtml({ images, variant, stage: 'nda', ndaUrl, discordUrl }),
+    text: createBetaInviteText({ stage: 'nda', ndaUrl, discordUrl }),
     tag: 'invite',
   });
 
@@ -77,5 +80,5 @@ export async function POST(request: Request) {
   const funnel = await recordTesterEvent(email, 'email_entered', { variant, resendId: sent.id }, visitorId);
   if (visitorId) await linkVisitor(visitorId, email);
 
-  return Response.json({ id: sent.id, ok: true, variant, stage: 'nda', recorded: funnel.recorded });
+  return Response.json({ id: sent.id, ok: true, variant, stage: 'nda', discord: !!discordUrl, recorded: funnel.recorded });
 }

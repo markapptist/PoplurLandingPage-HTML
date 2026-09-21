@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   return Response.json({ ok: true, email: maskEmail(check.email), version: NDA_VERSION });
 }
 
-type SignRequest = { t?: unknown; name?: unknown; discord?: unknown; agree?: unknown; adult?: unknown };
+type SignRequest = { t?: unknown; name?: unknown; discord?: unknown; referredBy?: unknown; androidEmail?: unknown; agree?: unknown; adult?: unknown };
 
 export async function POST(request: Request) {
   let body: SignRequest;
@@ -64,6 +64,11 @@ export async function POST(request: Request) {
 
   const name = typeof body.name === 'string' ? body.name.trim().replace(/\s+/g, ' ') : '';
   const discord = typeof body.discord === 'string' && body.discord.trim() ? body.discord.trim().slice(0, 64) : null;
+  const referredBy = typeof body.referredBy === 'string' && body.referredBy.trim() ? body.referredBy.trim().slice(0, 64) : null;
+  const androidEmail = typeof body.androidEmail === 'string' && body.androidEmail.trim() ? body.androidEmail.trim().toLowerCase().slice(0, 120) : null;
+  if (androidEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(androidEmail)) {
+    return Response.json({ error: 'The Google account email for Android does not look like an email address.' }, { status: 400 });
+  }
   if (name.length < 2 || name.length > 80 || !/\S\s+\S/.test(name)) {
     return Response.json({ error: 'Sign with your full name — first and last.' }, { status: 400 });
   }
@@ -79,6 +84,8 @@ export async function POST(request: Request) {
     name,
     email: check.email,
     discord,
+    referredBy,
+    androidEmail,
     signedAt: new Date().toISOString(),
     ndaVersion: NDA_VERSION,
     ndaSha256: ndaSha256(),

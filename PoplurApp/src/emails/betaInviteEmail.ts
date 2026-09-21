@@ -93,6 +93,9 @@ type BetaInviteEmailOptions = {
   ndaUrl?: string;
   /** The tester's report page (app/report.tsx); shown in the `links` stage when given. */
   reportUrl?: string;
+  /** The beta Discord's invite. Given, the `nda` stage leads with it: Discord first,
+   *  then the agreement (the runbook's Discord → #nda → Tester role → install). */
+  discordUrl?: string;
   /** A src per image. Missing keys fall back to the hosted copies on the site;
    *  an empty string leaves that image out. */
   images?: Partial<Record<BetaInviteImageKey, string>>;
@@ -145,9 +148,27 @@ type Content = {
   foot: string;
 };
 
-function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl: string }, ndaUrl: string, reportUrl = ''): Content {
+function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl: string }, ndaUrl: string, reportUrl = '', discordUrl = ''): Content {
   const tags = ['iOS · TestFlight', 'Android · Google Play', 'Toronto first'];
   const foot = 'You asked for beta access at';
+  if (stage === 'nda' && discordUrl) {
+    return {
+      eyebrow: 'Private beta',
+      title: 'Two steps and<br>you are in.',
+      lede: 'The beta runs in a small Discord: that is where the builds, the weekly check-ins and the other testers are. Join it, then read and sign the short tester agreement — a minute, no account — and your TestFlight and Google&nbsp;Play links unlock.',
+      buttons: [
+        { label: 'Join the beta Discord', href: discordUrl, mark: null },
+        { label: 'Read and sign the tester agreement', href: ndaUrl, mark: null },
+      ],
+      tags,
+      notes: [
+        { strong: 'In the Discord.', body: 'Say hi in #welcome. Once your agreement is in you get the Tester role, which opens #focus-group, #bugs and the voice chats.' },
+        { strong: 'The agreement.', body: 'What you see in the beta stays in the group; no screenshots outside it; we may use your feedback; the app is unfinished and may break; you can leave at any time; it is voluntary and separate from any school or job. The signing link in this email is yours alone and works for 14 days.' },
+      ],
+      reply: 'Questions? Reply to this email or ask in #welcome.',
+      foot,
+    };
+  }
   if (stage === 'nda') {
     return {
       eyebrow: 'Private beta',
@@ -175,7 +196,7 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
     notes: [
       { strong: 'Future updates.', body: 'New iPhone builds land in TestFlight and Android updates through Google Play. Keep this email: the links work again if you ever need to reinstall.' },
       { strong: 'What to try first.', body: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Every pop starts with a 5&nbsp;km radius and spreads as people engage.' },
-      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the prize board, five minutes apiece. The first is due Sun 4 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
+      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the points board, five minutes apiece. The first is due Sun 4 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
     ],
     reply: 'Have feedback? Reply to this email. Every note shapes the beta.',
     foot,
@@ -185,6 +206,25 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
 export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
   const { androidUrl, iosUrl } = getBetaInviteLinks(options);
   const stage = options.stage ?? 'links';
+  if (stage === 'nda' && options.discordUrl) {
+    return [
+      'Two steps and you are in the Poplur beta.',
+      '',
+      'The beta runs in a small Discord: that is where the builds, the weekly check-ins and the other testers are. Join it, then read and sign the short tester agreement — a minute, no account — and your TestFlight and Google Play links unlock.',
+      '',
+      `1. Join the beta Discord: ${options.discordUrl}`,
+      `2. Read and sign the tester agreement: ${options.ndaUrl ?? ''}`,
+      '',
+      'Once your agreement is in you get the Tester role, which opens #focus-group, #bugs and the voice chats.',
+      '',
+      'The agreement, in short: what you see in the beta stays in the group; no screenshots outside it; we may use your feedback; the app is unfinished and may break; you can leave at any time; it is voluntary and separate from any school or job. The signing link is yours alone and works for 14 days.',
+      '',
+      'Questions? Reply to this email or ask in #welcome.',
+      '',
+      'Poplur · Toronto beta',
+      'You asked for beta access at poplur.ca.',
+    ].join('\n');
+  }
   if (stage === 'nda') {
     return [
       'One thing before your Poplur beta links.',
@@ -211,7 +251,7 @@ export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
     '',
     'What to try first: open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Every pop starts with a 5 km radius and spreads as people engage.',
     '',
-    ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the prize board. The first is due Sun 4 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
+    ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the points board. The first is due Sun 4 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
     'Have feedback? Reply to this email. Every note shapes the beta.',
     '',
     'Poplur · Toronto beta',
@@ -488,7 +528,7 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
   const variant = options.variant ?? pickBetaInviteVariant();
   const stage = options.stage ?? 'links';
   if (stage === 'nda' && !options.ndaUrl) throw new Error('The nda stage needs ndaUrl.');
-  const content = contentFor(stage, getBetaInviteLinks(options), options.ndaUrl ?? '', options.reportUrl ?? '');
+  const content = contentFor(stage, getBetaInviteLinks(options), options.ndaUrl ?? '', options.reportUrl ?? '', options.discordUrl ?? '');
   return DESIGNS[variant]({ src: getBetaInviteImageSources(options), content, subject: BETA_INVITE_SUBJECTS[stage], preview: BETA_INVITE_PREVIEWS[stage] });
 }
 
@@ -524,6 +564,8 @@ export function createNdaReceiptHtml(acceptance: NdaAcceptance, { forPoplur = fa
     row('Signed by', esc(acceptance.name)),
     row('Email', esc(acceptance.email)),
     acceptance.discord ? row('Discord', esc(acceptance.discord)) : '',
+    acceptance.referredBy ? row('Referred by', esc(acceptance.referredBy)) : '',
+    acceptance.androidEmail ? row('Android Google account', esc(acceptance.androidEmail)) : '',
     row('Signed', `${esc(torontoTime(acceptance.signedAt))} (Toronto) · ${esc(acceptance.signedAt)}`),
     row('Agreement version', esc(acceptance.ndaVersion)),
     row('Document hash', `<span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;">${esc(acceptance.ndaSha256)}</span>`),
@@ -563,6 +605,8 @@ export function createNdaReceiptText(acceptance: NdaAcceptance, { forPoplur = fa
     `Signed by: ${acceptance.name}`,
     `Email: ${acceptance.email}`,
     ...(acceptance.discord ? [`Discord: ${acceptance.discord}`] : []),
+    ...(acceptance.referredBy ? [`Referred by: ${acceptance.referredBy}`] : []),
+    ...(acceptance.androidEmail ? [`Android Google account: ${acceptance.androidEmail}`] : []),
     `Signed: ${acceptance.signedAt}`,
     `Agreement version: ${acceptance.ndaVersion}`,
     `Document hash (SHA-256): ${acceptance.ndaSha256}`,

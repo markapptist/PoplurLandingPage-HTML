@@ -25,6 +25,8 @@ export default function NdaScreen() {
   const [check, setCheck] = useState<Check | 'loading'>('loading');
   const [name, setName] = useState('');
   const [discord, setDiscord] = useState('');
+  const [referredBy, setReferredBy] = useState('');
+  const [androidEmail, setAndroidEmail] = useState('');
   const [agree, setAgree] = useState(false);
   const [adult, setAdult] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -50,7 +52,7 @@ export default function NdaScreen() {
     setError(null);
     setBusy(true);
     try {
-      const r = await fetch('/api/nda', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: token, name, discord, agree, adult }) });
+      const r = await fetch('/api/nda', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: token, name, discord, referredBy, androidEmail, agree, adult }) });
       const body = (await r.json().catch(() => ({}))) as Partial<Signed> & { ok?: boolean; error?: string };
       if (!r.ok || !body.ok || !body.links || !body.signedAt) throw new Error(body.error || 'Could not record your signature. Try again.');
       setSigned({ signedAt: body.signedAt, links: body.links, reportUrl: body.reportUrl, emailed: body.emailed ?? { receipt: false, links: false, record: false } });
@@ -123,6 +125,8 @@ export default function NdaScreen() {
               <p>Your typed full name is your signature. We record it with your email address, the time, and the version of the agreement, and email you a signed copy.</p>
               <label className="nda-field"><span>Full name</span><input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} disabled={busy} placeholder="First and last name" required /></label>
               <label className="nda-field"><span>Discord username (optional)</span><input type="text" autoComplete="off" value={discord} onChange={e => setDiscord(e.target.value)} disabled={busy} placeholder="If you are in the focus-group Discord" /></label>
+              <label className="nda-field"><span>Referred by (optional)</span><input type="text" autoComplete="off" value={referredBy} onChange={e => setReferredBy(e.target.value)} disabled={busy} placeholder="The Discord username of whoever invited you" /></label>
+              <label className="nda-field"><span>Google account email for Android (optional)</span><input type="email" autoComplete="off" inputMode="email" value={androidEmail} onChange={e => setAndroidEmail(e.target.value)} disabled={busy} placeholder="The Google account on your Android phone, so we can add you to the test" /></label>
               <label className="nda-field"><span>Email</span><input type="text" value={check.email} disabled readOnly /></label>
               <label className="nda-check"><input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} disabled={busy} /><span>I have read this agreement and I agree to it.</span></label>
               <label className="nda-check"><input type="checkbox" checked={adult} onChange={e => setAdult(e.target.checked)} disabled={busy} /><span>I am at least 18 years old.</span></label>

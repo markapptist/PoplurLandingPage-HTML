@@ -115,6 +115,10 @@ export type NdaAcceptance = {
   name: string;
   email: string;
   discord: string | null;
+  /** The Discord username of whoever referred them (referrals score on the points board). */
+  referredBy: string | null;
+  /** The Google account on their Android phone, for Play Console's internal-testing list. */
+  androidEmail: string | null;
   signedAt: string;
   ndaVersion: string;
   ndaSha256: string;

@@ -22,7 +22,10 @@ export async function POST(request: Request) {
   const headers = new Headers();
   if (visitor.setCookie) headers.set('Set-Cookie', visitor.setCookie);
   if (TRACKED.test(path)) {
-    await recordVisit(visitor.id, { path, referrer, userAgent: request.headers.get('user-agent') });
+    // Vercel puts the request's rough location on the headers; nothing finer than a city.
+    const h = (name: string) => { const v = request.headers.get(name); if (!v) return null; try { return decodeURIComponent(v).slice(0, 80); } catch { return v.slice(0, 80); } };
+    const geo = { city: h('x-vercel-ip-city'), region: h('x-vercel-ip-country-region'), country: h('x-vercel-ip-country') };
+    await recordVisit(visitor.id, { path, referrer, userAgent: request.headers.get('user-agent'), geo });
   }
   return new Response(null, { status: 204, headers });
 }

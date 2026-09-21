@@ -13,7 +13,8 @@ import './../report/funnel.css';
 type Stage = string;
 type Event = { stage: Stage; at: string; detail?: Record<string, string | number | boolean | null> };
 type Tester = { id: string; email: string; firstSeenAt: string; lastSeenAt: string; furthestStage: Stage; furthestIndex: number; stageAt: Record<string, string>; eventCount: number; events: Event[] };
-type Summary = { configured: boolean; generatedAt: string; visitors: number; testers: Tester[]; reached: Record<Stage, number>; order: Stage[]; labels: Record<Stage, string> };
+type Visitor = { id: string; firstSeenAt: string; lastSeenAt: string; visits: number; paths: string[]; referrer: string | null; device: string; userAgent: string | null; city: string | null; region: string | null; country: string | null; testerId: string | null; email: string | null };
+type Summary = { configured: boolean; generatedAt: string; visitors: number; visitorRows?: Visitor[]; testers: Tester[]; reached: Record<Stage, number>; order: Stage[]; labels: Record<Stage, string> };
 
 const KEY = 'poplur.funnel.key';
 const COLUMNS: Stage[] = ['email_entered', 'invite_delivered', 'invite_opened', 'invite_clicked', 'nda_signed', 'links_opened', 'store_ios', 'store_android', 'form_opened', 'form_filed', 'report_filed'];
@@ -65,6 +66,13 @@ export default function FunnelPage() {
     const q = filter.trim().toLowerCase();
     return q ? data.testers.filter(t => t.email.includes(q)) : data.testers;
   }, [data, filter]);
+  const visitorRows = useMemo(() => {
+    const all = data?.visitorRows ?? [];
+    const q = filter.trim().toLowerCase();
+    return q ? all.filter(v => (v.email ?? '').includes(q) || (v.city ?? '').toLowerCase().includes(q) || v.device.toLowerCase().includes(q)) : all;
+  }, [data, filter]);
+  const where = (v: Visitor) => [v.city, v.region, v.country].filter(Boolean).join(', ') || '—';
+  const from = (v: Visitor) => v.referrer ? v.referrer.replace(/^https?:\/\//, '') : 'direct';
 
   if (Platform.OS !== 'web') {
     return <ScrollView contentContainerStyle={{ padding: 24 }}><ThemedText>Open poplur.ca/funnel in a browser.</ThemedText></ScrollView>;
@@ -101,6 +109,29 @@ export default function FunnelPage() {
         <div className="fn-total"><span className="fn-num">{data.visitors}</span><span className="fn-cap">Visitors</span></div>
         {COLUMNS.map(s => <div key={s} className="fn-total"><span className="fn-num">{data.reached[s] ?? 0}</span><span className="fn-cap">{data.labels[s] ?? s}</span></div>)}
       </section>
+      <h2 className="fn-sub">Visitors</h2>
+      <p className="fn-meta">Every browser the site has seen since 21 Sep, newest first. A visitor gets a name once they enter an email. Location is the connection's rough city, from Vercel; opens through a mail app's preview show as a bot.</p>
+      <div className="fn-tablewrap">
+        <table className="fn-table fn-vis">
+          <thead><tr>
+            <th className="fn-th-email">Visitor</th><th className="fn-th-left">Where</th><th className="fn-th-left">Device</th><th className="fn-th-left">From</th><th className="fn-th-left">Pages</th><th>Visits</th><th>First seen</th><th>Last seen</th>
+          </tr></thead>
+          <tbody>
+            {visitorRows.length === 0 && <tr><td className="fn-empty" colSpan={8}>{filter ? 'No visitor matches.' : 'No visits recorded yet.'}</td></tr>}
+            {visitorRows.map(v => <tr key={v.id} className="fn-row is-static" title={v.userAgent ?? ''}>
+              <td className="fn-email">{v.email ? <span>{v.email}</span> : <span className="fn-anon">anonymous · {v.id.slice(0, 6)}</span>}</td>
+              <td className="fn-left">{where(v)}</td>
+              <td className="fn-left">{v.device}</td>
+              <td className="fn-left">{from(v)}</td>
+              <td className="fn-left fn-paths">{v.paths.join(' → ') || '—'}</td>
+              <td>{v.visits}</td>
+              <td className="fn-last" title={when(v.firstSeenAt)}>{ago(v.firstSeenAt)}</td>
+              <td className="fn-last" title={when(v.lastSeenAt)}>{ago(v.lastSeenAt)}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      <h2 className="fn-sub">Testers</h2>
       <p className="fn-meta">{data.testers.length} tester{data.testers.length === 1 ? '' : 's'} · as of {when(data.generatedAt)} Toronto</p>
       <div className="fn-tablewrap">
         <table className="fn-table">

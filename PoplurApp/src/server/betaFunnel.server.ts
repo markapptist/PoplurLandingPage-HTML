@@ -170,17 +170,27 @@ export async function recordTesterEvent(email: string, stage: FunnelStage, detai
 
 /** A visit by someone with no email yet: counted per anonymous visitor id.
  *  Returns false when unconfigured so the beacon can stay silent. */
-export async function recordVisit(visitorId: string, detail: { path: string; referrer: string | null; userAgent: string | null }): Promise<RecordResult> {
+export type VisitGeo = { city: string | null; region: string | null; country: string | null };
+
+export async function recordVisit(visitorId: string, detail: { path: string; referrer: string | null; userAgent: string | null; geo?: VisitGeo | null }): Promise<RecordResult> {
   const db = firestore();
   if (!db) return { recorded: false };
   const at = new Date().toISOString();
   try {
     const doc = await db.get(VISITORS, visitorId);
     const data = doc?.fields ?? {};
+    // The last few distinct pages, oldest first, so the funnel can show a visitor's route.
+    const paths = (Array.isArray(data.paths) ? (data.paths as unknown[]).filter((x): x is string => typeof x === 'string') : []).filter(x => x !== detail.path);
+    paths.push(detail.path);
+    const geo = detail.geo;
     await db.merge(VISITORS, visitorId, {
       ...(detail.referrer ? { referrer: detail.referrer } : {}),
       ...(detail.userAgent ? { userAgent: detail.userAgent.slice(0, 300) } : {}),
+      ...(geo?.country ? { country: geo.country } : {}),
+      ...(geo?.region ? { region: geo.region } : {}),
+      ...(geo?.city ? { city: geo.city } : {}),
       lastPath: detail.path,
+      paths: paths.slice(-8),
       lastSeenAt: at,
       visits: Number(data.visits ?? 0) + 1,
       firstSeenAt: (data.firstSeenAt as string | undefined) ?? at,
@@ -216,10 +226,38 @@ export type TesterRow = {
   events: FunnelEvent[];
 };
 
+/** One anonymous visitor (the `pv` cookie), with the address it became if it entered one. */
+export type VisitorRow = {
+  id: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  visits: number;
+  paths: string[];
+  referrer: string | null;
+  device: string;
+  userAgent: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  testerId: string | null;
+  email: string | null;
+};
+
+/** "iPhone · Safari": enough to tell phones from laptops, nothing more. */
+export function describeDevice(ua: string | null): string {
+  if (!ua) return 'unknown';
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : 'other';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'other';
+  const bot = /bot|crawl|spider|preview|facebookexternalhit|Slackbot|WhatsApp|Discordbot/i.test(ua) ? ' · bot?' : '';
+  return `${os} · ${browser}${bot}`;
+}
+
 export type FunnelSummary = {
   configured: boolean;
   generatedAt: string;
   visitors: number;
+  /** Newest first; every visitor the beacon has seen, with their email once they entered one. */
+  visitorRows: VisitorRow[];
   testers: TesterRow[];
   /** How many testers reached each stage (at least once). */
   reached: Record<FunnelStage, number>;
@@ -230,9 +268,9 @@ export async function funnelSummary(limit = 500): Promise<FunnelSummary> {
   const generatedAt = new Date().toISOString();
   const reached = Object.fromEntries(FUNNEL_ORDER.map(s => [s, 0])) as Record<FunnelStage, number>;
   const db = firestore();
-  if (!db) return { configured: false, generatedAt, visitors: 0, testers: [], reached };
+  if (!db) return { configured: false, generatedAt, visitors: 0, visitorRows: [], testers: [], reached };
   try {
-    const [visitorCount, docs] = await Promise.all([db.count(VISITORS), db.list(TESTERS, 'lastSeenAt', limit)]);
+    const [visitorCount, docs, visitorDocs] = await Promise.all([db.count(VISITORS), db.list(TESTERS, 'lastSeenAt', limit), db.list(VISITORS, 'lastSeenAt', limit)]);
     const testers: TesterRow[] = docs.map(doc => {
       const d = doc.fields;
       const events = Array.isArray(d.events) ? (d.events as FunnelEvent[]) : [];
@@ -252,10 +290,32 @@ export async function funnelSummary(limit = 500): Promise<FunnelSummary> {
       };
     });
     reached.visited = Math.max(reached.visited, visitorCount);
-    return { configured: true, generatedAt, visitors: visitorCount, testers, reached };
+    const emailByTester = new Map(testers.map(t => [t.id, t.email]));
+    const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+    const visitorRows: VisitorRow[] = visitorDocs.map(doc => {
+      const d = doc.fields;
+      const testerId = str(d.testerId);
+      const paths = Array.isArray(d.paths) ? (d.paths as unknown[]).filter((x): x is string => typeof x === 'string') : (str(d.lastPath) ? [String(d.lastPath)] : []);
+      return {
+        id: doc.name.split('/').pop() ?? '',
+        firstSeenAt: String(d.firstSeenAt ?? d.lastSeenAt ?? ''),
+        lastSeenAt: String(d.lastSeenAt ?? ''),
+        visits: Number(d.visits ?? 0),
+        paths,
+        referrer: str(d.referrer),
+        device: describeDevice(str(d.userAgent)),
+        userAgent: str(d.userAgent),
+        city: str(d.city),
+        region: str(d.region),
+        country: str(d.country),
+        testerId,
+        email: testerId ? emailByTester.get(testerId) ?? null : null,
+      };
+    });
+    return { configured: true, generatedAt, visitors: visitorCount, visitorRows, testers, reached };
   } catch (error) {
     initError = error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300);
     console.error('[betaFunnel] summary failed:', initError);
-    return { configured: false, generatedAt, visitors: 0, testers: [], reached };
+    return { configured: false, generatedAt, visitors: 0, visitorRows: [], testers: [], reached };
   }
 }

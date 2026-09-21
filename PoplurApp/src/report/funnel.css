@@ -34,6 +34,13 @@
 .fn-cell.is-on { color: var(--pink); font-weight: 700; }
 .fn-last { white-space: nowrap; color: var(--ink-2); font-size: 13px; }
 .fn-empty { padding: 28px 8px !important; color: var(--ink-3); text-align: center; }
+.fn-sub { max-width: 1200px; margin: 28px auto 0; font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+.fn-th-left { text-align: left !important; }
+.fn-left { text-align: left !important; }
+.fn-vis .fn-row { cursor: default; }
+.fn-vis .fn-row.is-static:hover { background: transparent; }
+.fn-anon { color: var(--ink-3); }
+.fn-paths { color: var(--ink-2); font-size: 13px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fn-detail td { padding: 8px 12px 14px; background: #fff5fa; border-bottom: 1px solid var(--line); }
 .fn-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
 .fn-timeline li { display: grid; grid-template-columns: 130px 130px 1fr; gap: 10px; align-items: baseline; }

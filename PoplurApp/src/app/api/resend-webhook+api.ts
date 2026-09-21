@@ -11,8 +11,11 @@
 // stages for the invite and the links mail; bounces and complaints are
 // recorded for any mail so the row shows why a tester went quiet.
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+declare const require: any;
+const { createHmac, timingSafeEqual } = require('node:crypto');
 import { recordTesterEvent, type FunnelStage } from '@/server/betaFunnel.server';
+
+declare const Buffer: any;
 
 const TOLERANCE_S = 5 * 60;
 

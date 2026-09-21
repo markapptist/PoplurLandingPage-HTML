@@ -4,8 +4,11 @@
 // Without the key set, or with the wrong one, nothing about the funnel is
 // answered — not even whether the store is configured.
 
-import { timingSafeEqual } from 'node:crypto';
+declare const require: any;
+const { timingSafeEqual } = require('node:crypto');
 import { FUNNEL_ORDER, STAGE_LABELS, funnelSummary, storeStatus } from '@/server/betaFunnel.server';
+
+declare const Buffer: any;
 
 function keyOk(given: string | null): boolean {
   const key = process.env.FUNNEL_KEY;

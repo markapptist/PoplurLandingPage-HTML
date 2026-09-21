@@ -5,7 +5,7 @@
 // answered — not even whether the store is configured.
 
 import { timingSafeEqual } from 'node:crypto';
-import { FUNNEL_ORDER, STAGE_LABELS, funnelSummary } from '@/server/betaFunnel.server';
+import { FUNNEL_ORDER, STAGE_LABELS, funnelSummary, storeStatus } from '@/server/betaFunnel.server';
 
 function keyOk(given: string | null): boolean {
   const key = process.env.FUNNEL_KEY;
@@ -18,5 +18,5 @@ export async function GET(request: Request) {
   if (!process.env.FUNNEL_KEY) return Response.json({ error: 'The funnel is not enabled. Set FUNNEL_KEY on the server.' }, { status: 503 });
   if (!keyOk(new URL(request.url).searchParams.get('k'))) return Response.json({ error: 'That key is not right.' }, { status: 401 });
   const summary = await funnelSummary();
-  return Response.json({ ...summary, order: FUNNEL_ORDER, labels: STAGE_LABELS }, { headers: { 'Cache-Control': 'no-store' } });
+  return Response.json({ ...summary, store: storeStatus(), order: FUNNEL_ORDER, labels: STAGE_LABELS }, { headers: { 'Cache-Control': 'no-store' } });
 }

@@ -80,6 +80,19 @@ export function funnelConfigured(): boolean {
   return serviceAccount() !== null || useAdc();
 }
 
+/** Why the store is or is not configured — for the /funnel page, never the
+ *  value itself: `missing`, `unparsable` (with the raw length and whether it
+ *  starts with a brace) or `ok` (with the client email's domain). */
+export function storeStatus(): { state: 'ok' | 'missing' | 'unparsable' | 'adc'; length?: number; startsWithBrace?: boolean; clientDomain?: string } {
+  if (useAdc()) return { state: 'adc' };
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw) return { state: 'missing' };
+  const parsed = serviceAccount();
+  if (!parsed) return { state: 'unparsable', length: raw.length, startsWithBrace: raw.trim().startsWith('{') };
+  const email = typeof parsed.client_email === 'string' ? parsed.client_email : '';
+  return { state: 'ok', length: raw.length, clientDomain: email.split('@')[1] ?? '' };
+}
+
 /** The admin Firestore handle, created once per server instance; null when
  *  the site has no credentials. */
 async function firestore(): Promise<Firestore | null> {

@@ -16,11 +16,11 @@ import './../nda/nda.css';
 const ICON = require('@/assets/images/landing/app-icon.png');
 const WORDMARK = require('@/assets/images/landing/wordmark.png');
 
-type Check = { ok: true; email: string; version: string } | { ok: false; error: string };
-type Signed = { signedAt: string; links: { iosUrl: string; androidUrl: string }; reportUrl?: string; emailed: { receipt: boolean; links: boolean; record: boolean } };
+type Check = { ok: true; email: string; version: string; discord: { connect: boolean; username: string | null } } | { ok: false; error: string };
+type Signed = { signedAt: string; links: { iosUrl: string; androidUrl: string }; reportUrl?: string; discord?: { tester: 'granted' | 'pending' | 'off' | 'failed'; as: string | null }; emailed: { receipt: boolean; links: boolean; record: boolean } };
 
 export default function NdaScreen() {
-  const params = useLocalSearchParams<{ t?: string }>();
+  const params = useLocalSearchParams<{ t?: string; discord?: string }>();
   const token = typeof params.t === 'string' ? params.t : '';
   const [check, setCheck] = useState<Check | 'loading'>('loading');
   const [name, setName] = useState('');
@@ -36,8 +36,8 @@ export default function NdaScreen() {
   useEffect(() => {
     let live = true;
     fetch(`/api/nda?t=${encodeURIComponent(token)}`)
-      .then(async r => ({ status: r.status, body: (await r.json().catch(() => ({}))) as { ok?: boolean; email?: string; version?: string; error?: string } }))
-      .then(({ body }) => { if (live) setCheck(body.ok ? { ok: true, email: body.email ?? '', version: body.version ?? NDA_VERSION } : { ok: false, error: body.error ?? 'That signing link did not check out.' }); })
+      .then(async r => ({ status: r.status, body: (await r.json().catch(() => ({}))) as { ok?: boolean; email?: string; version?: string; error?: string; discord?: { connect?: boolean; username?: string | null } } }))
+      .then(({ body }) => { if (live) setCheck(body.ok ? { ok: true, email: body.email ?? '', version: body.version ?? NDA_VERSION, discord: { connect: !!body.discord?.connect, username: body.discord?.username ?? null } } : { ok: false, error: body.error ?? 'That signing link did not check out.' }); })
       .catch(() => { if (live) setCheck({ ok: false, error: 'Could not reach Poplur to check your link. Try again in a moment.' }); });
     return () => { live = false; };
   }, [token]);
@@ -55,7 +55,7 @@ export default function NdaScreen() {
       const r = await fetch('/api/nda', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: token, name, discord, referredBy, androidEmail, agree, adult }) });
       const body = (await r.json().catch(() => ({}))) as Partial<Signed> & { ok?: boolean; error?: string };
       if (!r.ok || !body.ok || !body.links || !body.signedAt) throw new Error(body.error || 'Could not record your signature. Try again.');
-      setSigned({ signedAt: body.signedAt, links: body.links, reportUrl: body.reportUrl, emailed: body.emailed ?? { receipt: false, links: false, record: false } });
+      setSigned({ signedAt: body.signedAt, links: body.links, reportUrl: body.reportUrl, discord: body.discord, emailed: body.emailed ?? { receipt: false, links: false, record: false } });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not record your signature. Try again.');
@@ -91,6 +91,12 @@ export default function NdaScreen() {
               <a className="nda-link ios" href={signed.links.iosUrl}><img src="/emails/apple-white.png" alt="" />Get Poplur for iPhone</a>
               <a className="nda-link android" href={signed.links.androidUrl}><img src="/emails/android-white.png" alt="" />Get Poplur for Android</a>
             </div>
+            {signed.discord?.tester === 'granted' && (
+              <div className="nda-for" style={{ marginTop: 18 }}><b>Discord.</b> @{signed.discord.as} now has the Tester role: #focus-group, #bugs and the voice chats are open to you.</div>
+            )}
+            {signed.discord?.tester === 'pending' && (
+              <div className="nda-for" style={{ marginTop: 18 }}><b>Discord.</b> We could not find @{discord.trim()} in the beta server yet. Join it from your invite email and the Tester role lands on its own within a few minutes.</div>
+            )}
             {signed.reportUrl && (
               <div className="nda-for" style={{ marginTop: 18 }}>
                 <b>Your test reports.</b> Four short reports over the beta, ten points each on the prize board. The first is due Sun 4 Oct. <a href={signed.reportUrl} style={{ color: 'inherit', fontWeight: 600 }}>Open your report page</a> — it is also in your links email.
@@ -124,7 +130,16 @@ export default function NdaScreen() {
               <h2>Sign</h2>
               <p>Your typed full name is your signature. We record it with your email address, the time, and the version of the agreement, and email you a signed copy.</p>
               <label className="nda-field"><span>Full name</span><input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} disabled={busy} placeholder="First and last name" required /></label>
-              <label className="nda-field"><span>Discord username (optional)</span><input type="text" autoComplete="off" value={discord} onChange={e => setDiscord(e.target.value)} disabled={busy} placeholder="If you are in the focus-group Discord" /></label>
+              {check.discord.connect && (
+                <div className="nda-discord">
+                  {check.discord.username
+                    ? <p><b>Discord connected:</b> @{check.discord.username}. The Tester role is yours the moment you sign.</p>
+                    : <p><a className="nda-connect" href={`/api/discord/connect?t=${encodeURIComponent(token)}`}>Connect Discord</a><span>so the Tester role lands the moment you sign — no username to type. {params.discord === 'denied' ? 'You cancelled on Discord; you can try again or type your username below.' : params.discord === 'failed' ? 'Discord did not answer; try again or type your username below.' : ''}</span></p>}
+                </div>
+              )}
+              {!check.discord.username && (
+                <label className="nda-field"><span>Discord username{check.discord.connect ? ' (if you did not connect)' : ' (optional)'}</span><input type="text" autoComplete="off" value={discord} onChange={e => setDiscord(e.target.value)} disabled={busy} placeholder="Your Discord username, so you get the Tester role" /></label>
+              )}
               <label className="nda-field"><span>Referred by (optional)</span><input type="text" autoComplete="off" value={referredBy} onChange={e => setReferredBy(e.target.value)} disabled={busy} placeholder="The Discord username of whoever invited you" /></label>
               <label className="nda-field"><span>Google account email for Android (optional)</span><input type="email" autoComplete="off" inputMode="email" value={androidEmail} onChange={e => setAndroidEmail(e.target.value)} disabled={busy} placeholder="The Google account on your Android phone, so we can add you to the test" /></label>
               <label className="nda-field"><span>Email</span><input type="text" value={check.email} disabled readOnly /></label>

@@ -107,7 +107,11 @@ const defaultIosUrl = 'https://testflight.apple.com/join/Q4v1ChjU';
 // Play's opt-in link is keyed by the app's applicationId
 // (Poplur2025-Android/app/build.gradle.kts). It had pointed at com.poplur.app,
 // a package that does not exist.
-const defaultAndroidUrl = 'https://play.google.com/apps/testing/com.apptists.poplur2025';
+// Play Console → Internal testing → Testers → "Copy link" (21 Sep 2026). The generic
+// apps/testing/<package> page only serves open and closed tracks; an internal
+// track's opt-in is this per-track link, and it works only for an address on
+// the track's tester list.
+const defaultAndroidUrl = 'https://play.google.com/apps/internaltest/4701549713059994223';
 
 const FONT = "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif";
 const PINK = '#ff2d96';

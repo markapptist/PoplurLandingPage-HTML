@@ -30,6 +30,7 @@ export type FunnelStage =
   | 'invite_clicked'
   | 'nda_opened'
   | 'nda_signed'
+  | 'discord_tester'
   | 'links_delivered'
   | 'links_opened'
   | 'links_clicked'
@@ -45,14 +46,14 @@ export type FunnelStage =
 /** Funnel order, for the page's columns and for "furthest stage reached". */
 export const FUNNEL_ORDER: FunnelStage[] = [
   'visited', 'email_entered', 'invite_delivered', 'invite_opened', 'invite_clicked',
-  'nda_opened', 'nda_signed', 'links_delivered', 'links_opened', 'links_clicked',
+  'nda_opened', 'nda_signed', 'discord_tester', 'links_delivered', 'links_opened', 'links_clicked',
   'store_ios', 'store_android', 'report_opened', 'form_opened', 'form_filed', 'report_filed',
 ];
 
 /** What the /funnel page calls each stage. */
 export const STAGE_LABELS: Record<FunnelStage, string> = {
   visited: 'Visited', email_entered: 'Email', invite_delivered: 'Invite delivered', invite_opened: 'Invite opened',
-  invite_clicked: 'Invite clicked', nda_opened: 'NDA opened', nda_signed: 'Signed', links_delivered: 'Links delivered',
+  invite_clicked: 'Invite clicked', nda_opened: 'NDA opened', nda_signed: 'Signed', discord_tester: 'Tester role', links_delivered: 'Links delivered',
   links_opened: 'Links opened', links_clicked: 'Links clicked', store_ios: 'TestFlight', store_android: 'Google Play',
   report_opened: 'Report opened', form_opened: 'Weekly form', form_filed: 'Form filed', report_filed: 'Report filed',
   email_bounced: 'Bounced', email_complained: 'Complained',
@@ -113,6 +114,38 @@ function firestore(): Firestore | null {
 }
 
 export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
+
+/** The store, for the Discord sweep (server/discord.server.ts callers); null when unconfigured. */
+export function funnelStore(): Firestore | null {
+  return firestore();
+}
+
+const DISCORD_PENDING = 'betaDiscordPending';
+
+export type DiscordPending = { id: string; email: string; username: string; name: string; signedAt: string };
+
+/** A signer whose Discord username was not in the server yet: kept until the sweep finds them. */
+export async function rememberDiscordPending(email: string, username: string, name: string): Promise<void> {
+  const db = firestore();
+  if (!db) return;
+  const address = normalizeEmail(email);
+  try { await db.merge(DISCORD_PENDING, testerId(address), { email: address, username, name, signedAt: new Date().toISOString() }); } catch (error) { console.error('[betaFunnel] pending write failed:', error); }
+}
+
+export async function listDiscordPending(limit = 200): Promise<DiscordPending[]> {
+  const db = firestore();
+  if (!db) return [];
+  try {
+    const docs = await db.list(DISCORD_PENDING, 'signedAt', limit);
+    return docs.map(d => ({ id: d.name.split('/').pop() ?? '', email: String(d.fields.email ?? ''), username: String(d.fields.username ?? ''), name: String(d.fields.name ?? ''), signedAt: String(d.fields.signedAt ?? '') }));
+  } catch (error) { console.error('[betaFunnel] pending list failed:', error); return []; }
+}
+
+export async function forgetDiscordPending(id: string): Promise<void> {
+  const db = firestore();
+  if (!db) return;
+  try { await db.delete(DISCORD_PENDING, id); } catch (error) { console.error('[betaFunnel] pending delete failed:', error); }
+}
 
 /** Document ids are a hash of the address: no addresses in paths or logs. */
 export function testerId(email: string): string {

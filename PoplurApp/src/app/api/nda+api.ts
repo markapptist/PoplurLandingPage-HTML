@@ -28,7 +28,8 @@ import {
 } from '@/emails/betaInviteEmail';
 import { NDA_VERSION, type NdaAcceptance } from '@/nda/betaTesterNda';
 import { REPORT_FORM_URL } from '@/report/betaTestPlan';
-import { recordTesterEvent } from '@/server/betaFunnel.server';
+import { recordTesterEvent, rememberDiscordPending } from '@/server/betaFunnel.server';
+import { addTesterRole, discordConfig, discordConnectAvailable, findMemberByUsername, notifyPoplur, readDiscordCookie } from '@/server/discord.server';
 import { maskEmail, ndaSha256, verifyNdaToken, type NdaTokenCheck } from '@/server/betaNda.server';
 import { createReportToken } from '@/server/betaReport.server';
 import { replyToAddress, sendWithResend } from '@/server/resend.server';
@@ -46,7 +47,11 @@ export async function GET(request: Request) {
   const check = verifyNdaToken(token);
   if (!check.ok) return Response.json({ ok: false, reason: check.reason, error: REASONS[check.reason] }, { status: 400 });
   await recordTesterEvent(check.email, 'nda_opened', { userAgent: (request.headers.get('user-agent') ?? '').slice(0, 200) });
-  return Response.json({ ok: true, email: maskEmail(check.email), version: NDA_VERSION });
+  const connected = readDiscordCookie(request);
+  return Response.json({
+    ok: true, email: maskEmail(check.email), version: NDA_VERSION,
+    discord: { connect: discordConnectAvailable(), username: connected ? connected.username : null },
+  });
 }
 
 type SignRequest = { t?: unknown; name?: unknown; discord?: unknown; referredBy?: unknown; androidEmail?: unknown; agree?: unknown; adult?: unknown };
@@ -140,12 +145,39 @@ export async function POST(request: Request) {
     receiptId: receipt.id, linksId: links.ok ? links.id : null, linksSent: links.ok,
   });
 
+  // The Tester role: the connected account first, else the typed username, else
+  // remembered for the sweep. Never a reason to fail the signature.
+  let tester: 'granted' | 'pending' | 'off' | 'failed' = 'off';
+  let testerAs: string | null = null;
+  if (discordConfig()) {
+    tester = 'failed';
+    try {
+      const connected = readDiscordCookie(request);
+      const member = connected ?? (acceptance.discord ? await findMemberByUsername(acceptance.discord) : null);
+      if (member && (await addTesterRole(member.id))) {
+        tester = 'granted';
+        testerAs = member.username;
+        await recordTesterEvent(acceptance.email, 'discord_tester', { discordId: member.id, username: member.username, via: connected ? 'connect' : 'username' });
+        await notifyPoplur(`✅ **${acceptance.name}** (@${member.username}) signed the tester agreement and is now a Tester.`);
+      } else if (acceptance.discord) {
+        tester = 'pending';
+        await rememberDiscordPending(acceptance.email, acceptance.discord, acceptance.name);
+        await notifyPoplur(`📝 **${acceptance.name}** signed the tester agreement as @${acceptance.discord}, who is not in the server yet — the role lands when they join.`);
+      } else {
+        await notifyPoplur(`📝 **${acceptance.name}** signed the tester agreement with no Discord account given.`);
+      }
+    } catch (error) {
+      console.error('[nda] discord hand-off failed:', error);
+    }
+  }
+
   return Response.json({
     ok: true,
     signedAt: acceptance.signedAt,
     version: acceptance.ndaVersion,
     links: storeLinks,
     reportUrl,
+    discord: { tester, as: testerAs },
     emailed: { receipt: receipt.ok, links: links.ok, record: record ? record.ok : false },
   });
 }

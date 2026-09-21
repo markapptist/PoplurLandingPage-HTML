@@ -40,9 +40,12 @@ export type ReportRound = {
   /** Toronto end of the due day, as UTC. */
   dueAt: string;
   dueLabel: string;
-  /** The week's Google Form, when there is one: the report page links it
-   *  through /api/go so the funnel sees it opened. Empty until Mark makes it. */
+  /** The week's Google Form (made 21 Sep 2026 in apptistinc@gmail.com's
+   *  Forms): the report page links it through /api/go so the funnel sees it
+   *  opened, and scripts/import-form-responses.mjs reads its responses by
+   *  `formId`. */
   formUrl?: string;
+  formId?: string;
   blurb: string;
   tasks: ReportTask[];
   questions: ReportQuestion[];
@@ -60,6 +63,8 @@ export const REPORT_ROUNDS: ReportRound[] = [
     name: 'First pop',
     dueAt: '2026-10-05T03:59:59.000Z',
     dueLabel: 'Sun 4 Oct',
+    formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLScrCqcDOgmeNRylEAQd1G14MuB1CyXS8sTpQMeUb-JJoGgQRg/viewform',
+    formId: '1HCqkd_nPtua3dAuwKZ7boTsc2JUUpJgKDV4LgJnC3GM',
     blurb: 'Getting in, letting the app know where you are, and putting your first pop on the map.',
     tasks: [
       { id: 'install', title: 'Install and sign in', steps: 'Install Poplur from TestFlight (iPhone) or the Google Play testing link (Android). Open it and create your account.', expect: 'You land on the feed with your username set.' },
@@ -81,6 +86,8 @@ export const REPORT_ROUNDS: ReportRound[] = [
     name: 'Reach',
     dueAt: '2026-10-12T03:59:59.000Z',
     dueLabel: 'Sun 11 Oct',
+    formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSfll3AOYRR4Pf4CVOwJ1j6qqYhETWwOuqrWzI7zNXW9xmjVOw/viewform',
+    formId: '1aewvmYKHwpVN1ik6Ebxckc2JsIoGeZLWm3ZMz_eMN64',
     blurb: 'How pops spread: likes, radius, the camera and coming back to the app.',
     tasks: [
       { id: 'like', title: 'Like someone’s pop', steps: 'In the feed or on the map, like a pop that is not yours.', expect: 'Its radius grew (the ring or the km number went up).' },
@@ -99,6 +106,8 @@ export const REPORT_ROUNDS: ReportRound[] = [
     name: 'Two weeks in',
     dueAt: '2026-10-15T03:59:59.000Z',
     dueLabel: 'Wed 14 Oct',
+    formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSftMSTMXe2DADnZiLbWU-VSSGO8Xk7T8zVBPym8qoG6V_nhHQ/viewform',
+    formId: '1HQQTD71SVYoS8huVgQRDItUa47ccyJCiBg0n41OSI6I',
     blurb: 'The habits and the rough edges after two weeks of real use.',
     tasks: [
       { id: 'fresh', title: 'Fresh content', steps: 'Think about the last few times you opened Poplur on your own.', expect: 'There was something new to see each time.' },
@@ -120,6 +129,8 @@ export const REPORT_ROUNDS: ReportRound[] = [
     name: 'Final',
     dueAt: '2026-11-01T03:59:59.000Z',
     dueLabel: 'Sat 31 Oct',
+    formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSdZylfcy5XbkYqcqVgR6RPVj0eJUz5qNuYrMZPOwWn8CNeXnA/viewform',
+    formId: '1chqg467jGu94izI_T9PRFjUD-4uQcH-Q7EAfCeX18Xk',
     blurb: 'The end of the paid part: updates, the whole month, and what you would tell a friend.',
     tasks: [
       { id: 'update', title: 'Updates arrived', steps: 'Check the version you are on now against the one you installed.', expect: 'New builds arrived through TestFlight or Google Play without reinstalling.' },

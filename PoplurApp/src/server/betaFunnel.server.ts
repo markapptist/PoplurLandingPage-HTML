@@ -66,6 +66,8 @@ export type FunnelEvent = {
 type Firestore = import('firebase-admin/firestore').Firestore;
 
 let cached: Promise<Firestore | null> | null = null;
+/** The last initialisation failure's message, for storeStatus(). */
+let initError: string | null = null;
 
 function serviceAccount(): Record<string, unknown> | null {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -83,14 +85,14 @@ export function funnelConfigured(): boolean {
 /** Why the store is or is not configured — for the /funnel page, never the
  *  value itself: `missing`, `unparsable` (with the raw length and whether it
  *  starts with a brace) or `ok` (with the client email's domain). */
-export function storeStatus(): { state: 'ok' | 'missing' | 'unparsable' | 'adc'; length?: number; startsWithBrace?: boolean; clientDomain?: string } {
+export function storeStatus(): { state: 'ok' | 'missing' | 'unparsable' | 'adc'; length?: number; startsWithBrace?: boolean; clientDomain?: string; initError?: string | null } {
   if (useAdc()) return { state: 'adc' };
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (!raw) return { state: 'missing' };
   const parsed = serviceAccount();
   if (!parsed) return { state: 'unparsable', length: raw.length, startsWithBrace: raw.trim().startsWith('{') };
   const email = typeof parsed.client_email === 'string' ? parsed.client_email : '';
-  return { state: 'ok', length: raw.length, clientDomain: email.split('@')[1] ?? '' };
+  return { state: 'ok', length: raw.length, clientDomain: email.split('@')[1] ?? '', initError };
 }
 
 /** The admin Firestore handle, created once per server instance; null when
@@ -109,7 +111,9 @@ async function firestore(): Promise<Firestore | null> {
       const app = existing ?? initializeApp({ credential, projectId: 'poplur2025' }, name);
       return getFirestore(app);
     } catch (error) {
-      console.error('[betaFunnel] Firestore unavailable:', error instanceof Error ? error.message : error);
+      initError = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : String(error).slice(0, 300);
+      console.error('[betaFunnel] Firestore unavailable:', initError);
+      cached = null; // try again on the next call — a cold function may just have been early
       return null;
     }
   })();

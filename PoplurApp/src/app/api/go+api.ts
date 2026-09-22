@@ -29,6 +29,7 @@ export async function GET(request: Request) {
   else if (to === 'android') { destination = links.androidUrl; stage = 'store_android'; }
   else if (to === 'form') { destination = round?.formUrl || REPORT_FORM_URL || null; stage = 'form_opened'; }
   else if (to === 'report') { destination = `${siteOrigin()}/report${token ? `?t=${encodeURIComponent(token)}` : ''}${round ? `${token ? '&' : '?'}r=${round.number}` : ''}`; stage = 'report_opened'; }
+  else if (to === 'bug') { destination = `${siteOrigin()}/bug${token ? `?t=${encodeURIComponent(token)}` : ''}`; stage = 'bug_opened'; }
   if (!destination || !stage) {
     return Response.json({ error: to === 'form' ? 'There is no form for that week yet.' : 'Unknown destination.' }, { status: to === 'form' ? 404 : 400 });
   }

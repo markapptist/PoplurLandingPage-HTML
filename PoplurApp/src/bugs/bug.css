@@ -1,0 +1,46 @@
+/* The bug form (app/bug.tsx): the report page's paper, built for one thumb on a phone. */
+.bg { --ink: #111114; --ink-2: #5c5c66; --ink-3: #9a9aa3; --line: rgba(17, 17, 20, .1); --accent: #ff2d96; --bad: #c8102e; --ok: #0f8a4e;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  min-height: 100vh; background: #f6f6f8; color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; line-height: 1.5; padding: 24px 16px 64px; }
+.bg *, .bg *::before, .bg *::after { box-sizing: border-box; }
+.bg h1, .bg h2, .bg h3, .bg p, .bg ul { margin: 0; }
+.bg-card { width: min(720px, 100%); margin: 0 auto; background: #fff; border: 1px solid var(--line); border-radius: 22px; padding: 28px clamp(18px, 5vw, 40px) 36px; }
+.bg-brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bg-brand a { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
+.bg-brand img.icon { width: 34px; height: 34px; border-radius: 9px; }
+.bg-brand img.wordmark { width: 78px; height: 26px; object-fit: contain; }
+.bg-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+.bg-title { margin-top: 26px; font-size: clamp(26px, 4.5vw, 34px); line-height: 1.1; letter-spacing: -0.03em; font-weight: 700; }
+.bg-sub { margin-top: 8px; font-size: 15px; color: var(--ink-2); }
+.bg-for { margin-top: 18px; padding: 12px 16px; border-radius: 14px; background: #fff5fb; border: 1px solid rgba(255, 45, 150, .25); font-size: 14px; color: var(--ink-2); }
+.bg-for b { color: var(--ink); }
+.bg-section { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
+.bg-section h2 { font-size: 20px; letter-spacing: -0.02em; font-weight: 700; }
+.bg-section > p { margin-top: 6px; font-size: 14px; color: var(--ink-2); }
+.bg-grid { display: grid; grid-template-columns: 1fr; gap: 0 16px; }
+.bg-field { display: block; margin-top: 16px; }
+.bg-field > span { display: block; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+.bg-field input { width: 100%; height: 48px; border-radius: 999px; border: 2px solid var(--ink); padding: 0 18px; font-size: 16px; font-family: var(--font); color: var(--ink); background: #fff; outline: none; }
+.bg-field input:focus, .bg textarea:focus, .bg select:focus { box-shadow: 0 0 0 4px rgba(255, 45, 150, .25); }
+.bg-field input:disabled { color: var(--ink-2); background: #f6f6f8; border-color: var(--line); }
+.bg select { width: 100%; height: 48px; border-radius: 14px; border: 2px solid var(--ink); padding: 0 14px; font-size: 16px; font-family: var(--font); color: var(--ink); background: #fff; outline: none; }
+.bg textarea { width: 100%; min-height: 84px; margin-top: 6px; border-radius: 14px; border: 2px solid var(--ink); padding: 10px 14px; font: 16px/1.45 var(--font); color: var(--ink); background: #fff; outline: none; resize: vertical; }
+.bg-q { display: block; margin-top: 18px; }
+.bg-q > span { display: block; font-size: 15px; font-weight: 600; }
+.bg-q > em { display: block; font-style: normal; font-size: 13px; color: var(--ink-3); margin-top: 2px; }
+.bg-seg { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.bg-seg button { appearance: none; flex: 1 1 auto; min-height: 44px; padding: 0 16px; border-radius: 999px; border: 2px solid var(--line); background: #fff; font: 600 15px/1 var(--font); color: var(--ink-2); cursor: pointer; }
+.bg-seg button.on { border-color: var(--ink); color: var(--ink); }
+.bg-shots { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.bg-shot { position: relative; width: 104px; }
+.bg-shot img { width: 104px; height: 176px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); background: #f6f6f8; }
+.bg-shot button { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(17,17,20,.78); color: #fff; font: 700 15px/1 var(--font); cursor: pointer; }
+.bg-add { width: 104px; height: 176px; border-radius: 12px; border: 2px dashed var(--ink-3); background: #fff; color: var(--ink-2); font: 600 14px/1.3 var(--font); cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 8px; text-align: center; }
+.bg-add:disabled { opacity: .5; cursor: default; }
+.bg-cta { margin-top: 24px; display: inline-flex; align-items: center; justify-content: center; height: 52px; padding: 0 28px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font: 600 16px/1 var(--font); cursor: pointer; box-shadow: 0 3px 0 rgba(0, 0, 0, .18); }
+.bg-cta:disabled { opacity: .55; cursor: default; }
+.bg-note { margin-top: 12px; font-size: 13px; color: var(--ink-3); }
+.bg-note.err { color: #9b1a5c; font-size: 14px; }
+.bg-done { margin-top: 8px; font-size: 15px; color: var(--ink-2); }
+.bg-again { margin-top: 20px; appearance: none; border: 2px solid var(--ink); background: #fff; color: var(--ink); font: 600 15px/1 var(--font); height: 48px; padding: 0 22px; border-radius: 999px; cursor: pointer; }
+@media (min-width: 560px) { .bg-grid { grid-template-columns: 1fr 1fr; } }

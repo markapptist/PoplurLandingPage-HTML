@@ -23,6 +23,7 @@
 
 import { NDA_SECTIONS, NDA_SUBTITLE, NDA_SUMMARY, NDA_TITLE, NDA_PARTIES, type NdaAcceptance } from '@/nda/betaTesterNda';
 import { PLATFORM_LABEL, TASK_RESULTS, RATINGS, roundByNumber, type BetaReport } from '@/report/betaTestPlan';
+import { BUG_PLATFORM_LABEL, bugSeverity, type BugReport } from '@/bugs/bugReport';
 
 export const betaInviteFrom = 'Poplur <hello@poplur.ca>';
 
@@ -93,6 +94,8 @@ type BetaInviteEmailOptions = {
   ndaUrl?: string;
   /** The tester's report page (app/report.tsx); shown in the `links` stage when given. */
   reportUrl?: string;
+  /** The bug form (app/bug.tsx); shown in the `links` stage when given. */
+  bugUrl?: string;
   /** The beta Discord's invite. Given, the `nda` stage leads with it: Discord first,
    *  then the agreement (the runbook's Discord → #nda → Tester role → install). */
   discordUrl?: string;
@@ -152,7 +155,7 @@ type Content = {
   foot: string;
 };
 
-function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl: string }, ndaUrl: string, reportUrl = '', discordUrl = ''): Content {
+function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl: string }, ndaUrl: string, reportUrl = '', discordUrl = '', bugUrl = ''): Content {
   const tags = ['iOS · TestFlight', 'Android · Google Play', 'Toronto first'];
   const foot = 'You asked for beta access at';
   if (stage === 'nda' && discordUrl) {
@@ -201,6 +204,7 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
       { strong: 'Future updates.', body: 'New iPhone builds land in TestFlight and Android updates through Google Play. Keep this email: the links work again if you ever need to reinstall.' },
       { strong: 'What to try first.', body: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Every pop starts with a 5&nbsp;km radius and spreads as people engage.' },
       ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the points board, five minutes apiece. The first is due Sun 4 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
+      ...(bugUrl ? [{ strong: 'Found a bug?', body: `Send it the moment you hit it, with a screenshot: <a href="${bugUrl}" style="color:inherit;font-weight:600;">the bug form</a>. No sign-in, no account. A confirmed bug is five points, and the first person to report it gets them.` }] : []),
     ],
     reply: 'Have feedback? Reply to this email. Every note shapes the beta.',
     foot,
@@ -256,6 +260,7 @@ export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
     'What to try first: open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Every pop starts with a 5 km radius and spreads as people engage.',
     '',
     ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the points board. The first is due Sun 4 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
+    ...(options.bugUrl ? [`Found a bug? Send it the moment you hit it, with a screenshot — no sign-in needed: ${options.bugUrl}`, ''] : []),
     'Have feedback? Reply to this email. Every note shapes the beta.',
     '',
     'Poplur · Toronto beta',
@@ -532,7 +537,7 @@ export function createBetaInviteHtml(options: BetaInviteEmailOptions = {}) {
   const variant = options.variant ?? pickBetaInviteVariant();
   const stage = options.stage ?? 'links';
   if (stage === 'nda' && !options.ndaUrl) throw new Error('The nda stage needs ndaUrl.');
-  const content = contentFor(stage, getBetaInviteLinks(options), options.ndaUrl ?? '', options.reportUrl ?? '', options.discordUrl ?? '');
+  const content = contentFor(stage, getBetaInviteLinks(options), options.ndaUrl ?? '', options.reportUrl ?? '', options.discordUrl ?? '', options.bugUrl ?? '');
   return DESIGNS[variant]({ src: getBetaInviteImageSources(options), content, subject: BETA_INVITE_SUBJECTS[stage], preview: BETA_INVITE_PREVIEWS[stage] });
 }
 
@@ -702,4 +707,111 @@ export function createReportReceiptText(report: BetaReport, { forPoplur = false 
     ...report.answers.filter(a => a.answer.trim()).flatMap(a => [a.question, a.answer, '']),
   ];
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------- a filed bug
+
+const SEVERITY_MARK: Record<string, string> = { crash: '\u{1F534} Crash', blocker: '\u{1F7E0} Blocker', annoyance: '\u{1F7E1} Annoyance' };
+
+export function bugReportSubject(report: BugReport): string {
+  const severity = bugSeverity(report);
+  const mark = severity === 'crash' ? 'CRASH' : severity === 'blocker' ? 'BLOCKER' : 'Bug';
+  return `${mark}: ${report.area} \u00b7 ${BUG_PLATFORM_LABEL[report.platform]} \u00b7 ${report.name}${report.verified ? '' : ' (unverified)'}`;
+}
+
+/** Poplur's copy: everything the tester said, with their screenshots attached. */
+export function createBugReportHtml(report: BugReport, { images }: { images?: Partial<Record<BetaInviteImageKey, string>> } = {}) {
+  const src = getBetaInviteImageSources({ images });
+  const severity = bugSeverity(report);
+  const row = (k: string, v: string) => `<tr><td style="padding:6px 14px 6px 0;font-family:${FONT};font-size:13px;color:${INK_3};white-space:nowrap;vertical-align:top;">${k}</td><td style="padding:6px 0;font-family:${FONT};font-size:14px;color:${INK};vertical-align:top;word-break:break-word;">${v}</td></tr>`;
+  const block = (title: string, body: string) => `<h3 style="margin:18px 0 4px;font-family:${FONT};font-size:14px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${PINK};">${title}</h3><p style="margin:0;font-family:${FONT};font-size:15px;line-height:1.55;color:${INK};white-space:pre-wrap;">${esc(body)}</p>`;
+  const rows = [
+    row('Severity', `<b>${SEVERITY_MARK[severity]}</b> \u00b7 ${esc(report.impact)}`),
+    row('Where', esc(report.area)),
+    row('How often', esc(report.frequency)),
+    row('From', `${esc(report.name)} \u00b7 ${esc(report.email)}${report.discord ? ` \u00b7 Discord ${esc(report.discord)}` : ''}${report.verified ? '' : ' \u00b7 <b>unverified link</b>'}`),
+    row('Phone', `${BUG_PLATFORM_LABEL[report.platform]} \u00b7 ${esc(report.device)} \u00b7 ${esc(report.osVersion)}${report.appVersion ? ` \u00b7 app ${esc(report.appVersion)}` : ''}`),
+    row('Received', `${esc(torontoTime(report.receivedAt))} (Toronto)`),
+    row('Screenshots', report.shots.length ? report.shots.map(s => esc(s.name)).join(', ') : 'none'),
+    row('From address', esc(report.ip ?? 'unknown')),
+    row('Browser', esc(report.userAgent ?? 'unknown')),
+  ].join('');
+  return shell('#f6f6f8', bugReportSubject(report), `${report.name} reported a bug in ${report.area}.`, `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6f8;">
+      <tr>
+        <td align="center" style="padding:32px 16px 40px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid rgba(17,17,20,0.08);border-radius:22px;">
+            <tr><td style="padding:24px 32px 0;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+              <td valign="middle">${brand(src.icon, 34, INK, 19)}</td>
+              <td align="right" valign="middle" style="font-family:${FONT};font-size:12px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${PINK};">Bug \u00b7 for Poplur</td>
+            </tr></table></td></tr>
+            <tr><td style="padding:26px 32px 0;"><h1 style="margin:0;font-family:${FONT};font-size:26px;line-height:1.15;font-weight:700;letter-spacing:-0.02em;color:${INK};">${esc(report.area)}</h1></td></tr>
+            <tr><td style="padding:16px 32px 0;"><table role="presentation" cellspacing="0" cellpadding="0" style="border-top:1px solid rgba(17,17,20,0.08);border-bottom:1px solid rgba(17,17,20,0.08);padding:10px 0;width:100%;">${rows}</table></td></tr>
+            <tr><td style="padding:6px 32px 30px;">
+              ${block('What they were doing', report.doing)}
+              ${block('What they expected', report.expected)}
+              ${block('What happened instead', report.happened)}
+              ${report.extra ? block('Anything else', report.extra) : ''}
+            </td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>`);
+}
+
+export function createBugReportText(report: BugReport) {
+  return [
+    bugReportSubject(report),
+    '',
+    `Severity: ${bugSeverity(report)} \u2014 ${report.impact}`,
+    `Where: ${report.area}`,
+    `How often: ${report.frequency}`,
+    `From: ${report.name} \u00b7 ${report.email}${report.discord ? ` \u00b7 Discord ${report.discord}` : ''}${report.verified ? '' : ' (unverified link)'}`,
+    `Phone: ${BUG_PLATFORM_LABEL[report.platform]} \u00b7 ${report.device} \u00b7 ${report.osVersion}${report.appVersion ? ` \u00b7 app ${report.appVersion}` : ''}`,
+    `Received: ${report.receivedAt}`,
+    `Screenshots: ${report.shots.length ? report.shots.map(s => s.name).join(', ') : 'none'}`,
+    `From address: ${report.ip ?? 'unknown'} \u00b7 ${report.userAgent ?? 'unknown'}`,
+    '',
+    'What they were doing:', report.doing, '',
+    'What they expected:', report.expected, '',
+    'What happened instead:', report.happened, '',
+    ...(report.extra ? ['Anything else:', report.extra, ''] : []),
+  ].join('\n');
+}
+
+/** The tester's receipt: short, and it says what happens next. */
+export function createBugReceiptHtml(report: BugReport, { images }: { images?: Partial<Record<BetaInviteImageKey, string>> } = {}) {
+  const src = getBetaInviteImageSources({ images });
+  const lead = `Thank you \u2014 your report on ${esc(report.area.toLowerCase())} is in.`;
+  return shell('#f6f6f8', 'Bug report received \u2014 thank you', lead, `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6f8;">
+      <tr><td align="center" style="padding:32px 16px 40px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid rgba(17,17,20,0.08);border-radius:22px;">
+          <tr><td style="padding:24px 32px 0;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td valign="middle">${brand(src.icon, 34, INK, 19)}</td>
+            <td align="right" valign="middle" style="font-family:${FONT};font-size:12px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${PINK};">Bug received</td>
+          </tr></table></td></tr>
+          <tr><td style="padding:26px 32px 0;"><h1 style="margin:0;font-family:${FONT};font-size:28px;line-height:1.12;font-weight:700;letter-spacing:-0.03em;color:${INK};">Got it \u2014 thank you.</h1></td></tr>
+          <tr><td style="padding:14px 32px 0;font-family:${FONT};font-size:15px;line-height:1.6;color:${INK_2};">
+            You reported a problem in <b style="color:${INK};">${esc(report.area)}</b>${report.shots.length ? `, with ${report.shots.length} screenshot${report.shots.length === 1 ? '' : 's'}` : ''}. A confirmed bug is worth five points on the board, and the first person to report one gets them.
+          </td></tr>
+          <tr><td style="padding:14px 32px 30px;font-family:${FONT};font-size:15px;line-height:1.6;color:${INK_2};">
+            Found another? Send it the same way \u2014 one report per bug is easier to fix than one long list. If we need to ask you something about this one, we will reply to this email.
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>`);
+}
+
+export function createBugReceiptText(report: BugReport) {
+  return [
+    'Got it — thank you.',
+    '',
+    `You reported a problem in ${report.area}${report.shots.length ? `, with ${report.shots.length} screenshot(s)` : ''}.`,
+    'A confirmed bug is worth five points on the board, and the first person to report one gets them.',
+    '',
+    'Found another? Send it the same way — one report per bug is easier to fix than one long list.',
+    '',
+    'Poplur · Toronto beta',
+  ].join('\n');
 }

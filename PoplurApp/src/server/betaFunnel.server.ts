@@ -40,6 +40,8 @@ export type FunnelStage =
   | 'form_opened'
   | 'form_filed'
   | 'report_filed'
+  | 'bug_opened'
+  | 'bug_filed'
   | 'email_bounced'
   | 'email_complained';
 
@@ -47,7 +49,7 @@ export type FunnelStage =
 export const FUNNEL_ORDER: FunnelStage[] = [
   'visited', 'email_entered', 'invite_delivered', 'invite_opened', 'invite_clicked',
   'nda_opened', 'nda_signed', 'discord_tester', 'links_delivered', 'links_opened', 'links_clicked',
-  'store_ios', 'store_android', 'report_opened', 'form_opened', 'form_filed', 'report_filed',
+  'store_ios', 'store_android', 'report_opened', 'form_opened', 'form_filed', 'report_filed', 'bug_opened', 'bug_filed',
 ];
 
 /** What the /funnel page calls each stage. */
@@ -55,7 +57,7 @@ export const STAGE_LABELS: Record<FunnelStage, string> = {
   visited: 'Visited', email_entered: 'Email', invite_delivered: 'Invite delivered', invite_opened: 'Invite opened',
   invite_clicked: 'Invite clicked', nda_opened: 'NDA opened', nda_signed: 'Signed', discord_tester: 'Tester role', links_delivered: 'Links delivered',
   links_opened: 'Links opened', links_clicked: 'Links clicked', store_ios: 'TestFlight', store_android: 'Google Play',
-  report_opened: 'Report opened', form_opened: 'Weekly form', form_filed: 'Form filed', report_filed: 'Report filed',
+  report_opened: 'Report opened', form_opened: 'Weekly form', form_filed: 'Form filed', report_filed: 'Report filed', bug_opened: 'Bug form', bug_filed: 'Bug filed',
   email_bounced: 'Bounced', email_complained: 'Complained',
 };
 

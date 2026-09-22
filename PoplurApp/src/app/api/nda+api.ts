@@ -129,14 +129,15 @@ export async function POST(request: Request) {
   const reportToken = createReportToken(acceptance.email);
   const go = (to: string) => `${siteOrigin()}/api/go?to=${to}&t=${encodeURIComponent(reportToken)}`;
   const reportUrl = REPORT_FORM_URL || go('report');
+  const bugUrl = go('bug');
   const storeLinks = { iosUrl: go('ios'), androidUrl: go('android') };
   const variant = pickBetaInviteVariant();
   const links = await sendWithResend({
     to: acceptance.email,
     replyTo,
     subject: BETA_INVITE_SUBJECTS.links,
-    html: createBetaInviteHtml({ images, variant, stage: 'links', reportUrl, ...storeLinks }),
-    text: createBetaInviteText({ stage: 'links', reportUrl, ...storeLinks }),
+    html: createBetaInviteHtml({ images, variant, stage: 'links', reportUrl, bugUrl, ...storeLinks }),
+    text: createBetaInviteText({ stage: 'links', reportUrl, bugUrl, ...storeLinks }),
     tag: 'links',
   });
 
@@ -177,6 +178,7 @@ export async function POST(request: Request) {
     version: acceptance.ndaVersion,
     links: storeLinks,
     reportUrl,
+    bugUrl,
     discord: { tester, as: testerAs },
     emailed: { receipt: receipt.ok, links: links.ok, record: record ? record.ok : false },
   });

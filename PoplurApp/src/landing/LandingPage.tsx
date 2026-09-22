@@ -12,6 +12,8 @@ import Lockup from './Lockup';
 import ShaderText from './ShaderText';
 import { HERO_SPOTS, nextHeroSpot, pickHeroSpot, type HeroSpot } from './heroSpot';
 import { armLandingPop, landingPop, landingPopReady } from './landingPop';
+import ReadBadge from './ReadBadge';
+import { readSection, speechAvailable, type ReadAloudHandle } from './readAloud';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
 import AnimatedNumber from './AnimatedNumber';
@@ -287,6 +289,28 @@ export default function LandingPage() {
   const currentRef = useRef<string | null>(null);
   const settledRef = useRef(false);
   useEffect(() => armLandingPop(), []);
+  // Read aloud. The page already knows which section is under the reader, so
+  // the voice reads THAT one and moves with them rather than starting at the
+  // top; switching it on reads what they are looking at right now.
+  const [reading, setReading] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  // Some browsers have no voice at all; the control appears only where one does,
+  // and only after mount, because the server cannot know.
+  const [canRead, setCanRead] = useState(false);
+  useEffect(() => { const id = window.requestAnimationFrame(() => setCanRead(speechAvailable())); return () => window.cancelAnimationFrame(id); }, []);
+  const readHandle = useRef<ReadAloudHandle | null>(null);
+  useEffect(() => {
+    readHandle.current?.stop();
+    readHandle.current = null;
+    if (!reading) { setSpeaking(false); return; }
+    const el = document.getElementById(current ?? 'top');
+    if (!el) { setSpeaking(false); return; }
+    setSpeaking(true);
+    readHandle.current = readSection(el, { onDone: () => setSpeaking(false) });
+    return () => { readHandle.current?.stop(); readHandle.current = null; };
+  }, [reading, current]);
+  // Leaving the page mid-sentence would otherwise keep talking.
+  useEffect(() => () => { readHandle.current?.stop(); }, []);
   // The tour: when the spot has played, the page walks itself section to
   // section — each stop a snap, each snap a pop — until the reader takes the
   // wheel (a scroll, a touch, a key), which ends it at once.
@@ -369,6 +393,7 @@ export default function LandingPage() {
           {SHOWCASE_STEPS.slice(0, 5).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
         <div className="pl-nav-tools">
+          {canRead && <ReadBadge on={reading} speaking={speaking} onToggle={() => setReading(value => !value)} />}
           <RadioBadge state={audio.state} onToggle={audio.toggleRadio} />
           <ColourBadge theme={theme} onChange={changeTheme} />
           <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>

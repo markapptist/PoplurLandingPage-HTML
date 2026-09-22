@@ -449,3 +449,11 @@ html.pl-root::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .pl .pl-cta:hover, .pl .pl-badge:hover, .pl .pl-nav-links a:hover, .pl .pl-sound:hover { text-decoration: underline; text-underline-offset: 4px; }
 .pl .pl-radio.is-on, .pl .pl-sound.is-on, .pl[data-ink="dark"] .pl-radio.is-on, .pl[data-ink="dark"] .pl-sound.is-on, .pl .pl-hero.has-spot .pl-sound.is-on { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 2px; }
 .pl .pl-colour-item.is-current { font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Read aloud: the word the voice is on, lit in the page's own accent. The
+   split into words happens only when the reader is switched on, so a page
+   nobody asked to have read keeps its plain markup. */
+.pl-read-word { border-radius: 4px; transition: background-color 90ms linear, color 90ms linear; }
+.pl-read-now { background: var(--accent); color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.pl-hero.has-spot .pl-read-now { background: #fff; color: #111; box-shadow: 0 0 0 2px #fff; }
+@media (prefers-reduced-motion: reduce) { .pl-read-word { transition: none; } }

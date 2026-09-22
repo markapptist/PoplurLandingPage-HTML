@@ -19,6 +19,7 @@ import {
   randomPostLocation,
   postSpotsForActor, WORLD_POST_SPOTS, POST_SPOT_JITTER_DEG, POST_SPREAD_MEMORY, POST_SPREAD_CANDIDATES,
   CAMPUS_POST_SPOTS, CAMPUS_POST_JITTER_DEG, campusPostShare, campusPostLocation, engagementTarget,
+  CAMPUS_ENGAGEMENT_RADIUS_KM, isCampusPoint, kmFromNearestCampus, rankEngagementCandidates,
   expectedAccountTypeForActor,
 } from './synthetic-live-actions.mjs';
 import { ACTOR_IDS, SAFE_ACTIONS, SAFE_EVENT_SCREENS, isAllowedEvent, eventTypeForAction } from './synthetic-runner-actions.mjs';
@@ -434,7 +435,7 @@ test('campus lane is off unless POPLUR_CAMPUS_POST_SHARE says otherwise, and is 
   assert.equal(campusPostShare({ POPLUR_CAMPUS_POST_SHARE: '-1' }), 0);
 });
 
-test('campusPostLocation lands within ~1 km of a real campus, 3-decimal, never the same campus twice running', () => {
+test('campusPostLocation lands on the campus grounds (~330 m), 3-decimal, never the same campus twice running', () => {
   const spot = campusPostLocation(null, () => 0.5, []);
   const campus = CAMPUS_POST_SPOTS.find(c => c.place === spot.place);
   assert.ok(campus, 'a named campus');
@@ -1168,4 +1169,29 @@ test('the app runner waits out a Cloud Run "no instance to spare" answer instead
   // about to succeed.
   const totalWaitMs = backoff * (retries * (retries + 1)) / 2;
   assert.ok(totalWaitMs < 180_000, `total busy wait ${totalWaitMs} ms fits inside the scheduler's 180 s start timeout`);
+});
+
+test('a campus pop stays inside the grounds, so it still reaches a student after hours of decay', () => {
+  // 22 Sep 2026: four of five campuses had no pop still covering them. The
+  // jitter is the lever — a pop 1.1 km out stops reaching the campus about six
+  // hours in, one 330 m out lasts about eleven.
+  assert.ok(CAMPUS_POST_JITTER_DEG <= 0.004, 'campus pops land on the grounds');
+  for (let i = 0; i < 200; i += 1) {
+    const spot = campusPostLocation(null, () => (i % 17) / 17, []);
+    assert.ok(kmFromNearestCampus(spot) <= 0.55, `${spot.place} ${kmFromNearestCampus(spot).toFixed(2)} km out`);
+    assert.ok(isCampusPoint(spot));
+  }
+});
+
+test('the cohort engages campus pops first, nearest campus first, then newest', () => {
+  const humberNorth = { id: 'campus-far', latitude: 43.7295, longitude: -79.6075, createdAtMillis: 1 };
+  const trafalgar = { id: 'campus-near', latitude: 43.469, longitude: -79.699, createdAtMillis: 2 };
+  const seoul = { id: 'world-new', latitude: 37.591, longitude: 126.954, createdAtMillis: 9 };
+  const lima = { id: 'world-old', latitude: -12.046, longitude: -77.043, createdAtMillis: 3 };
+  const order = rankEngagementCandidates([seoul, humberNorth, lima, trafalgar]).map(p => p.id);
+  assert.deepEqual(order, ['campus-near', 'campus-far', 'world-new', 'world-old']);
+  // A world pop is never mistaken for a campus one.
+  assert.equal(isCampusPoint(seoul), false);
+  assert.ok(kmFromNearestCampus(seoul) > CAMPUS_ENGAGEMENT_RADIUS_KM);
+  assert.equal(kmFromNearestCampus({ latitude: 'x' }), Infinity);
 });

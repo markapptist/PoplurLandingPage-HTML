@@ -247,8 +247,17 @@ export const CAMPUS_POST_SPOTS = Object.freeze([
   Object.freeze({ place: 'Sheridan Hazel McCallion', latitude: 43.591, longitude: -79.648 }),
   Object.freeze({ place: 'Sheridan Davis', latitude: 43.732, longitude: -79.77 }),
 ]);
-/** ~±1 km, so a campus pop stays on the campus a student is standing on. */
-export const CAMPUS_POST_JITTER_DEG = 0.01;
+/**
+ * ~±330 m: on the campus grounds, not the neighbourhood around them.
+ *
+ * It was ±1 km until 22 Sep 2026. A pop's radius has to be bigger than its
+ * distance from where the student is standing for them to see it at all, and
+ * under the live decay (×10, three-hour half-life) a 5 km seed passes 1.1 km
+ * about six hours in and 330 m about eleven hours in. The wider jitter was
+ * throwing away most of a campus pop's useful life: measured that morning,
+ * four of the five campuses had NO pop still covering them.
+ */
+export const CAMPUS_POST_JITTER_DEG = 0.003;
 
 /** The share of pops aimed at a campus: 0..1 from POPLUR_CAMPUS_POST_SHARE, else 0. */
 /**
@@ -263,6 +272,40 @@ export function engagementTarget(env = process.env) {
   return env.POPLUR_ENGAGE_TARGET === 'cohort' ? 'cohort' : 'owner';
 }
 
+/**
+ * How far this point is from the nearest campus, in km — the runner ranks its
+ * engagement by it, so the cohort's likes land on the pops a student will
+ * actually be standing next to, and those pops stop decaying.
+ */
+export function kmFromNearestCampus(point) {
+  if (!Number.isFinite(point?.latitude) || !Number.isFinite(point?.longitude)) return Infinity;
+  return Math.min(...CAMPUS_POST_SPOTS.map(spot => greatCircleKm(spot, point)));
+}
+
+/** Within this of a campus counts as "on campus" for the engagement lane. */
+export const CAMPUS_ENGAGEMENT_RADIUS_KM = 2;
+
+export function isCampusPoint(point) {
+  return kmFromNearestCampus(point) <= CAMPUS_ENGAGEMENT_RADIUS_KM;
+}
+
+/**
+ * The order the cohort should walk a set of candidate pops for engagement:
+ * campus pops first (nearest campus first), then everything else newest-first.
+ * Pure, so the runner's choice is testable without a browser.
+ */
+export function rankEngagementCandidates(posts) {
+  return [...posts].sort((a, b) => {
+    const ac = isCampusPoint(a), bc = isCampusPoint(b);
+    if (ac !== bc) return ac ? -1 : 1;
+    if (ac && bc) {
+      const byCampus = kmFromNearestCampus(a) - kmFromNearestCampus(b);
+      if (Math.abs(byCampus) > 1e-9) return byCampus;
+    }
+    return (b.createdAtMillis || 0) - (a.createdAtMillis || 0);
+  });
+}
+
 export function campusPostShare(env = process.env) {
   const raw = Number(env.POPLUR_CAMPUS_POST_SHARE);
   return Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0;
@@ -270,7 +313,7 @@ export function campusPostShare(env = process.env) {
 
 /**
  * One campus pop: the campus farthest from the cohort's latest pops (so the
- * colleges take turns), never the same campus twice in a row, jittered ~1 km.
+ * colleges take turns), never the same campus twice in a row, jittered ~330 m.
  */
 export function campusPostLocation(previous = null, random = Math.random, recent = []) {
   const anchors = recent

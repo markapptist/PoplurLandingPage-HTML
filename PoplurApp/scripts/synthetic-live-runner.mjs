@@ -33,7 +33,7 @@ import {
   locationForActor,
   randomPostLocation,
   engagementTarget,
-  POST_SPREAD_MEMORY,
+  POST_SPREAD_MEMORY, rankEngagementCandidates,
 } from './synthetic-live-actions.mjs';
 import {
   ACTOR_IDS,
@@ -1093,7 +1093,13 @@ export function createSyntheticLiveRunner({
         ? [{ id: row.document.name.split('/').pop(), latitude, longitude, createdAtMillis, channel: value(fields.channelId) || 'news' }] : [];
     });
     if (!posts.length) return null;
-    posts.sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+    // Campus pops first. A pop only reaches a student standing on that campus
+    // while its radius is bigger than its distance from them, and under the
+    // live decay that is a few hours; engagement is what grows a radius and
+    // resets the clock, so the cohort spends its likes where the beta happens.
+    const ranked = rankEngagementCandidates(posts);
+    posts.length = 0;
+    posts.push(...ranked);
     const startAt = (actor.cohortVisitIndex++ || 0) % posts.length;
     for (let offset = 0; offset < Math.min(posts.length, OWNER_POST_CANDIDATES); offset += 1) {
       const found = await reachOwnerPost(actor, posts[(startAt + offset) % posts.length]);

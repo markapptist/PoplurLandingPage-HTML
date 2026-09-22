@@ -56,8 +56,9 @@ export function useLandingAudio(onHero: boolean) {
     }
   }, [])
   useEffect(() => { controller.current?.setOnHero(onHero) }, [onHero])
+  const setSpeaking = useCallback((value: boolean) => { controller.current?.setSpeaking(value) }, [])
   return {
-    state, setHero,
+    state, setHero, setSpeaking,
     toggleHero: () => controller.current?.toggleHero(),
     replayHero: () => controller.current?.replayHero(),
     toggleRadio: () => {

@@ -13,6 +13,10 @@ export function createLandingAudio(radio: HTMLAudioElement, report: (state: Audi
   let state = { ...INITIAL_AUDIO }
   let hero: HTMLVideoElement | null = null
   let onHero = true, visible = true, disposed = false, heroMuted = false
+  // The page can read itself aloud (readAloud.ts). A station under a voice
+  // reading the page makes both unintelligible, so the radio stands down for
+  // the duration and comes back on its own when the reading stops.
+  let speaking = false
   let heroBlocked = false, heroAttempt = 0, radioAttempt = 0
   let stations: Station[] = [], stationIndex = 0, stationsReady = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -21,7 +25,7 @@ export function createLandingAudio(radio: HTMLAudioElement, report: (state: Audi
     if (!disposed) report(state)
   }
   const wantsHero = () => !disposed && visible && onHero
-  const wantsRadio = () => !disposed && visible && !onHero && state.radioEnabled
+  const wantsRadio = () => !disposed && visible && !onHero && state.radioEnabled && !speaking
   const stopRadio = () => {
     radioAttempt++
     clearTimeout(timer)
@@ -111,6 +115,12 @@ export function createLandingAudio(radio: HTMLAudioElement, report: (state: Audi
     setOnHero(value: boolean) {
       if (onHero === value) return
       onHero = value
+      reconcile()
+    },
+    /** True while the page is being read aloud: the radio waits it out. */
+    setSpeaking(value: boolean) {
+      if (speaking === value) return
+      speaking = value
       reconcile()
     },
     setVisible(value: boolean) {

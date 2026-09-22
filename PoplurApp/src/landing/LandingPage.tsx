@@ -299,6 +299,9 @@ export default function LandingPage() {
   const [canRead, setCanRead] = useState(false);
   useEffect(() => { const id = window.requestAnimationFrame(() => setCanRead(speechAvailable())); return () => window.cancelAnimationFrame(id); }, []);
   const readHandle = useRef<ReadAloudHandle | null>(null);
+  // The radio stands down for as long as the reader is on — not per section,
+  // or it would cut in and out between one heading and the next.
+  useEffect(() => { audio.setSpeaking(reading); }, [reading, audio]);
   useEffect(() => {
     readHandle.current?.stop();
     readHandle.current = null;

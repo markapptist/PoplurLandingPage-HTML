@@ -119,3 +119,28 @@ export function readSection(root: HTMLElement, { onDone, rate = 1 }: { onDone?: 
     },
   }
 }
+
+/**
+ * The reader is on unless this visitor turned it off. Browsers will not speak
+ * before a gesture, so "on by default" means armed: the voice starts at the
+ * first touch, click or key, not the instant the page paints.
+ */
+const READING_KEY = 'poplur.landing.read'
+
+export function readingPreference(): boolean {
+  try { return window.localStorage.getItem(READING_KEY) !== 'off' } catch { return true }
+}
+
+export function rememberReadingPreference(on: boolean): void {
+  try { window.localStorage.setItem(READING_KEY, on ? 'on' : 'off') } catch { /* private mode */ }
+}
+
+/** Calls back on the first gesture a browser accepts as permission to speak. */
+export function onFirstGesture(run: () => void): () => void {
+  if (typeof document === 'undefined') return () => {}
+  const types = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown', 'scroll'] as const
+  const off = () => { for (const type of types) document.removeEventListener(type, once) }
+  const once = () => { off(); run() }
+  for (const type of types) document.addEventListener(type, once, { passive: true })
+  return off
+}

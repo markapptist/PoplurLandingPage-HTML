@@ -13,7 +13,7 @@ import ShaderText from './ShaderText';
 import { HERO_SPOTS, nextHeroSpot, pickHeroSpot, type HeroSpot } from './heroSpot';
 import { armLandingPop, landingPop, landingPopReady } from './landingPop';
 import ReadBadge from './ReadBadge';
-import { readSection, speechAvailable, type ReadAloudHandle } from './readAloud';
+import { onFirstGesture, readSection, readingPreference, rememberReadingPreference, speechAvailable, type ReadAloudHandle } from './readAloud';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
 import AnimatedNumber from './AnimatedNumber';
@@ -292,26 +292,42 @@ export default function LandingPage() {
   // Read aloud. The page already knows which section is under the reader, so
   // the voice reads THAT one and moves with them rather than starting at the
   // top; switching it on reads what they are looking at right now.
+  // On by default, and remembered: a visitor who switches it off is not read
+  // to again on their next visit. Both are decided after mount — the server
+  // knows neither this browser's voices nor what this visitor chose before.
   const [reading, setReading] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  // Some browsers have no voice at all; the control appears only where one does,
-  // and only after mount, because the server cannot know.
   const [canRead, setCanRead] = useState(false);
-  useEffect(() => { const id = window.requestAnimationFrame(() => setCanRead(speechAvailable())); return () => window.cancelAnimationFrame(id); }, []);
+  // No browser speaks before a gesture, so "on by default" means armed: the
+  // voice starts at the first touch, click, key or scroll, not on paint.
+  const [gestured, setGestured] = useState(false);
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => {
+      const available = speechAvailable();
+      setCanRead(available);
+      if (available) setReading(readingPreference());
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, []);
+  useEffect(() => onFirstGesture(() => setGestured(true)), []);
+  const toggleReading = useCallback(() => {
+    setReading(value => { rememberReadingPreference(!value); return !value; });
+    setGestured(true);
+  }, []);
   const readHandle = useRef<ReadAloudHandle | null>(null);
   // The radio stands down for as long as the reader is on — not per section,
   // or it would cut in and out between one heading and the next.
-  useEffect(() => { audio.setSpeaking(reading); }, [reading, audio]);
+  useEffect(() => { audio.setSpeaking(reading && gestured); }, [reading, gestured, audio]);
   useEffect(() => {
     readHandle.current?.stop();
     readHandle.current = null;
-    if (!reading) { setSpeaking(false); return; }
+    if (!reading || !gestured) { setSpeaking(false); return; }
     const el = document.getElementById(current ?? 'top');
     if (!el) { setSpeaking(false); return; }
     setSpeaking(true);
     readHandle.current = readSection(el, { onDone: () => setSpeaking(false) });
     return () => { readHandle.current?.stop(); readHandle.current = null; };
-  }, [reading, current]);
+  }, [reading, gestured, current]);
   // Leaving the page mid-sentence would otherwise keep talking.
   useEffect(() => () => { readHandle.current?.stop(); }, []);
   // The tour: when the spot has played, the page walks itself section to
@@ -396,7 +412,7 @@ export default function LandingPage() {
           {SHOWCASE_STEPS.slice(0, 5).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
         <div className="pl-nav-tools">
-          {canRead && <ReadBadge on={reading} speaking={speaking} onToggle={() => setReading(value => !value)} />}
+          {canRead && <ReadBadge on={reading} speaking={speaking} onToggle={toggleReading} />}
           <RadioBadge state={audio.state} onToggle={audio.toggleRadio} />
           <ColourBadge theme={theme} onChange={changeTheme} />
           <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>

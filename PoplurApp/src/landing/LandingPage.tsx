@@ -11,7 +11,7 @@ import Showcase, { IPhone, SCREENS, SHOWCASE_STEPS } from './Showcase';
 import Lockup from './Lockup';
 import ShaderText from './ShaderText';
 import { HERO_SPOTS, nextHeroSpot, pickHeroSpot, type HeroSpot } from './heroSpot';
-import { armLandingPop, landingPop } from './landingPop';
+import { armLandingPop, landingPop, landingPopReady } from './landingPop';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
 import AnimatedNumber from './AnimatedNumber';
@@ -314,8 +314,13 @@ export default function LandingPage() {
       const boxes = ids.flatMap(id => { const el = document.getElementById(id); return el ? [{ id, top: el.getBoundingClientRect().top }] : []; });
       const next = pickCurrent(boxes, h);
       if (next === currentRef.current) return;
+      // Landing on the page is not a pop. But the page is usually silent for
+      // the first few sections — sound cannot start before a gesture — and
+      // swallowing one more change after it finally can meant the first thing
+      // a visitor heard was the second section they scrolled past. So the
+      // "first read" is spent the moment sound is actually available.
       if (settledRef.current) landingPop();
-      settledRef.current = true;
+      if (landingPopReady()) settledRef.current = true;
       currentRef.current = next;
       setCurrent(next);
     });

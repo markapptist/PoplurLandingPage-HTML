@@ -66,15 +66,27 @@ export function landingPop(volume = 0.5): void {
   src.start()
 }
 
+/**
+ * Every event a browser accepts as the gesture that may start sound. Wheel and
+ * trackpad scrolling is deliberately absent because no browser counts it, which
+ * is exactly how a laptop visitor used to read the whole page in silence:
+ * pointerdown alone never fired for them, so the context was never unlocked.
+ */
+const UNLOCK_EVENTS = ['pointerdown', 'pointerup', 'mousedown', 'touchstart', 'touchend', 'click', 'keydown'] as const
+
 /** Arms the one-time unlock on the document. Returns its cleanup. */
 export function armLandingPop(): () => void {
   if (typeof document === 'undefined') return () => {}
   const off = () => {
-    document.removeEventListener('pointerdown', once)
-    document.removeEventListener('keydown', once)
+    for (const type of UNLOCK_EVENTS) document.removeEventListener(type, once)
   }
   const once = () => { unlockLandingPop(); off() }
-  document.addEventListener('pointerdown', once, { passive: true })
-  document.addEventListener('keydown', once)
+  for (const type of UNLOCK_EVENTS) document.addEventListener(type, once, { passive: true })
   return off
+}
+
+/** Whether a gesture has unlocked the page's sound yet — the chapter spy waits
+ *  for this before it decides a section change was heard or swallowed. */
+export function landingPopReady(): boolean {
+  return Boolean(ctx && buffer && ctx.state === 'running')
 }

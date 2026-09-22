@@ -317,7 +317,10 @@ export default function LandingPage() {
   const readHandle = useRef<ReadAloudHandle | null>(null);
   // The radio stands down for as long as the reader is on — not per section,
   // or it would cut in and out between one heading and the next.
-  useEffect(() => { audio.setSpeaking(reading && gestured); }, [reading, gestured, audio]);
+  // Only while a voice is actually speaking. Tying this to the reader being
+  // merely switched on silenced the radio for good, because the reader is on
+  // by default and spends most of a visit armed rather than talking.
+  useEffect(() => { audio.setSpeaking(speaking); }, [speaking, audio]);
   useEffect(() => {
     readHandle.current?.stop();
     readHandle.current = null;

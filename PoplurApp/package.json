@@ -47,6 +47,7 @@
     "websocket-driver": "^0.7.5"
   },
   "scripts": {
+    "test:landing-audio": "node --experimental-strip-types --test src/landing/landingAudio.test.mjs",
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",

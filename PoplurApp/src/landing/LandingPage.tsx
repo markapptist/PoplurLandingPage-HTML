@@ -19,7 +19,8 @@ import Backdrop from './Backdrop';
 import { useDemoMode, useDemoPops, useDemoScorecard } from './demo';
 import ColourBadge from './ColourBadge';
 import DottedWorld from './DottedWorld';
-import RadioBadge, { SPOT_SOUND_EVENT } from './RadioBadge';
+import RadioBadge from './RadioBadge';
+import { useLandingAudio } from './useLandingAudio';
 import { randomLandingThemeId, themeById, type LandingThemeId } from './themes';
 
 // Web-only product page: white, sleek, minimal. Plain DOM on purpose — the
@@ -88,23 +89,14 @@ function scrollTo(id: string) {
 // phone stands in without one), the eyebrow, the flipping headline and the
 // offer sit bottom-left. As you scroll, everything eases away.
 //
-// Sound: browsers autoplay video only when it is muted, so the spot starts
-// silent and is unmuted by the first gesture anywhere on the page — the same
-// click, tap or key that unlocks the pops — and by the chip on the hero,
-// which also mutes it again. It plays through once on arrival; when that
-// first run ends, `onSpotEnded` lets the page take over (the tour below).
-// After that the hero is hover-to-play: the pointer entering the hero plays
-// the spot (from the top if it had finished) and keeps it looping for as long
-// as it stays; leaving turns the loop off (a first run still reaches its end
-// and starts the tour) and, once the first run is done, pauses it. A tap
-// plays it where there is no pointer.
-function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
+// The visible chapter owns audio: the hero attempts sound immediately, and
+// radio takes over only after the reader leaves this section.
+function Hero({ onSpotEnded, audio }: { onSpotEnded: () => void; audio: ReturnType<typeof useLandingAudio> }) {
   const firstRunDone = useRef(false);
   const ref = useRef<HTMLElement | null>(null);
   const phoneRef = useRef<HTMLDivElement | null>(null);
   const copyRef = useRef<HTMLDivElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [sound, setSound] = useState(false);
+  const sound = audio.state.heroSound;
   // Which spot this visit plays is rolled on the client after mount (the
   // server cannot know), so the video mounts a beat after the page does.
   const [chosen, setChosen] = useState<HeroSpot | null>(null);
@@ -118,63 +110,20 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
       if (copyRef.current) { copyRef.current.style.opacity = String(1 - p * 1.4); copyRef.current.style.transform = `translateY(${p * 40}px)`; }
     });
   }, []);
-  // React never writes `muted` into server-rendered HTML (facebook/react#10389),
-  // so the element is silenced here for the autoplay, once, on mount.
-  useEffect(() => {
-    const v = videoRef.current; if (!v) return;
-    v.muted = true; v.defaultMuted = true;
-  }, [chosen]);
-  // Tell the radio when the spot is audible — playing, unmuted — so it can duck.
-  useEffect(() => {
-    const v = videoRef.current; if (!v) return;
-    let last: boolean | null = null;
-    const report = () => {
-      const on = !v.paused && !v.ended && !v.muted;
-      if (on === last) return;
-      last = on;
-      window.dispatchEvent(new CustomEvent(SPOT_SOUND_EVENT, { detail: { on } }));
-    };
-    for (const type of ['play', 'pause', 'ended', 'volumechange']) v.addEventListener(type, report);
-    return () => { for (const type of ['play', 'pause', 'ended', 'volumechange']) v.removeEventListener(type, report); };
-  }, [chosen]);
-  useEffect(() => {
-    const v = videoRef.current; if (!v) return;
-    const unmute = () => { v.muted = false; v.volume = 1; setSound(true); off(); };
-    const off = () => { document.removeEventListener('pointerdown', unmute); document.removeEventListener('keydown', unmute); };
-    document.addEventListener('pointerdown', unmute, { passive: true });
-    document.addEventListener('keydown', unmute);
-    return off;
-  }, [chosen]);
-  const toggleSound = () => {
-    const v = videoRef.current; if (!v) return;
-    v.muted = !v.muted; v.volume = 1; setSound(!v.muted);
-  };
-  const playSpot = () => {
-    const v = videoRef.current; if (!v) return;
-    v.loop = true;
-    if (v.ended) v.currentTime = 0;
-    if (!v.paused) return;
-    // An unmuted play() needs a prior gesture on the page; without one the
-    // browser rejects it, and the spot plays silent rather than not at all.
-    v.play().catch(() => { v.muted = true; setSound(false); v.play().catch(() => { /* not now */ }); });
-  };
-  const pauseSpot = () => {
-    const v = videoRef.current; if (!v) return;
-    v.loop = false;
-    if (firstRunDone.current) v.pause();
-  };
-  const ended = () => {
+  const ended = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     if (firstRunDone.current) return;
     firstRunDone.current = true;
+    // Re-entering the hero replays it continuously; the first visit still
+    // finishes once and hands over to the existing page tour.
+    event.currentTarget.loop = true;
     onSpotEnded();
   };
   const hasSpots = HERO_SPOTS.length > 0;
   const spot = chosen ? Asset.fromModule(chosen.video).uri : null;
   const poster = chosen ? Asset.fromModule(chosen.poster).uri : undefined;
-  return <header ref={ref} className={`pl-hero${hasSpots ? ' has-spot' : ''}`} id="top"
-    onMouseEnter={hasSpots ? playSpot : undefined} onMouseLeave={hasSpots ? pauseSpot : undefined}>
+  return <header ref={ref} className={`pl-hero${hasSpots ? ' has-spot' : ''}`} id="top">
     {hasSpots
-      ? (spot && <video key={chosen?.id} ref={videoRef} className="pl-hero-video" src={spot} poster={poster} autoPlay muted playsInline preload="auto" aria-label="People using Poplur" onEnded={ended} onClick={playSpot} />)
+      ? (spot && <video key={chosen?.id} ref={audio.setHero} className="pl-hero-video" src={spot} poster={poster} playsInline preload="auto" aria-label="People using Poplur" onEnded={ended} onClick={audio.replayHero} />)
       : <div className="pl-hero-stage">
         <div ref={phoneRef} className="pl-hero-phone"><IPhone screens={[SCREENS.map]} active={0} /></div>
       </div>}
@@ -186,9 +135,7 @@ function Hero({ onSpotEnded }: { onSpotEnded: () => void }) {
         <div className="pl-hero-actions">
           <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
           {hasSpots && <button type="button" className={`pl-sound${sound ? ' is-on' : ''}`} aria-pressed={sound}
-            // The chip's own press must not reach the document's one-time unmute, or the
-            // click that follows would toggle the sound straight back off.
-            onPointerDown={e => e.stopPropagation()} onClick={toggleSound}>
+            data-landing-audio-control onClick={audio.toggleHero}>
             <svg viewBox="0 0 32 32" width="16" height="16" aria-hidden="true">
               <path d="M6 12h4l6-5v18l-6-5H6z" fill="currentColor" />
               {sound
@@ -334,6 +281,7 @@ export default function LandingPage() {
   // first read (landing on the page is not a pop), and only once the page
   // has had a real gesture to unlock sound with (landingPop.ts).
   const [current, setCurrent] = useState<string | null>(null);
+  const audio = useLandingAudio(HERO_SPOTS.length > 0 && (current === null || current === 'top'));
   const currentRef = useRef<string | null>(null);
   const settledRef = useRef(false);
   useEffect(() => armLandingPop(), []);
@@ -414,14 +362,14 @@ export default function LandingPage() {
           {SHOWCASE_STEPS.slice(0, 5).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
         <div className="pl-nav-tools">
-          <RadioBadge />
+          <RadioBadge state={audio.state} onToggle={audio.toggleRadio} />
           <ColourBadge theme={theme} onChange={changeTheme} />
           <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>
         </div>
       </div>
     </nav>
 
-    <Hero onSpotEnded={startTour} />
+    <Hero onSpotEnded={startTour} audio={audio} />
 
     <Signup />
 

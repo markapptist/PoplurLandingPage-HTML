@@ -10,7 +10,7 @@ import { useLivePops } from './useLivePops';
 import Showcase, { IPhone, SCREENS, SHOWCASE_STEPS } from './Showcase';
 import Lockup from './Lockup';
 import ShaderText from './ShaderText';
-import { HERO_SPOTS, pickHeroSpot, type HeroSpot } from './heroSpot';
+import { HERO_SPOTS, nextHeroSpot, pickHeroSpot, type HeroSpot } from './heroSpot';
 import { armLandingPop, landingPop } from './landingPop';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
@@ -110,13 +110,15 @@ function Hero({ onSpotEnded, audio }: { onSpotEnded: () => void; audio: ReturnTy
       if (copyRef.current) { copyRef.current.style.opacity = String(1 - p * 1.4); copyRef.current.style.transform = `translateY(${p * 40}px)`; }
     });
   }, []);
-  const ended = (event: React.SyntheticEvent<HTMLVideoElement>) => {
-    if (firstRunDone.current) return;
-    firstRunDone.current = true;
-    // Re-entering the hero replays it continuously; the first visit still
-    // finishes once and hands over to the existing page tour.
-    event.currentTarget.loop = true;
-    onSpotEnded();
+  const ended = () => {
+    // The first spot to finish hands over to the page tour, once. Then the
+    // hero rolls on to another spot rather than looping the same one, so the
+    // clips a visitor sees are the whole set, not whichever one they landed on.
+    if (!firstRunDone.current) {
+      firstRunDone.current = true;
+      onSpotEnded();
+    }
+    setChosen(current => nextHeroSpot(current?.id ?? null));
   };
   const hasSpots = HERO_SPOTS.length > 0;
   const spot = chosen ? Asset.fromModule(chosen.video).uri : null;

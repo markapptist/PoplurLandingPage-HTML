@@ -23,7 +23,7 @@ export const HERO_SPOTS: readonly HeroSpot[] = [
   { id: 'clay', video: require('@/assets/videos/landing/tv-spot-5.mp4'), poster: require('@/assets/images/landing/tv-spot-5-poster.jpg') },
 ]
 
-/** Remembers only which spot the last visit played, so this one differs. */
+/** Remembers only which spot played last, so the next one differs. */
 const LAST_SPOT_KEY = 'poplur.landing.spot'
 
 export function pickHeroSpot(): HeroSpot | null {
@@ -31,6 +31,20 @@ export function pickHeroSpot(): HeroSpot | null {
   let last: string | null = null
   try { last = window.localStorage.getItem(LAST_SPOT_KEY) } catch { /* private mode */ }
   const pool = HERO_SPOTS.length > 1 ? HERO_SPOTS.filter(s => s.id !== last) : HERO_SPOTS
+  const pick = pool[Math.floor(Math.random() * pool.length)]
+  try { window.localStorage.setItem(LAST_SPOT_KEY, pick.id) } catch { /* private mode */ }
+  return pick
+}
+
+/**
+ * The spot to roll to when the one playing ends: any of the others, at
+ * random. The hero used to loop its one spot forever, so a visitor who
+ * stayed on the page saw a single clip however many were made; now the roll
+ * continues while they watch, and never repeats back to back.
+ */
+export function nextHeroSpot(currentId: string | null): HeroSpot | null {
+  if (!HERO_SPOTS.length) return null
+  const pool = HERO_SPOTS.length > 1 ? HERO_SPOTS.filter(spot => spot.id !== currentId) : HERO_SPOTS
   const pick = pool[Math.floor(Math.random() * pool.length)]
   try { window.localStorage.setItem(LAST_SPOT_KEY, pick.id) } catch { /* private mode */ }
   return pick

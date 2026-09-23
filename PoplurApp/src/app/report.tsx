@@ -174,7 +174,7 @@ export default function ReportScreen() {
           <>
             <h1 className="rp-title">Report {filed.round} is in.</h1>
             <p className="rp-done">Thank you, {identity.name.trim()}. A copy is on its way to {verified ? check.email : identity.email.trim()}.{filed.late ? ` It arrived after the due day, so it counts for ${filed.points} points.` : ''}</p>
-            <div className="rp-points"><b>{filed.points}</b><span>points, on the board with Monday’s standings</span></div>
+            <div className="rp-points"><b>{filed.points}</b><span>points, on the board with Saturday’s standings</span></div>
             {filed.next
               ? <p className="rp-done" style={{ marginTop: 18 }}>Next: report {filed.next.number}, <b>{filed.next.name}</b>, due {filed.next.dueLabel}. <a href="#" onClick={e => { e.preventDefault(); startNext(filed.next!.number); }} style={{ color: 'var(--accent)', fontWeight: 600 }}>See the tests now</a> or come back to this link later.</p>
               : <p className="rp-done" style={{ marginTop: 18 }}>That was the last one. Thank you for the whole month.</p>}

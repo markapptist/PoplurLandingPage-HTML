@@ -662,7 +662,7 @@ export function createReportReceiptHtml(report: BetaReport, { forPoplur = false,
   const answers = report.answers.filter(a => a.answer.trim()).map(a => `<p style="margin:0 0 10px;font-family:${FONT};font-size:14px;line-height:1.55;color:${INK_2};"><b style="color:${INK};">${esc(a.question)}</b><br>${esc(a.answer)}</p>`).join('');
   const lead = forPoplur
     ? `${esc(report.name)} filed test report ${report.round} (${esc(report.roundName)}) on poplur.ca. The JSON is attached.`
-    : `Thank you — report ${report.round} is in. ${report.late ? `It arrived after ${esc(round?.dueLabel ?? 'the due day')}, so it counts for ${report.points} points.` : `${report.points} points go on the board with Monday's standings.`} Here is what you sent.`;
+    : `Thank you — report ${report.round} is in. ${report.late ? `It arrived after ${esc(round?.dueLabel ?? 'the due day')}, so it counts for ${report.points} points.` : `${report.points} points go on the board with Saturday's standings.`} Here is what you sent.`;
   return shell('#f6f6f8', reportReceiptSubject(report, forPoplur), lead, `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6f8;">
       <tr>

@@ -77,6 +77,9 @@ type Word = { at: number; node: Text; start: number; end: number }
 function passageFor(root: HTMLElement): { text: string; words: Word[] } {
   const blocks = Array.from(root.querySelectorAll<HTMLElement>(READABLE))
     .filter(el => !el.closest('[data-read-skip]') && (el.textContent ?? '').trim().length > 1)
+    // The hero holds seven headlines and shows one; the six behind it are
+    // marked aria-hidden, and reading them ran the whole set together.
+    .filter(el => !el.closest('[aria-hidden="true"]'))
   const words: Word[] = []
   let text = ''
   for (const block of blocks) {
@@ -151,15 +154,33 @@ export function readSection(root: HTMLElement, { onDone, rate = 1 }: { onDone?: 
   }, 90)
 
   window.speechSynthesis.cancel()
-  const cancelWait = whenVoicesReady(() => {
+  // A browser can accept speak() and then quietly drop it — most often
+  // because nothing the page has seen yet counts as user activation. Rather
+  // than assume the first attempt took, check, and try again on the next real
+  // gesture; a few attempts, then leave it alone.
+  let attempts = 0
+  let cancelGesture: (() => void) | null = null
+  let checkTimer: number | null = null
+  const attempt = () => {
     if (stopped) return
-    window.speechSynthesis.speak(utterance)
-  })
+    attempts += 1
+    try { window.speechSynthesis.speak(utterance) } catch { /* the retry below covers it */ }
+    checkTimer = window.setTimeout(() => {
+      if (stopped || attempts >= 4) return
+      const engine = window.speechSynthesis
+      if (engine.speaking || engine.pending) return
+      cancelGesture?.()
+      cancelGesture = onFirstGesture(attempt)
+    }, 600)
+  }
+  const cancelWait = whenVoicesReady(attempt)
 
   return {
     stop: () => {
       stopped = true
       cancelWait()
+      cancelGesture?.()
+      if (checkTimer !== null) window.clearTimeout(checkTimer)
       clear()
       try { window.speechSynthesis.cancel() } catch { /* already quiet */ }
     },
@@ -184,7 +205,10 @@ export function rememberReadingPreference(on: boolean): void {
 /** Calls back on the first gesture a browser accepts as permission to speak. */
 export function onFirstGesture(run: () => void): () => void {
   if (typeof document === 'undefined') return () => {}
-  const types = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown', 'scroll'] as const
+  // Scrolling is deliberately absent: a wheel or a trackpad is not the user
+  // activation a browser requires before it will speak, and counting it spent
+  // the one gesture this waits for on something that could never work.
+  const types = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'] as const
   const off = () => { for (const type of types) document.removeEventListener(type, once) }
   const once = () => { off(); run() }
   for (const type of types) document.addEventListener(type, once, { passive: true })

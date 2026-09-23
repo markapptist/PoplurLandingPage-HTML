@@ -41,7 +41,7 @@ export function createLandingAudio(radio: HTMLAudioElement, report: (state: Audi
     heroBlocked = false
     if (video.ended) video.currentTime = 0
     video.volume = 1
-    video.muted = heroMuted
+    video.muted = heroMuted || speaking
     const current = () => attempt === heroAttempt && video === hero && wantsHero()
     video.play().then(() => {
       if (!current()) { if (!wantsHero() || video !== hero) video.pause(); return }

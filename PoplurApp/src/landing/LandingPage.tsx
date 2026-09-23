@@ -13,7 +13,7 @@ import ShaderText from './ShaderText';
 import { HERO_SPOTS, nextHeroSpot, pickHeroSpot, type HeroSpot } from './heroSpot';
 import { armLandingPop, landingPop, landingPopReady } from './landingPop';
 import ReadBadge from './ReadBadge';
-import { onFirstGesture, readSection, readingPreference, rememberReadingPreference, speechAvailable, type ReadAloudHandle } from './readAloud';
+import { useReadAloud } from './useReadAloud';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
 import AnimatedNumber from './AnimatedNumber';
@@ -289,54 +289,7 @@ export default function LandingPage() {
   const currentRef = useRef<string | null>(null);
   const settledRef = useRef(false);
   useEffect(() => armLandingPop(), []);
-  // Read aloud. The page already knows which section is under the reader, so
-  // the voice reads THAT one and moves with them rather than starting at the
-  // top; switching it on reads what they are looking at right now.
-  // On by default, and remembered: a visitor who switches it off is not read
-  // to again on their next visit. Both are decided after mount — the server
-  // knows neither this browser's voices nor what this visitor chose before.
-  const [reading, setReading] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [canRead, setCanRead] = useState(false);
-  // No browser speaks before a gesture, so "on by default" means armed: the
-  // voice starts at the first touch, click, key or scroll, not on paint.
-  const [gestured, setGestured] = useState(false);
-  useEffect(() => {
-    // A timer, not an animation frame. requestAnimationFrame never fires in a
-    // tab that is not compositing — a background tab, a hidden window — so the
-    // reader stayed disarmed and its control never appeared for anyone who
-    // opened the page in a tab they were not looking at yet.
-    const id = window.setTimeout(() => {
-      const available = speechAvailable();
-      setCanRead(available);
-      if (available) setReading(readingPreference());
-    }, 0);
-    return () => window.clearTimeout(id);
-  }, []);
-  useEffect(() => onFirstGesture(() => setGestured(true)), []);
-  const toggleReading = useCallback(() => {
-    setReading(value => { rememberReadingPreference(!value); return !value; });
-    setGestured(true);
-  }, []);
-  const readHandle = useRef<ReadAloudHandle | null>(null);
-  // The radio stands down for as long as the reader is on — not per section,
-  // or it would cut in and out between one heading and the next.
-  // Only while a voice is actually speaking. Tying this to the reader being
-  // merely switched on silenced the radio for good, because the reader is on
-  // by default and spends most of a visit armed rather than talking.
-  useEffect(() => { audio.setSpeaking(speaking); }, [speaking, audio]);
-  useEffect(() => {
-    readHandle.current?.stop();
-    readHandle.current = null;
-    if (!reading || !gestured) { setSpeaking(false); return; }
-    const el = document.getElementById(current ?? 'top');
-    if (!el) { setSpeaking(false); return; }
-    setSpeaking(true);
-    readHandle.current = readSection(el, { onDone: () => setSpeaking(false) });
-    return () => { readHandle.current?.stop(); readHandle.current = null; };
-  }, [reading, gestured, current]);
-  // Leaving the page mid-sentence would otherwise keep talking.
-  useEffect(() => () => { readHandle.current?.stop(); }, []);
+  const reader = useReadAloud(current ?? 'top', audio.setSpeaking);
   // The tour: when the spot has played, the page walks itself section to
   // section — each stop a snap, each snap a pop — until the reader takes the
   // wheel (a scroll, a touch, a key), which ends it at once.
@@ -419,7 +372,7 @@ export default function LandingPage() {
           {SHOWCASE_STEPS.slice(0, 5).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
         <div className="pl-nav-tools">
-          {canRead && <ReadBadge on={reading} speaking={speaking} onToggle={toggleReading} />}
+          {reader.state.available && <ReadBadge state={reader.state} onToggle={reader.toggle} />}
           <RadioBadge state={audio.state} onToggle={audio.toggleRadio} />
           <ColourBadge theme={theme} onChange={changeTheme} />
           <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>

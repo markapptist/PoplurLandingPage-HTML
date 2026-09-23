@@ -131,7 +131,7 @@ export const REPORT_ROUNDS: ReportRound[] = [
     dueLabel: 'Sat 31 Oct',
     formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSdZylfcy5XbkYqcqVgR6RPVj0eJUz5qNuYrMZPOwWn8CNeXnA/viewform',
     formId: '1chqg467jGu94izI_T9PRFjUD-4uQcH-Q7EAfCeX18Xk',
-    blurb: 'The end of the paid part: updates, the whole month, and what you would tell a friend.',
+    blurb: 'The end of the beta: updates, the whole month, and what you would tell a friend.',
     tasks: [
       { id: 'update', title: 'Updates arrived', steps: 'Check the version you are on now against the one you installed.', expect: 'New builds arrived through TestFlight or Google Play without reinstalling.' },
       { id: 'month-map', title: 'The map today', steps: 'Open the map where you usually are.', expect: 'There is more around you than on day one.' },

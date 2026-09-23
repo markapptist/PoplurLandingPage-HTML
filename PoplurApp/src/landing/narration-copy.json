@@ -1,13 +1,13 @@
 {
-  "top": "Posts on a world map that spread as people engage. Free on iPhone and Android · Toronto beta. Every pop starts with a 5 km radius.",
+  "top": "Posts on a world map that spread as people engage. Free on iPhone and Android · Toronto beta. Share locally. Let your posts travel.",
   "beta": "Join the beta. iPhone and Android. Enter your email and we will send you the tester agreement; sign it with your name and your links unlock — TestFlight for iOS, Google Play for Android.",
-  "live": "The numbers, as they happen. A private beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a neighbour likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees. The beta scorecard. People only. Poplur runs a labelled synthetic cohort as a pre-launch harness; it is counted apart and never appears here. Counts are shown with their denominators — a pending read means the day it measures has not passed yet. Pops on the map right now.",
-  "features": "Reach, without followers. Six things a pop does that a post never could.",
-  "map": "See what is popping around you. A stylised 3D clay world with live weather and time of day. Every pop sits on the map where it was made — you see what is near, claim ground, and watch pops spread.",
-  "radius": "Reach is earned per post, not per account. A pop starts with a 5 km radius. As people engage, the radius grows — all the way to the whole world. Left alone, it decays and the pop disappears. Someone with no following can be seen by everyone around them. Earned reach can be claimed on your next pop, once. It is never minted by posting more.",
-  "feed": "Inside a radius, you are in the feed. Whether or not you follow the poster. Discovery is interception, not subscription: the feed is what has reached where you stand.",
-  "place": "One live pop per place. Free posting is where you are. Post again within 5 km of your own pop and it replaces it, carrying its reach forward — the map stays honest about who was actually there. Posting anywhere else is a placement, and placements are paid.",
-  "ai": "Post where it will travel. Every pop leaves a record of how far it spread, from where, at what time, as what kind of post. Poplur’s recommendation model reads that data — how similar content travelled in each region — and tells you where and when your next pop will reach the most people. The recommendation comes from the radius itself: what grew where, and why. The same models help people make the post.",
+  "live": "The numbers, as they happen. Follow the Toronto beta as people join, share and discover what is happening nearby. This scorecard reports participation and activity during the beta. The beta scorecard. People only. Poplur runs a labelled synthetic cohort as a pre-launch harness; it is counted apart and never appears here. Counts are shown with their denominators — a pending read means the day it measures has not passed yet. Pops on the map right now.",
+  "features": "Reach, without followers. A new way to share and discover.",
+  "map": "See what is popping around you. Explore a clay world with live weather and time of day. Discover nearby moments and watch posts travel beyond their neighbourhood.",
+  "radius": "Reach is earned per post, not per account. Your post starts nearby. As people engage, it reaches more people—giving every post a chance to travel, even without a following.",
+  "feed": "Discover posts reaching your area. Find interesting posts from people and places around you—even if you do not follow the creator.",
+  "place": "Share what is happening where you are. Put a moment, a discovery or an idea on the map and connect with people nearby.",
+  "ai": "Post where it will travel. AI helps you find places where your next post could connect with people. Get suggestions and creative tools to help bring your ideas to life.",
   "types": "Photos, carousels, video, music, podcasts. Games and apps are designed into the same post pipeline, and AI tools help people make the post itself.",
-  "business": "Reach the people who can walk in. A café posts the same way anyone does; its pop reaches the people nearby. Businesses pay to extend a radius or to place a pop somewhere they are not."
+  "business": "Reach the people who can walk in. Help nearby customers discover your business. Promote a post to reach more people in places that matter to you."
 }

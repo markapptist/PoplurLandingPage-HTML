@@ -45,10 +45,10 @@ const fmtAgo = (ms: number, now = Date.now()) => {
 const HERO_TITLES = [
   'Posts on a world map that spread as people engage.',
   'Reach is earned per post, not per account.',
-  'Inside a radius, you are in the feed.',
+  'Discover posts reaching your area.',
   'See what is popping around you.',
-  'One live pop per place.',
-  'AI tells you where to post.',
+  'Share what is happening where you are.',
+  'AI helps you find your audience.',
   'Found without followers.',
 ];
 const HERO_TITLE_MS = 4200;
@@ -135,7 +135,7 @@ function Hero({ onSpotEnded, audio }: { onSpotEnded: () => void; audio: ReturnTy
       <div className="pl-hero-text">
         <div className="pl-eyebrow">Poplur</div>
         <HeroTitle />
-        <p className="pl-hero-sub">Free on iPhone and Android · Toronto beta. Every pop starts with a 5 km radius.</p>
+        <p className="pl-hero-sub">Free on iPhone and Android · Toronto beta. Share locally. Let your posts travel.</p>
         <div className="pl-hero-actions">
           <button className="pl-cta accent" onClick={() => scrollTo('beta')}>Join the beta</button>
           {hasSpots && <button type="button" className={`pl-sound${sound ? ' is-on' : ''}`} aria-pressed={sound}
@@ -389,7 +389,7 @@ export default function LandingPage() {
     <Signup />
 
     <section id="live" className="pl-live">
-      <Lockup eyebrow="Live from the beta" title="The numbers, as they happen." sub="A private beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a neighbour likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees." />
+      <Lockup eyebrow="Live from the beta" title="The numbers, as they happen." sub="Follow the Toronto beta as people join, share and discover what is happening nearby. This scorecard reports participation and activity during the beta." />
       <div className="wrap">
         <div className="pl-cards">
           <Reveal><ScorecardCard scorecard={scorecard} state={state} demo={demo} /></Reveal>
@@ -398,7 +398,7 @@ export default function LandingPage() {
       </div>
     </section>
 
-    <Lockup id="features" eyebrow="How it works" title="Reach, without followers." sub="Six things a pop does that a post never could." />
+    <Lockup id="features" eyebrow="How it works" title="Reach, without followers." sub="A new way to share and discover." />
 
     <Showcase />
 

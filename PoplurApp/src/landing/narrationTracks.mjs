@@ -2,9 +2,9 @@
 /** @type {Record<string, { src: string; text: string; duration: number }>} */
 export const NARRATION_TRACKS = {
   "top": {
-    "src": "/audio/landing/top-90e4b38139b8.mp3",
-    "text": "Posts on a world map that spread as people engage. Free on iPhone and Android · Toronto beta. Every pop starts with a 5 km radius.",
-    "duration": 8.705533
+    "src": "/audio/landing/top-1be2b2a1dea2.mp3",
+    "text": "Posts on a world map that spread as people engage. Free on iPhone and Android · Toronto beta. Share locally. Let your posts travel.",
+    "duration": 8.345624
   },
   "beta": {
     "src": "/audio/landing/beta-571d42d329c7.mp3",
@@ -12,39 +12,39 @@ export const NARRATION_TRACKS = {
     "duration": 10.617052
   },
   "live": {
-    "src": "/audio/landing/live-079511f024f1.mp3",
-    "text": "The numbers, as they happen. A private beta in Toronto, opt-in only. We are testing whether the radius works — do people post, do they come back, does a pop grow when a neighbour likes it, do people find pops by being inside them. Published every fifteen minutes from the same data the team sees. The beta scorecard. People only. Poplur runs a labelled synthetic cohort as a pre-launch harness; it is counted apart and never appears here. Counts are shown with their denominators — a pending read means the day it measures has not passed yet. Pops on the map right now.",
-    "duration": 33.251429
+    "src": "/audio/landing/live-c6576dc3fbb6.mp3",
+    "text": "The numbers, as they happen. Follow the Toronto beta as people join, share and discover what is happening nearby. This scorecard reports participation and activity during the beta. The beta scorecard. People only. Poplur runs a labelled synthetic cohort as a pre-launch harness; it is counted apart and never appears here. Counts are shown with their denominators — a pending read means the day it measures has not passed yet. Pops on the map right now.",
+    "duration": 26.239002
   },
   "features": {
-    "src": "/audio/landing/features-e4a31e0d10cf.mp3",
-    "text": "Reach, without followers. Six things a pop does that a post never could.",
-    "duration": 4.534966
+    "src": "/audio/landing/features-31ed2f63fe57.mp3",
+    "text": "Reach, without followers. A new way to share and discover.",
+    "duration": 3.675828
   },
   "map": {
-    "src": "/audio/landing/map-34fa8853c0f3.mp3",
-    "text": "See what is popping around you. A stylised 3D clay world with live weather and time of day. Every pop sits on the map where it was made — you see what is near, claim ground, and watch pops spread.",
-    "duration": 11.287755
+    "src": "/audio/landing/map-fffcfc1d64a0.mp3",
+    "text": "See what is popping around you. Explore a clay world with live weather and time of day. Discover nearby moments and watch posts travel beyond their neighbourhood.",
+    "duration": 8.68712
   },
   "radius": {
-    "src": "/audio/landing/radius-12af9323c45e.mp3",
-    "text": "Reach is earned per post, not per account. A pop starts with a 5 km radius. As people engage, the radius grows — all the way to the whole world. Left alone, it decays and the pop disappears. Someone with no following can be seen by everyone around them. Earned reach can be claimed on your next pop, once. It is never minted by posting more.",
-    "duration": 21.485533
+    "src": "/audio/landing/radius-efc6cbc33a42.mp3",
+    "text": "Reach is earned per post, not per account. Your post starts nearby. As people engage, it reaches more people—giving every post a chance to travel, even without a following.",
+    "duration": 10.943673
   },
   "feed": {
-    "src": "/audio/landing/feed-179a8f4c255c.mp3",
-    "text": "Inside a radius, you are in the feed. Whether or not you follow the poster. Discovery is interception, not subscription: the feed is what has reached where you stand.",
-    "duration": 9.668073
+    "src": "/audio/landing/feed-55473b7b0c53.mp3",
+    "text": "Discover posts reaching your area. Find interesting posts from people and places around you—even if you do not follow the creator.",
+    "duration": 7.482721
   },
   "place": {
-    "src": "/audio/landing/place-91f2a52c3b8e.mp3",
-    "text": "One live pop per place. Free posting is where you are. Post again within 5 km of your own pop and it replaces it, carrying its reach forward — the map stays honest about who was actually there. Posting anywhere else is a placement, and placements are paid.",
-    "duration": 15.443492
+    "src": "/audio/landing/place-3b45a343b5ee.mp3",
+    "text": "Share what is happening where you are. Put a moment, a discovery or an idea on the map and connect with people nearby.",
+    "duration": 6.615828
   },
   "ai": {
-    "src": "/audio/landing/ai-04d6a5781968.mp3",
-    "text": "Post where it will travel. Every pop leaves a record of how far it spread, from where, at what time, as what kind of post. Poplur’s recommendation model reads that data — how similar content travelled in each region — and tells you where and when your next pop will reach the most people. The recommendation comes from the radius itself: what grew where, and why. The same models help people make the post.",
-    "duration": 23.183175
+    "src": "/audio/landing/ai-96c120c0edfa.mp3",
+    "text": "Post where it will travel. AI helps you find places where your next post could connect with people. Get suggestions and creative tools to help bring your ideas to life.",
+    "duration": 9.367302
   },
   "types": {
     "src": "/audio/landing/types-6edcd83033b3.mp3",
@@ -52,8 +52,8 @@ export const NARRATION_TRACKS = {
     "duration": 10.450431
   },
   "business": {
-    "src": "/audio/landing/business-58aa87d31db9.mp3",
-    "text": "Reach the people who can walk in. A café posts the same way anyone does; its pop reaches the people nearby. Businesses pay to extend a radius or to place a pop somewhere they are not.",
-    "duration": 10.804354
+    "src": "/audio/landing/business-7c67cf22fb90.mp3",
+    "text": "Reach the people who can walk in. Help nearby customers discover your business. Promote a post to reach more people in places that matter to you.",
+    "duration": 8.168889
   }
 }

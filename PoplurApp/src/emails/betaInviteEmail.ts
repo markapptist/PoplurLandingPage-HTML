@@ -203,7 +203,7 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
     notes: [
       { strong: 'Future updates.', body: 'New iPhone builds land in TestFlight and Android updates through Google Play. Keep this email: the links work again if you ever need to reinstall.' },
       { strong: 'What to try first.', body: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Share locally and discover what connects with people nearby.' },
-      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the points board, five minutes apiece. The first is due Sun 4 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
+      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the points board, five minutes apiece. The first is due Sat 10 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
       ...(bugUrl ? [{ strong: 'Found a bug?', body: `Send it the moment you hit it, with a screenshot: <a href="${bugUrl}" style="color:inherit;font-weight:600;">the bug form</a>. No sign-in, no account. A confirmed bug is five points, and the first person to report it gets them.` }] : []),
     ],
     reply: 'Have feedback? Reply to this email. Every note shapes the beta.',
@@ -259,7 +259,7 @@ export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
     '',
     'What to try first: open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Share locally and discover what connects with people nearby.',
     '',
-    ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the points board. The first is due Sun 4 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
+    ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the points board. The first is due Sat 10 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
     ...(options.bugUrl ? [`Found a bug? Send it the moment you hit it, with a screenshot — no sign-in needed: ${options.bugUrl}`, ''] : []),
     'Have feedback? Reply to this email. Every note shapes the beta.',
     '',

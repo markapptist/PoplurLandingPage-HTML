@@ -3,7 +3,7 @@
 // (app/report.tsx), the receipt emails and the record all read this file.
 //
 // Rounds, dates and points follow .codex/beta-focus-group/invite-and-beta-rules.md
-// (day 0 Thu 1 Oct 2026; reports due Sun 4 Oct, Sun 11 Oct, Wed 14 Oct, Sat 31 Oct;
+// (day 0 Sat 3 Oct 2026; reports due every Saturday: Sat 10, Sat 17, Sat 24, Sat 31 Oct;
 // 10 points, 5 if late but in before the next one is due). Bump REPORT_VERSION
 // when a test or question changes so old reports stay readable.
 
@@ -61,8 +61,8 @@ export const REPORT_ROUNDS: ReportRound[] = [
   {
     number: 1,
     name: 'First pop',
-    dueAt: '2026-10-05T03:59:59.000Z',
-    dueLabel: 'Sun 4 Oct',
+    dueAt: '2026-10-11T03:59:59.000Z',
+    dueLabel: 'Sat 10 Oct',
     formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLScrCqcDOgmeNRylEAQd1G14MuB1CyXS8sTpQMeUb-JJoGgQRg/viewform',
     formId: '1HCqkd_nPtua3dAuwKZ7boTsc2JUUpJgKDV4LgJnC3GM',
     blurb: 'Getting in, letting the app know where you are, and putting your first pop on the map.',
@@ -84,8 +84,8 @@ export const REPORT_ROUNDS: ReportRound[] = [
   {
     number: 2,
     name: 'Reach',
-    dueAt: '2026-10-12T03:59:59.000Z',
-    dueLabel: 'Sun 11 Oct',
+    dueAt: '2026-10-18T03:59:59.000Z',
+    dueLabel: 'Sat 17 Oct',
     formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSfll3AOYRR4Pf4CVOwJ1j6qqYhETWwOuqrWzI7zNXW9xmjVOw/viewform',
     formId: '1aewvmYKHwpVN1ik6Ebxckc2JsIoGeZLWm3ZMz_eMN64',
     blurb: 'How pops spread: likes, radius, the camera and coming back to the app.',
@@ -104,8 +104,8 @@ export const REPORT_ROUNDS: ReportRound[] = [
   {
     number: 3,
     name: 'Two weeks in',
-    dueAt: '2026-10-15T03:59:59.000Z',
-    dueLabel: 'Wed 14 Oct',
+    dueAt: '2026-10-25T03:59:59.000Z',
+    dueLabel: 'Sat 24 Oct',
     formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSftMSTMXe2DADnZiLbWU-VSSGO8Xk7T8zVBPym8qoG6V_nhHQ/viewform',
     formId: '1HQQTD71SVYoS8huVgQRDItUa47ccyJCiBg0n41OSI6I',
     blurb: 'The habits and the rough edges after two weeks of real use.',

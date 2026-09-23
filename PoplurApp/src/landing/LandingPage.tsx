@@ -293,13 +293,16 @@ export default function LandingPage() {
   // The tour: when the spot has played, the page walks itself section to
   // section — each stop a snap, each snap a pop — until the reader takes the
   // wheel (a scroll, a touch, a key), which ends it at once.
+  const readerBusy = reader.state.status === 'starting' || reader.state.status === 'speaking';
+  const readerBusyRef = useRef(readerBusy);
+  readerBusyRef.current = readerBusy;
   const tourTimer = useRef<number | null>(null);
   const stopTour = useCallback(() => {
     if (tourTimer.current !== null) { window.clearTimeout(tourTimer.current); tourTimer.current = null; }
     for (const type of TOUR_CANCEL_EVENTS) document.removeEventListener(type, stopTour);
   }, []);
   const startTour = useCallback(() => {
-    if (reducedMotion() || tourTimer.current !== null) return;
+    if (reducedMotion() || readerBusyRef.current || tourTimer.current !== null) return;
     let at = 0;
     const step = () => {
       const id = TOUR_STOPS[at++];
@@ -311,6 +314,7 @@ export default function LandingPage() {
     for (const type of TOUR_CANCEL_EVENTS) document.addEventListener(type, stopTour, { passive: true });
   }, [stopTour]);
   useEffect(() => stopTour, [stopTour]);
+  useEffect(() => { if (readerBusy) stopTour(); }, [readerBusy, stopTour]);
   useEffect(() => {
     const ids = ['top', 'beta', 'live', 'features', ...SHOWCASE_STEPS.map(step => step.id)];
     return onScrollFrame((_y, h) => {
@@ -372,7 +376,7 @@ export default function LandingPage() {
           {SHOWCASE_STEPS.slice(0, 5).map(f => <a key={f.id} href={`#${f.id}`} className={current === f.id ? 'is-current' : undefined} onClick={e => { e.preventDefault(); scrollTo(f.id); }}>{f.nav}</a>)}
         </div>
         <div className="pl-nav-tools">
-          {reader.state.available && <ReadBadge state={reader.state} onToggle={reader.toggle} />}
+          {reader.state.available && <ReadBadge state={reader.state} onToggle={() => { stopTour(); reader.toggle(); }} />}
           <RadioBadge state={audio.state} onToggle={audio.toggleRadio} />
           <ColourBadge theme={theme} onChange={changeTheme} />
           <button className="pl-cta" onClick={() => scrollTo('beta')}>Join the beta</button>

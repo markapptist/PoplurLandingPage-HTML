@@ -5,11 +5,8 @@
 // follows when they scroll to the next one, rather than starting at the top
 // and talking over wherever they actually are.
 //
-// The voice is the browser's own (speechSynthesis): no key, no network, no
-// cost, and on a Mac or an iPhone it is a Siri voice. Chrome and Safari report
-// word boundaries as they speak, which is what lights the current word; the
-// engines that do not (some Android builds) get an even-paced estimate instead,
-// so the highlight still moves with the voice rather than sitting still.
+// Shipped sections play their recorded narration through one audio element.
+// Browser speech remains a fallback for sections without a recording.
 //
 // THE HIGHLIGHT NEVER TOUCHES THE DOM. The first version wrapped every word in
 // a span, which broke the page: React owns this markup, and rewriting a
@@ -18,6 +15,8 @@
 // the same words without changing a single node, so React never notices. A
 // browser without that API still reads aloud; it just does not light the word.
 
+import { NARRATION_TRACKS } from './narrationTracks.mjs'
+
 const HIGHLIGHT_NAME = 'poplur-read'
 /** Elements whose text is worth hearing; the rest of a section is furniture. */
 const READABLE = 'h1, h2, h3, p, li'
@@ -25,6 +24,56 @@ const READABLE = 'h1, h2, h3, p, li'
 const MS_PER_CHARACTER = 62
 
 export type ReadAloudHandle = { stop: () => void }
+type ReadingCallbacks = { onStart?: () => void; onDone?: () => void; onBlocked?: () => void; rate?: number }
+
+/** Media playback works even when Chrome's speech service never starts. */
+export function playRecording(audio: HTMLAudioElement, track: { src: string; duration: number },
+  { onStart, onDone, onBlocked, onProgress }: ReadingCallbacks & { onProgress?: (fraction: number) => void }): ReadAloudHandle {
+  let stopped = false, started = false
+  let deadline: ReturnType<typeof setTimeout>
+  const clear = () => {
+    clearTimeout(deadline)
+    audio.removeEventListener('playing', playing)
+    audio.removeEventListener('ended', ended)
+    audio.removeEventListener('error', failed)
+    audio.removeEventListener('waiting', waiting)
+    audio.removeEventListener('timeupdate', progress)
+  }
+  const finish = (blocked: boolean) => {
+    if (stopped) return
+    stopped = true
+    clear()
+    audio.pause()
+    if (blocked) onBlocked?.()
+    else onDone?.()
+  }
+  const playing = () => {
+    if (stopped) return
+    clearTimeout(deadline)
+    if (!started) { started = true; onStart?.() }
+  }
+  const ended = () => finish(false)
+  const failed = () => finish(true)
+  const waiting = () => { clearTimeout(deadline); deadline = setTimeout(failed, 10000) }
+  const progress = () => {
+    if (!stopped && started) onProgress?.(Math.min(1, audio.currentTime / (audio.duration || track.duration)))
+  }
+  audio.addEventListener('playing', playing)
+  audio.addEventListener('ended', ended)
+  audio.addEventListener('error', failed)
+  audio.addEventListener('waiting', waiting)
+  audio.addEventListener('timeupdate', progress)
+  waiting()
+  try {
+    if (audio.getAttribute('src') !== track.src) audio.src = track.src
+    audio.currentTime = 0
+    audio.volume = 1
+    audio.muted = false
+    // Submit playback inside the actual tap, without a fetch or effect first.
+    audio.play().then(playing, failed)
+  } catch { failed() }
+  return { stop: () => { stopped = true; clear(); audio.pause() } }
+}
 
 type HighlightRegistry = { set: (name: string, highlight: unknown) => void; delete: (name: string) => void }
 type HighlightCtor = new (...ranges: Range[]) => unknown
@@ -72,10 +121,7 @@ function passageFor(root: HTMLElement): { text: string; words: Word[] } {
 }
 
 /** Reads one section aloud and lights each word as the voice reaches it. */
-export function readSection(root: HTMLElement, { onStart, onDone, onBlocked, rate = 1 }: {
-  onStart?: () => void; onDone?: () => void; onBlocked?: () => void; rate?: number
-} = {}): ReadAloudHandle {
-  if (!speechAvailable()) { onBlocked?.(); return { stop: () => {} } }
+export function readSection(root: HTMLElement, { onStart, onDone, onBlocked, rate = 1 }: ReadingCallbacks = {}, audio?: HTMLAudioElement): ReadAloudHandle {
   const { text, words } = passageFor(root)
   if (!text || !words.length) { onDone?.(); return { stop: () => {} } }
 
@@ -101,6 +147,19 @@ export function readSection(root: HTMLElement, { onStart, onDone, onBlocked, rat
     window.clearTimeout(startTimer)
     try { highlights?.delete(HIGHLIGHT_NAME) } catch { /* nothing to clear */ }
   }
+  const recording = NARRATION_TRACKS[root.id]
+  if (audio && recording) {
+    // Do not highlight different words when a live metric or hero title has changed.
+    const matches = recording.text.replace(/\s+/g, ' ').trim() === text.replace(/\s+/g, ' ').trim()
+    const playback = playRecording(audio, recording, {
+      onStart,
+      onProgress: fraction => { if (matches) light(Math.min(words.length - 1, Math.floor(fraction * words.length))) },
+      onDone: () => { clear(); onDone?.() },
+      onBlocked: () => { clear(); onBlocked?.() },
+    })
+    return { stop: () => { playback.stop(); clear() } }
+  }
+  if (!speechAvailable()) { onBlocked?.(); return { stop: () => {} } }
   const finish = (blocked: boolean) => {
     if (stopped) return
     stopped = true
@@ -159,6 +218,8 @@ export function readSection(root: HTMLElement, { onStart, onDone, onBlocked, rat
     if (stopped) return
     stopped = true
     clear()
+    // Retain the utterance until stop; some engines otherwise collect its wrapper.
+    utterance.onstart = utterance.onend = utterance.onerror = utterance.onboundary = null
     engine.cancel()
   } }
 }
@@ -179,8 +240,14 @@ export type ReaderState = {
 
 /** Owns speech outside React effects, so a trusted tap calls speak synchronously. */
 export function createPageReader(report: (state: ReaderState) => void, onSpeaking: (value: boolean) => void) {
+  const narration = document.createElement('audio')
+  narration.preload = 'auto'
+  narration.src = NARRATION_TRACKS.top.src
+  narration.hidden = true
+  narration.setAttribute('data-landing-narration', '')
+  document.body.appendChild(narration)
   let state: ReaderState = {
-    available: speechAvailable(), enabled: readingPreference(), status: 'ready',
+    available: typeof narration.play === 'function', enabled: readingPreference(), status: 'ready',
   }
   if (!state.enabled) state.status = 'off'
   let section = 'top', activated = false, disposed = false, generation = 0
@@ -202,11 +269,15 @@ export function createPageReader(report: (state: ReaderState) => void, onSpeakin
     if (!root) { update('ready'); return }
     const id = generation
     update('starting')
-    handle = readSection(root, {
+    try { handle = readSection(root, {
       onStart: () => { if (id === generation && !disposed) { onSpeaking(true); update('speaking') } },
       onDone: () => { if (id === generation && !disposed) { onSpeaking(false); update('done') } },
       onBlocked: () => { if (id === generation && !disposed) { onSpeaking(false); update('blocked') } },
-    })
+    }, narration) } catch {
+      // A setup exception must not leave the control permanently at Starting.
+      onSpeaking(false)
+      update('blocked')
+    }
   }
   // A touch pointerdown is too early for iOS activation. touchend/click/key
   // run speech directly, and repeated events cannot restart an active read.
@@ -225,14 +296,13 @@ export function createPageReader(report: (state: ReaderState) => void, onSpeakin
     if (!document.hidden && activated) start()
   }
   document.addEventListener('visibilitychange', visibility)
-  // Start loading voices without postponing any future gesture.
-  if (state.available) window.speechSynthesis.getVoices()
   report(state)
   return {
     setSection(id: string) {
       if (section === id || disposed) return
       section = id
       stop()
+      if (NARRATION_TRACKS[id]) narration.src = NARRATION_TRACKS[id].src
       update(state.enabled ? 'ready' : 'off')
       if (activated) start()
     },
@@ -249,6 +319,7 @@ export function createPageReader(report: (state: ReaderState) => void, onSpeakin
     dispose() {
       disposed = true
       stop()
+      narration.remove()
       for (const type of types) document.removeEventListener(type, gesture)
       document.removeEventListener('visibilitychange', visibility)
     },

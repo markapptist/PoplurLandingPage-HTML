@@ -17,7 +17,18 @@ function setup(t) {
   const top = root(block({ text: 'Hello neighbours' }, { text: 'Hidden headline', hidden: true }))
   const beta = root(block({ text: 'Join the beta.' }))
   const listeners = new Map(), storage = new Map()
+  class Media extends EventTarget {
+    src = ''; paused = true; currentTime = 0; duration = 20; plays = 0
+    result = () => new Promise(() => {})
+    play() { this.paused = false; this.plays++; return this.result() }
+    pause() { this.paused = true }
+    getAttribute(name) { return this[name] }
+    setAttribute() {}
+    remove() { this.removed = true }
+  }
+  const narration = new Media()
   const document = {
+    createElement: () => narration, body: { appendChild() {} },
     hidden: false, documentElement: { lang: 'en-CA' },
     getElementById: id => ({ top, beta })[id],
     createTreeWalker: b => { let at = 0; return { nextNode: () => b.nodes[at++] ?? null } },
@@ -51,7 +62,7 @@ function setup(t) {
   const speaking = []
   const reader = createPageReader(value => { state = value }, value => speaking.push(value))
   t.after(() => reader.dispose())
-  return { reader, state: () => state, speaking, utterances, engine, emit, document, storage, top, listeners }
+  return { reader, state: () => state, speaking, utterances, engine, emit, document, storage, top, beta, listeners, narration }
 }
 
 test('first click speaks synchronously with an empty voice list; only start marks it reading', t => {
@@ -130,10 +141,11 @@ test('speech errors release audio and can retry on the next real gesture', t => 
 test('section changes cancel old speech and ignore late callbacks', t => {
   const { reader, emit, utterances, state, speaking } = setup(t)
   emit('click'); utterances[0].onstart()
+  const lateEnd = utterances[0].onend, lateError = utterances[0].onerror
   reader.setSection('beta')
   assert.equal(utterances.length, 2)
   assert.equal(speaking.at(-1), false)
-  utterances[0].onend(); utterances[0].onerror({ error: 'canceled' })
+  lateEnd(); lateError({ error: 'canceled' })
   assert.equal(state().status, 'starting')
   utterances[1].onstart()
   assert.equal(state().status, 'speaking')
@@ -159,8 +171,80 @@ test('no highlights advance before speech starts and stopped timers cannot finis
   const { top, utterances } = setup(t)
   let started = 0, done = 0, blocked = 0
   const handle = readSection(top, { onStart: () => started++, onDone: () => done++, onBlocked: () => blocked++ })
+  const lateStart = utterances[0].onstart, lateEnd = utterances[0].onend
   handle.stop()
   t.mock.timers.tick(5000)
-  utterances[0].onstart(); utterances[0].onend()
+  lateStart(); lateEnd()
   assert.equal(started + done + blocked, 0)
+})
+
+test('known sections play recordings with no browser speech engine or voices', t => {
+  const { reader, narration, top, state, speaking, utterances } = setup(t)
+  top.id = 'top'
+  delete window.speechSynthesis
+  delete globalThis.SpeechSynthesisUtterance
+  reader.toggle()
+  assert.equal(narration.plays, 1, 'HTML audio starts inside the tap')
+  assert.match(narration.src, /\/audio\/landing\/top-.*\.mp3$/)
+  assert.equal(utterances.length, 0)
+  assert.equal(state().status, 'starting')
+  narration.dispatchEvent(new Event('playing'))
+  assert.equal(state().status, 'speaking')
+  assert.equal(speaking.at(-1), true)
+  t.mock.timers.tick(12000)
+  assert.equal(state().status, 'speaking', 'successful playback cancels startup deadline')
+  narration.dispatchEvent(new Event('ended'))
+  assert.equal(state().status, 'done')
+  assert.equal(speaking.at(-1), false)
+})
+
+test('an unresolved media play promise cannot leave Starting indefinitely', t => {
+  const { reader, narration, top, state, speaking } = setup(t)
+  top.id = 'top'; reader.toggle()
+  t.mock.timers.tick(10000)
+  assert.equal(state().status, 'blocked')
+  assert.equal(narration.paused, true)
+  assert.ok(!speaking.includes(true))
+  reader.toggle()
+  assert.equal(narration.plays, 2)
+  narration.dispatchEvent(new Event('playing'))
+  assert.equal(state().status, 'speaking')
+})
+
+test('media rejection and buffering stalls release radio and allow retry', async t => {
+  const { reader, narration, top, state, speaking } = setup(t)
+  top.id = 'top'
+  narration.result = () => Promise.reject({ name: 'NotAllowedError' })
+  reader.toggle(); await Promise.resolve()
+  assert.equal(state().status, 'blocked')
+  narration.result = () => Promise.resolve()
+  reader.toggle(); await Promise.resolve()
+  assert.equal(state().status, 'speaking')
+  narration.dispatchEvent(new Event('waiting'))
+  t.mock.timers.tick(10000)
+  assert.equal(state().status, 'blocked')
+  assert.equal(speaking.at(-1), false)
+})
+
+test('section handoff reuses audio and ignores a previous play promise', async t => {
+  const { reader, narration, top, beta, state } = setup(t)
+  top.id = 'top'; beta.id = 'beta'
+  let finishFirst
+  narration.result = () => new Promise(resolve => { finishFirst = resolve })
+  reader.toggle()
+  narration.result = () => new Promise(() => {})
+  reader.setSection('beta')
+  assert.equal(narration.plays, 2)
+  assert.match(narration.src, /\/beta-.*\.mp3$/)
+  finishFirst(); await Promise.resolve()
+  assert.equal(state().status, 'starting')
+  narration.dispatchEvent(new Event('playing'))
+  assert.equal(state().status, 'speaking')
+})
+
+test('an exception preparing narration cannot leave the control at Starting', t => {
+  const { reader, top, state } = setup(t)
+  top.querySelectorAll = () => { throw new Error('detached section') }
+  reader.toggle()
+  assert.equal(state().status, 'blocked')
 })

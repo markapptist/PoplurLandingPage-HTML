@@ -41,6 +41,34 @@ export function speechAvailable(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'
 }
 
+/**
+ * Chrome fills its voice list asynchronously, and an utterance spoken before
+ * that list arrives is simply dropped — no error, no sound, which is exactly
+ * how a page that is meant to read itself can sit there silent. So wait for
+ * the voices, briefly; an engine that ships them synchronously (Safari) never
+ * waits at all, and one that never answers speaks anyway after the timeout
+ * rather than staying quiet for good.
+ */
+function whenVoicesReady(run: () => void, timeoutMs = 2500): () => void {
+  if (!speechAvailable()) return () => {}
+  if (window.speechSynthesis.getVoices().length) { run(); return () => {} }
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    window.speechSynthesis.removeEventListener('voiceschanged', finish)
+    window.clearTimeout(timer)
+    run()
+  }
+  const timer = window.setTimeout(finish, timeoutMs)
+  window.speechSynthesis.addEventListener('voiceschanged', finish)
+  return () => {
+    done = true
+    window.speechSynthesis.removeEventListener('voiceschanged', finish)
+    window.clearTimeout(timer)
+  }
+}
+
 /** One spoken word: where it starts in the utterance, and where it sits on the page. */
 type Word = { at: number; node: Text; start: number; end: number }
 
@@ -123,11 +151,15 @@ export function readSection(root: HTMLElement, { onDone, rate = 1 }: { onDone?: 
   }, 90)
 
   window.speechSynthesis.cancel()
-  window.speechSynthesis.speak(utterance)
+  const cancelWait = whenVoicesReady(() => {
+    if (stopped) return
+    window.speechSynthesis.speak(utterance)
+  })
 
   return {
     stop: () => {
       stopped = true
+      cancelWait()
       clear()
       try { window.speechSynthesis.cancel() } catch { /* already quiet */ }
     },

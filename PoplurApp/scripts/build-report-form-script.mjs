@@ -19,7 +19,7 @@ out(`function buildPoplurBetaReportForm() {`);
 out(`  const form = FormApp.create('Poplur beta · Test report');`);
 out(`  form.setDescription(${q(`One report per round, about five minutes: run the tests on your phone, say what happened, then the feedback. ${plan.REPORT_POINTS} points each on the prize board, ${plan.REPORT_POINTS_LATE} if it arrives after the due day. Due: ${plan.REPORT_ROUNDS.map(r => `report ${r.number} ${r.dueLabel}`).join(' · ')}. Use the email you signed the tester agreement with, so the points land on your name. Poplur is a private beta — no screenshots outside the group.`)});`);
 out(`  form.setProgressBar(true).setShowLinkToRespondAgain(true).setAllowResponseEdits(false).setLimitOneResponsePerUser(false);`);
-out(`  form.setConfirmationMessage(${q(`Thank you — your report is in. ${plan.REPORT_POINTS} points go on the board with Monday's standings (${plan.REPORT_POINTS_LATE} if it was late). Come back to this form for the next round.`)});`);
+out(`  form.setConfirmationMessage(${q(`Thank you — your report is in. ${plan.REPORT_POINTS} points go on the board with Saturday's standings (${plan.REPORT_POINTS_LATE} if it was late). Come back to this form for the next round.`)});`);
 out(``);
 out(`  // Page 1 — who and which report`);
 out(`  form.addTextItem().setTitle('Full name').setHelpText('As on your tester agreement.').setRequired(true);`);

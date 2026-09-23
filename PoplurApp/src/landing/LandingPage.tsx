@@ -302,12 +302,16 @@ export default function LandingPage() {
   // voice starts at the first touch, click, key or scroll, not on paint.
   const [gestured, setGestured] = useState(false);
   useEffect(() => {
-    const id = window.requestAnimationFrame(() => {
+    // A timer, not an animation frame. requestAnimationFrame never fires in a
+    // tab that is not compositing — a background tab, a hidden window — so the
+    // reader stayed disarmed and its control never appeared for anyone who
+    // opened the page in a tab they were not looking at yet.
+    const id = window.setTimeout(() => {
       const available = speechAvailable();
       setCanRead(available);
       if (available) setReading(readingPreference());
-    });
-    return () => window.cancelAnimationFrame(id);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, []);
   useEffect(() => onFirstGesture(() => setGestured(true)), []);
   const toggleReading = useCallback(() => {

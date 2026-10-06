@@ -1,5 +1,7 @@
-// Server-only helpers for the beta NDA gate. Imported by the API routes, never
-// by a page: it needs node:crypto.
+// Server-only helpers for the beta tester agreement (a gate on the store links
+// from 20 Sep to 6 Oct 2026; optional since). `signPayload`/`openPayload` also
+// sign the report tokens (betaReport.server.ts) that every invite link rides
+// on. Imported by the API routes, never by a page: it needs node:crypto.
 //
 // The signing link in the invite carries a token: the tester's email and the
 // minute it was issued, signed with HMAC-SHA256. The secret is BETA_NDA_SECRET

@@ -17,7 +17,7 @@ type Visitor = { id: string; firstSeenAt: string; lastSeenAt: string; visits: nu
 type Summary = { configured: boolean; generatedAt: string; visitors: number; visitorRows?: Visitor[]; testers: Tester[]; reached: Record<Stage, number>; order: Stage[]; labels: Record<Stage, string> };
 
 const KEY = 'poplur.funnel.key';
-const COLUMNS: Stage[] = ['email_entered', 'invite_delivered', 'invite_opened', 'invite_clicked', 'nda_signed', 'discord_tester', 'links_opened', 'store_ios', 'store_android', 'form_opened', 'form_filed', 'report_filed', 'bug_filed'];
+const COLUMNS: Stage[] = ['email_entered', 'links_sent', 'invite_delivered', 'invite_opened', 'invite_clicked', 'nda_signed', 'discord_tester', 'links_opened', 'store_ios', 'store_android', 'form_opened', 'form_filed', 'report_filed', 'bug_filed'];
 
 const when = (iso: string | undefined) => {
   if (!iso) return '';

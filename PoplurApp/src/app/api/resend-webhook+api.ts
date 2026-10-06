@@ -6,8 +6,8 @@
 // an unsigned or mis-signed call is refused.
 //
 // Which email an event is about comes from the `poplur` tag the site puts on
-// every send (server/resend.server.ts): `invite` (the NDA link), `links`
-// (after signing), receipts. Delivered / opened / clicked map to the funnel
+// every send (server/resend.server.ts): `invite` (the Discord and the store
+// links; the NDA link before 6 Oct 2026), `links` (after signing), receipts. Delivered / opened / clicked map to the funnel
 // stages for the invite and the links mail; bounces and complaints are
 // recorded for any mail so the row shows why a tester went quiet.
 

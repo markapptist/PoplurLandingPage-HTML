@@ -1,13 +1,13 @@
 // GET /api/go?to=ios|android|form|report&t=<report token>[&r=<round>]
 //
-// The links a tester is given (store buttons on the signed /nda page and in
-// the links email, the weekly Google Form, the report page) pass through
+// The links a tester is given (store buttons in the invite, on the signed
+// /nda page and in the links email, the weekly Google Form, the report page) pass through
 // here so the funnel sees the click: TestFlight → store_ios, Google Play →
 // store_android, the form → form_opened for that round, the report page →
 // report_opened. Then a redirect to the real destination.
 //
 // The token is the tester's own report token (betaReport.server.ts), which
-// already rides in their links email. A bad or missing token still redirects
+// rides in their invite (and, for signers, their links email). A bad or missing token still redirects
 // — nobody is kept from the store over bookkeeping — it just records nothing.
 
 import { getBetaInviteLinks } from '@/emails/betaInviteEmail';

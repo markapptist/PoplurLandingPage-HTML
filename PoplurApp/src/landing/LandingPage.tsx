@@ -3,7 +3,6 @@ import { Image } from 'expo-image';
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { sendBetaInviteEmail } from '@/services/betaEmailService';
-import { saveBetaSignupEmail } from '@/services/betaSignupService';
 import './landing.css';
 import { useBetaScorecard, type Scorecard } from './useBetaScorecard';
 import { useLivePops } from './useLivePops';
@@ -238,7 +237,7 @@ function Signup() {
     const normalized = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) { setNote({ tone: 'err', text: 'Enter an email address.' }); return; }
     setBusy(true); setNote(null);
-    try { await saveBetaSignupEmail(normalized); await sendBetaInviteEmail(normalized); setNote({ tone: 'ok', text: 'Sent — check your inbox. The Discord and the short tester agreement are in there; sign it and your links unlock.' }); setEmail(''); }
+    try { await sendBetaInviteEmail(normalized); setNote({ tone: 'ok', text: 'Sent — check your inbox. The Discord and the short tester agreement are in there; sign it and your links unlock.' }); setEmail(''); }
     catch (error) { setNote({ tone: 'err', text: error instanceof Error ? error.message : 'Unable to send beta links right now.' }); }
     finally { setBusy(false); }
   }

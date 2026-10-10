@@ -63,7 +63,7 @@ export async function POST(request: Request) {
   }
 
   const name = str(body.name, 80);
-  if (name.length < 2) return Response.json({ error: 'Enter your name, so the points land on the right person.' }, { status: 400 });
+  if (name.length < 2) return Response.json({ error: 'Enter your name, so we know who to reply to.' }, { status: 400 });
   const discord = str(body.discord, 64) || null;
 
   const platform: BugPlatform | null = body.platform === 'ios' || body.platform === 'android' ? body.platform : null;

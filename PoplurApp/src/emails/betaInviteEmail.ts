@@ -203,8 +203,8 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
     notes: [
       { strong: 'Future updates.', body: 'New iPhone builds land in TestFlight and Android updates through Google Play. Keep this email: the links work again if you ever need to reinstall.' },
       { strong: 'What to try first.', body: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Share locally and discover what connects with people nearby.' },
-      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the points board, five minutes apiece. The first is due Sat 10 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
-      ...(bugUrl ? [{ strong: 'Found a bug?', body: `Send it the moment you hit it, with a screenshot: <a href="${bugUrl}" style="color:inherit;font-weight:600;">the bug form</a>. No sign-in, no account. A confirmed bug is five points, and the first person to report it gets them.` }] : []),
+      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Three short reports over the beta, five minutes apiece, due Sat 17, 24 and 31 Oct. The first is due Sat 17 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
+      ...(bugUrl ? [{ strong: 'Found a bug?', body: `Send it the moment you hit it, with a screenshot: <a href="${bugUrl}" style="color:inherit;font-weight:600;">the bug form</a>. No sign-in, no account.` }] : []),
     ],
     reply: 'Have feedback? Reply to this email. Every note shapes the beta.',
     foot,
@@ -259,7 +259,7 @@ export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
     '',
     'What to try first: open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Share locally and discover what connects with people nearby.',
     '',
-    ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the points board. The first is due Sat 10 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
+    ...(options.reportUrl ? [`Your test reports: three short reports over the beta, five minutes apiece, due Sat 17, 24 and 31 Oct. The first is due Sat 17 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
     ...(options.bugUrl ? [`Found a bug? Send it the moment you hit it, with a screenshot — no sign-in needed: ${options.bugUrl}`, ''] : []),
     'Have feedback? Reply to this email. Every note shapes the beta.',
     '',
@@ -637,7 +637,8 @@ export function reportReceiptSubject(report: BetaReport, forPoplur = false): str
 const resultLabel = (value: string) => TASK_RESULTS.find(r => r.value === value)?.label ?? value;
 const resultColor = (value: string) => value === 'worked' ? '#0f8a4e' : value === 'failed' ? '#c8102e' : INK_3;
 
-/** The receipt for a filed test report: what was answered, then the points.
+/** The receipt for a filed test report: what was answered, and whether it was
+ *  late (a late report still counts, so the note is only a note).
  *  Poplur's copy (`forPoplur`) adds the address and browser it came from; the
  *  API attaches the JSON alongside it. */
 export function createReportReceiptHtml(report: BetaReport, { forPoplur = false, images }: { forPoplur?: boolean; images?: Partial<Record<BetaInviteImageKey, string>> } = {}) {
@@ -646,10 +647,9 @@ export function createReportReceiptHtml(report: BetaReport, { forPoplur = false,
   const row = (k: string, v: string) => `<tr><td style="padding:6px 14px 6px 0;font-family:${FONT};font-size:13px;color:${INK_3};white-space:nowrap;vertical-align:top;">${k}</td><td style="padding:6px 0;font-family:${FONT};font-size:14px;color:${INK};vertical-align:top;word-break:break-word;">${v}</td></tr>`;
   const rows = [
     row('Report', `${report.round} · ${esc(report.roundName)} (due ${esc(round?.dueLabel ?? report.dueAt)})`),
-    row('From', `${esc(report.name)} · ${esc(report.email)}${report.discord ? ` · Discord ${esc(report.discord)}` : ''}`),
+    row('From', `${esc(report.name)} · ${esc(report.email)}${report.discord ? ` · Discord ${esc(report.discord)}` : ''}${report.verified ? '' : ' · <b>unverified link</b> (filed without a signed link; match the email to an NDA)'}`),
     row('Phone', `${PLATFORM_LABEL[report.platform]} · ${esc(report.device)} · ${esc(report.osVersion)}`),
     row('Received', `${esc(torontoTime(report.receivedAt))} (Toronto)${report.late ? ' · <b style="color:#c8102e;">late</b>' : ''}`),
-    row('Points', `${report.points} pending on the board${report.verified ? '' : ' · <b>unverified link</b> (filed without a signed link; match the email to an NDA)'}`),
     forPoplur ? row('From address', esc(report.ip ?? 'unknown')) : '',
     forPoplur ? row('Browser', esc(report.userAgent ?? 'unknown')) : '',
   ].join('');
@@ -662,7 +662,7 @@ export function createReportReceiptHtml(report: BetaReport, { forPoplur = false,
   const answers = report.answers.filter(a => a.answer.trim()).map(a => `<p style="margin:0 0 10px;font-family:${FONT};font-size:14px;line-height:1.55;color:${INK_2};"><b style="color:${INK};">${esc(a.question)}</b><br>${esc(a.answer)}</p>`).join('');
   const lead = forPoplur
     ? `${esc(report.name)} filed test report ${report.round} (${esc(report.roundName)}) on poplur.ca. The JSON is attached.`
-    : `Thank you — report ${report.round} is in. ${report.late ? `It arrived after ${esc(round?.dueLabel ?? 'the due day')}, so it counts for ${report.points} points.` : `${report.points} points go on the board with Saturday's standings.`} Here is what you sent.`;
+    : `Thank you — report ${report.round} is in.${report.late ? ` It arrived after ${esc(round?.dueLabel ?? 'the due day')}. That is fine, it still counts.` : ''} Here is what you sent.`;
   return shell('#f6f6f8', reportReceiptSubject(report, forPoplur), lead, `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6f8;">
       <tr>
@@ -691,7 +691,7 @@ export function createReportReceiptHtml(report: BetaReport, { forPoplur = false,
 export function createReportReceiptText(report: BetaReport, { forPoplur = false }: { forPoplur?: boolean } = {}) {
   const round = roundByNumber(report.round);
   const lines = [
-    forPoplur ? `${report.name} filed test report ${report.round} (${report.roundName}) on poplur.ca. The JSON is attached.` : `Thank you — report ${report.round} (${report.roundName}) is in. ${report.points} points pending on the board${report.late ? ' (late)' : ''}.`,
+    forPoplur ? `${report.name} filed test report ${report.round} (${report.roundName}) on poplur.ca. The JSON is attached.` : `Thank you — report ${report.round} (${report.roundName}) is in.${report.late ? ` It arrived after ${round?.dueLabel ?? 'the due day'}. That is fine, it still counts.` : ''}`,
     '',
     `From: ${report.name} · ${report.email}${report.discord ? ` · Discord ${report.discord}` : ''}`,
     `Phone: ${PLATFORM_LABEL[report.platform]} · ${report.device} · ${report.osVersion}`,
@@ -793,7 +793,7 @@ export function createBugReceiptHtml(report: BugReport, { images }: { images?: P
           </tr></table></td></tr>
           <tr><td style="padding:26px 32px 0;"><h1 style="margin:0;font-family:${FONT};font-size:28px;line-height:1.12;font-weight:700;letter-spacing:-0.03em;color:${INK};">Got it \u2014 thank you.</h1></td></tr>
           <tr><td style="padding:14px 32px 0;font-family:${FONT};font-size:15px;line-height:1.6;color:${INK_2};">
-            You reported a problem in <b style="color:${INK};">${esc(report.area)}</b>${report.shots.length ? `, with ${report.shots.length} screenshot${report.shots.length === 1 ? '' : 's'}` : ''}. A confirmed bug is worth five points on the board, and the first person to report one gets them.
+            You reported a problem in <b style="color:${INK};">${esc(report.area)}</b>${report.shots.length ? `, with ${report.shots.length} screenshot${report.shots.length === 1 ? '' : 's'}` : ''}.
           </td></tr>
           <tr><td style="padding:14px 32px 30px;font-family:${FONT};font-size:15px;line-height:1.6;color:${INK_2};">
             Found another? Send it the same way \u2014 one report per bug is easier to fix than one long list. If we need to ask you something about this one, we will reply to this email.
@@ -808,7 +808,6 @@ export function createBugReceiptText(report: BugReport) {
     'Got it — thank you.',
     '',
     `You reported a problem in ${report.area}${report.shots.length ? `, with ${report.shots.length} screenshot(s)` : ''}.`,
-    'A confirmed bug is worth five points on the board, and the first person to report one gets them.',
     '',
     'Found another? Send it the same way — one report per bug is easier to fix than one long list.',
     '',

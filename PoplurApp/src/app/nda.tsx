@@ -101,7 +101,7 @@ export default function NdaScreen() {
             )}
             {signed.reportUrl && (
               <div className="nda-for" style={{ marginTop: 18 }}>
-                <b>Your test reports.</b> Three short reports over the beta, ten points each on the points board, due Sat 17, 24 and 31 Oct. <a href={signed.reportUrl} style={{ color: 'inherit', fontWeight: 600 }}>Open your report page</a> — it is also in your links email.
+                <b>Your test reports.</b> Three short reports over the beta, five minutes apiece, due Sat 17, 24 and 31 Oct. <a href={signed.reportUrl} style={{ color: 'inherit', fontWeight: 600 }}>Open your report page</a> — it is also in your links email.
               </div>
             )}
             <p className="nda-note">Signed {new Date(signed.signedAt).toLocaleString()} · agreement version {check.version}.</p>

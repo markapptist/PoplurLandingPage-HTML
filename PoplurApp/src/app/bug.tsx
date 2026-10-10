@@ -164,7 +164,7 @@ export default function BugScreen() {
         {filed ? (
           <>
             <h1 className="bg-title">Got it — thank you.</h1>
-            <p className="bg-done">Your report{filed.shots ? ` and ${filed.shots} screenshot${filed.shots === 1 ? '' : 's'} are` : ' is'} with us, and a copy is on its way to your inbox. A confirmed bug is worth five points on the board, and the first person to report one gets them.</p>
+            <p className="bg-done">Your report{filed.shots ? ` and ${filed.shots} screenshot${filed.shots === 1 ? '' : 's'} are` : ' is'} with us, and a copy is on its way to your inbox.</p>
             <p className="bg-done" style={{ marginTop: 14 }}>Found another? One report per bug is easier to fix than one long list.</p>
             <button type="button" className="bg-again" onClick={another}>Report another bug</button>
             <p className="bg-note">Received {new Date(filed.receivedAt).toLocaleString()}.</p>
@@ -175,7 +175,7 @@ export default function BugScreen() {
             <p className="bg-sub">One bug per report, with a screenshot if you have one. A blunt sentence is worth more than a tidy paragraph, and duplicates are fine — we would rather hear it twice than not at all.</p>
             {token
               ? <div className="bg-for">This is your own link, so the report is filed against the address you signed with. Nothing else to prove.</div>
-              : <div className="bg-for">No personal link? Use the <b>email you signed the tester agreement with</b> below, so the points reach you.</div>}
+              : <div className="bg-for">No personal link? Use the <b>email you signed the tester agreement with</b> below, so the report is filed under your name.</div>}
 
             <div className="bg-section">
               <h2>You and your phone</h2>

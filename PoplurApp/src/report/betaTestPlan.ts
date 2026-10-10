@@ -3,9 +3,10 @@
 // answered. The page (app/report.tsx), the receipt emails and the record all
 // read this file.
 //
-// Rounds and dates follow the Discord pins (v8, 6 Oct 2026: day 0 Sat 10 Oct,
-// reports due Sat 17, 24 and 31 Oct; 10 points, 5 if late but in before the
-// next one is due). The questions are built around the beta scorecard in
+// Rounds and dates follow the Discord pins (reports due Sat 17, 24 and 31 Oct
+// 2026 by 11:59 pm). There are no points, no board and no standings: a report
+// that arrives after its due day is marked late and still counts. The
+// questions are built around the beta scorecard in
 // .codex/yc-w27-runbook.md: why people open it on their own (organic pull),
 // whether a like made a pop spread and the owner post again (the loop), where
 // liked pops were found (discovery by radius), referrals, and permission to
@@ -19,8 +20,6 @@ export const REPORT_VERSION = '2026-10-10';
  *  .codex/beta-focus-group/poplur-beta-report-form.gs). Set, /report and the report
  *  links in email send testers there; empty, the site's own form is used. */
 export const REPORT_FORM_URL = '';
-export const REPORT_POINTS = 10;
-export const REPORT_POINTS_LATE = 5;
 
 export type TaskResult = 'worked' | 'failed' | 'skipped';
 export const TASK_RESULTS: { value: TaskResult; label: string; short: string }[] = [
@@ -57,9 +56,10 @@ export type ReportRound = {
   questions: ReportQuestion[];
 };
 
-/** Bugs and friction: every report carries these. Screenshots go to #bugs. */
+/** Bugs and friction: every report carries these. Screenshots go to the bug
+ *  form, https://www.poplur.ca/bug. */
 const BUG_QUESTIONS: ReportQuestion[] = [
-  { id: 'broke', question: 'What broke, froze or looked wrong?', hint: 'Where you were in the app and what you expected instead. Write “nothing” if nothing did. Screenshots go in #bugs on Discord.', required: true },
+  { id: 'broke', question: 'What broke, froze or looked wrong?', hint: 'Where you were in the app and what you expected instead. Write “nothing” if nothing did. Screenshots go to the bug form at https://www.poplur.ca/bug.', required: true },
   { id: 'confused', question: 'What confused you, even for a second?', required: true },
 ];
 
@@ -70,7 +70,7 @@ const YC_QUESTIONS: ReportQuestion[] = [
   { id: 'opens-own', question: 'How many times this week did you open Poplur on your own, not for a prompt or a check-in?', hint: 'None, 1–2, 3–5, or most days.', required: true },
   { id: 'loop', question: 'Did a like make one of your pops spread further? If it did, did that make you want to post again?', hint: 'Which pop, and roughly how far it got.', required: true },
   { id: 'found-where', question: 'The pops you liked this week: where did you find them?', hint: 'The feed, the map, a notification, or someone’s profile. A rough split is fine.', required: true },
-  { id: 'told', question: 'Did you tell anyone about Poplur this week? Did they install it?', hint: 'Their Discord username if they joined; referrals count for both of you.' },
+  { id: 'told', question: 'Did you tell anyone about Poplur this week? Did they install it?', hint: 'Their Discord username if they joined. Just so I know how people hear about it.' },
   { id: 'quote', question: 'May we quote you by first name in our YC application? (yes / no)', required: true },
 ];
 
@@ -96,7 +96,7 @@ export const REPORT_ROUNDS: ReportRound[] = [
     questions: [
       ...BUG_QUESTIONS,
       ...YC_QUESTIONS,
-      { id: 'referral', question: 'Did a friend refer you? Their Discord username.', hint: 'Referrals count for both of you once this report is in.' },
+      { id: 'referral', question: 'Did a friend refer you? Their Discord username.', hint: 'Just so I know how people hear about it.' },
     ],
   },
   {
@@ -167,11 +167,10 @@ export function currentRound(nowMs: number = Date.now()): ReportRound {
   return REPORT_ROUNDS.find(r => Date.parse(r.dueAt) >= nowMs) ?? REPORT_ROUNDS[REPORT_ROUNDS.length - 1];
 }
 
-/** Late = after the round's due day; still worth REPORT_POINTS_LATE as long as
- *  it is in before the next round is due (the board's rule). */
-export function pointsFor(round: ReportRound, receivedAtMs: number): { late: boolean; points: number } {
-  const late = receivedAtMs > Date.parse(round.dueAt);
-  return { late, points: late ? REPORT_POINTS_LATE : REPORT_POINTS };
+/** Late = received after the round's due day. A late report still counts; the
+ *  flag only marks it in the receipt and the record. */
+export function isLate(round: ReportRound, receivedAtMs: number): boolean {
+  return receivedAtMs > Date.parse(round.dueAt);
 }
 
 export type Platform = 'ios' | 'android';
@@ -185,7 +184,6 @@ export type BetaReport = {
   dueAt: string;
   receivedAt: string;
   late: boolean;
-  points: number;
   /** Came through a signed link from the tester's own invite. */
   verified: boolean;
   email: string;

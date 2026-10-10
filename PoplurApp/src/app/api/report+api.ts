@@ -7,7 +7,8 @@
 //                   round, results[], ratings, answers}
 //                                  — records the report: a receipt to the
 //                                    tester and a copy to Poplur with the
-//                                    JSON attached, then the points in the answer.
+//                                    JSON attached, then when it arrived, whether
+//                                    it was late and what is next in the answer.
 //
 // A report that arrives through the tester's signed link (the one in their
 // links email) is `verified`; the pinned Discord link has no token, so a
@@ -16,7 +17,7 @@
 // BETA_NDA_RECORDS_TO (or BETA_EMAIL_REPLY_TO) — no database write from here.
 
 import { BETA_INVITE_ASSET_ORIGIN, betaInviteHostedImages, createReportReceiptHtml, createReportReceiptText, reportReceiptSubject } from '@/emails/betaInviteEmail';
-import { RATINGS, REPORT_ROUNDS, REPORT_VERSION, TASK_RESULTS, currentRound, pointsFor, roundByNumber, type BetaReport, type Platform, type RatingId, type TaskResult } from '@/report/betaTestPlan';
+import { RATINGS, REPORT_ROUNDS, REPORT_VERSION, TASK_RESULTS, currentRound, isLate, roundByNumber, type BetaReport, type Platform, type RatingId, type TaskResult } from '@/report/betaTestPlan';
 import { recordTesterEvent } from '@/server/betaFunnel.server';
 import { maskEmail } from '@/server/betaNda.server';
 import { verifyReportToken, type ReportTokenCheck } from '@/server/betaReport.server';
@@ -126,7 +127,7 @@ export async function POST(request: Request) {
   }
 
   const receivedAt = new Date();
-  const { late, points } = pointsFor(round, receivedAt.getTime());
+  const late = isLate(round, receivedAt.getTime());
   const forwarded = request.headers.get('x-forwarded-for');
   const report: BetaReport = {
     reportVersion: REPORT_VERSION,
@@ -135,7 +136,6 @@ export async function POST(request: Request) {
     dueAt: round.dueAt,
     receivedAt: receivedAt.toISOString(),
     late,
-    points,
     verified,
     email,
     name,
@@ -181,7 +181,7 @@ export async function POST(request: Request) {
   });
 
   const funnel = await recordTesterEvent(email, 'report_filed', {
-    round: round.number, roundName: round.name, points, late, verified, platform, device, name,
+    round: round.number, roundName: round.name, late, verified, platform, device, name,
   });
 
   return Response.json({
@@ -190,7 +190,6 @@ export async function POST(request: Request) {
     receivedAt: report.receivedAt,
     round: round.number,
     late,
-    points,
     next: roundSummary(round.number + 1),
     emailed: { receipt: receipt.ok, record: record ? record.ok : false },
   });

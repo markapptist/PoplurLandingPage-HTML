@@ -8,7 +8,6 @@ import {
   PLATFORM_LABEL,
   RATINGS,
   REPORT_FORM_URL,
-  REPORT_POINTS,
   REPORT_ROUNDS,
   TASK_RESULTS,
   roundByNumber,
@@ -30,7 +29,7 @@ const ICON = require('@/assets/images/landing/app-icon.png');
 const WORDMARK = require('@/assets/images/landing/wordmark.png');
 
 type Check = { ok: true; verified: boolean; email?: string; round: number } | { ok: false; error: string };
-type Filed = { receivedAt: string; round: number; late: boolean; points: number; next: { number: number; name: string; dueLabel: string } | null };
+type Filed = { receivedAt: string; round: number; late: boolean; next: { number: number; name: string; dueLabel: string } | null };
 type Answered = { result: TaskResult; note: string };
 type Identity = { name: string; email: string; discord: string; platform: Phone | ''; device: string; osVersion: string };
 type Draft = { results: Record<string, Answered>; ratings: Record<RatingId, number | null>; answers: Record<string, string> };
@@ -139,7 +138,7 @@ export default function ReportScreen() {
       });
       const body = (await r.json().catch(() => ({}))) as Partial<Filed> & { ok?: boolean; error?: string };
       if (!r.ok || !body.ok || !body.receivedAt) throw new Error(body.error || 'Could not send your report. Try again.');
-      const done: Filed = { receivedAt: body.receivedAt, round: body.round ?? current.number, late: !!body.late, points: body.points ?? REPORT_POINTS, next: body.next ?? null };
+      const done: Filed = { receivedAt: body.receivedAt, round: body.round ?? current.number, late: !!body.late, next: body.next ?? null };
       setFiled(done);
       const sentNow = Array.from(new Set([...sent, done.round]));
       setSent(sentNow);
@@ -175,8 +174,7 @@ export default function ReportScreen() {
         {check !== 'loading' && check.ok && filed && (
           <>
             <h1 className="rp-title">Report {filed.round} is in.</h1>
-            <p className="rp-done">Thank you, {identity.name.trim()}. A copy is on its way to {verified ? check.email : identity.email.trim()}.{filed.late ? ` It arrived after the due day, so it counts for ${filed.points} points.` : ''}</p>
-            <div className="rp-points"><b>{filed.points}</b><span>points, on the board with Saturday’s standings</span></div>
+            <p className="rp-done">Thank you, {identity.name.trim()}. A copy is on its way to {verified ? check.email : identity.email.trim()}.{filed.late ? ' It arrived after the due day. That is fine, it still counts.' : ''}</p>
             {filed.next
               ? <p className="rp-done" style={{ marginTop: 18 }}>Next: report {filed.next.number}, <b>{filed.next.name}</b>, due {filed.next.dueLabel}. <a href="#" onClick={e => { e.preventDefault(); startNext(filed.next!.number); }} style={{ color: 'var(--accent)', fontWeight: 600 }}>See the tests now</a> or come back to this link later.</p>
               : <p className="rp-done" style={{ marginTop: 18 }}>That was the last one. Thank you for the whole month.</p>}
@@ -187,14 +185,14 @@ export default function ReportScreen() {
         {check !== 'loading' && check.ok && !filed && (
           <form onSubmit={submit}>
             <h1 className="rp-title">Report {current.number}: {current.name}</h1>
-            <p className="rp-sub">{current.blurb} About five minutes: run each test on your phone, tap what happened, then the questions. Due <b>{current.dueLabel}</b> for {REPORT_POINTS} points (late still counts for half, until the next one is due).</p>
+            <p className="rp-sub">{current.blurb} About five minutes: run each test on your phone, tap what happened, then the questions. Due <b>{current.dueLabel}</b>. Late still counts, so send it anyway.</p>
             {current.formUrl && <div className="rp-form">
               <b>This week&rsquo;s form.</b> Part of the report: a few questions on Google Forms, then come back here for the tests.
               <a className="rp-form-link" href={`/api/go?to=form&r=${current.number}${token ? `&t=${encodeURIComponent(token)}` : ''}`} target="_blank" rel="noreferrer">Open the week {current.number} form</a>
             </div>}
             {verified
               ? <div className="rp-for">This link belongs to <b>{check.email}</b>. Your report is recorded against that address.</div>
-              : <div className="rp-for">No personal link? That is fine: use the <b>email you signed the tester agreement with</b> below, so your points land on the right name.</div>}
+              : <div className="rp-for">No personal link? That is fine: use the <b>email you signed the tester agreement with</b> below, so the report is filed under your name.</div>}
 
             <div className="rp-rounds">
               {REPORT_ROUNDS.map(r => (
@@ -212,7 +210,7 @@ export default function ReportScreen() {
                 {verified
                   ? <label className="rp-field"><span>Email</span><input type="text" value={check.email} disabled readOnly /></label>
                   : <label className="rp-field"><span>Email</span><input type="email" autoComplete="email" value={identity.email} onChange={field('email')} disabled={busy} placeholder="The one you signed with" required /></label>}
-                <label className="rp-field"><span>Discord username</span><input type="text" autoComplete="off" value={identity.discord} onChange={field('discord')} disabled={busy} placeholder="For the standings post" /></label>
+                <label className="rp-field"><span>Discord username</span><input type="text" autoComplete="off" value={identity.discord} onChange={field('discord')} disabled={busy} placeholder="So I can reply to you" /></label>
                 <label className="rp-field"><span>Phone</span>
                   <div className="rp-seg">
                     {(Object.keys(PLATFORM_LABEL) as Phone[]).map(p => <button type="button" key={p} className={identity.platform === p ? 'on' : ''} onClick={() => setIdentity(i => ({ ...i, platform: p }))} disabled={busy}>{PLATFORM_LABEL[p]}</button>)}

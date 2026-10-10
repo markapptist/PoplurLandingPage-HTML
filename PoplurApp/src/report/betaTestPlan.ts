@@ -10,8 +10,8 @@
 // .codex/yc-w27-runbook.md: why people open it on their own (organic pull),
 // whether a like made a pop spread and the owner post again (the loop), where
 // liked pops were found (discovery by radius), referrals, and permission to
-// quote — asked in EVERY round, because the day-14 pull is Sat 24 Oct and the
-// numbers go into the form before 27 Oct. Bump REPORT_VERSION when a test or
+// quote — asked in EVERY round, because the numbers are pulled Thu 29 Oct and
+// Sun 1 Nov and go into the form on Sun 1 Nov (plan of 10 Oct 2026). Bump REPORT_VERSION when a test or
 // question changes so old reports stay readable.
 
 export const REPORT_VERSION = '2026-10-10';

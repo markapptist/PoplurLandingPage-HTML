@@ -52,8 +52,8 @@ const everyoneReads = { id: everyone.id, type: 0, allow: (VIEW | HISTORY | ADD_R
 const testersOnly = [deny(everyone.id, VIEW), allow(tester.id, VIEW | HISTORY | SEND | ADD_REACTIONS | ATTACH | EMBED)];
 const welcome = await ensure('welcome', 0, [everyoneCan], 'Start here: ask for your invite at https://www.poplur.ca/#beta, sign the tester agreement from the email, and the Tester role lands on its own.');
 const nda = await ensure('nda', 0, [everyoneReads], 'The tester agreement. Your personal signing link is in your Poplur invite email.');
-const focus = await ensure('focus-group', 0, testersOnly, 'Testers: the daily prompt, questions, standings every Saturday.');
-const bugs = await ensure('bugs', 0, testersOnly, 'One bug per message with a screenshot. ✅ from Mark = confirmed, 5 pts, first reporter.');
+const focus = await ensure('focus-group', 0, testersOnly, 'Testers: questions, what got fixed, and the Saturday report at poplur.ca/report.');
+const bugs = await ensure('bugs', 0, testersOnly, 'Quick questions and "is this a bug?". Bugs themselves go on the form: https://www.poplur.ca/bug');
 const voice = await ensure('focus-group', 2, [deny(everyone.id, VIEW | CONNECT), allow(tester.id, VIEW | CONNECT | SPEAK)]);
 const desk = await ensure('poplur-desk', 0, [deny(everyone.id, VIEW), deny(tester.id, VIEW), allow(me.id, VIEW | SEND | HISTORY, 1)], 'Poplur only: the site posts here when someone signs or becomes a Tester.');
 

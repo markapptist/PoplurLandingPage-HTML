@@ -17,15 +17,15 @@ out(`// Execution log shows the form link, the edit link and the responses sheet
 out(``);
 out(`function buildPoplurBetaReportForm() {`);
 out(`  const form = FormApp.create('Poplur beta · Test report');`);
-out(`  form.setDescription(${q(`One report per round, about five minutes: run the tests on your phone, say what happened, then the feedback. ${plan.REPORT_POINTS} points each on the prize board, ${plan.REPORT_POINTS_LATE} if it arrives after the due day. Due: ${plan.REPORT_ROUNDS.map(r => `report ${r.number} ${r.dueLabel}`).join(' · ')}. Use the email you signed the tester agreement with, so the points land on your name. Poplur is a private beta — no screenshots outside the group.`)});`);
+out(`  form.setDescription(${q(`One report per round, about five minutes: run the tests on your phone, say what happened, then the feedback. Late still counts, so send it anyway. Due: ${plan.REPORT_ROUNDS.map(r => `report ${r.number} ${r.dueLabel}`).join(' · ')}. Use the email you signed the tester agreement with, so the points land on your name. Poplur is a private beta — no screenshots outside the group.`)});`);
 out(`  form.setProgressBar(true).setShowLinkToRespondAgain(true).setAllowResponseEdits(false).setLimitOneResponsePerUser(false);`);
-out(`  form.setConfirmationMessage(${q(`Thank you — your report is in. ${plan.REPORT_POINTS} points go on the board with Saturday's standings (${plan.REPORT_POINTS_LATE} if it was late). Come back to this form for the next round.`)});`);
+out(`  form.setConfirmationMessage(${q(`Thank you — your report is in. Come back to this form for the next round.`)});`);
 out(``);
 out(`  // Page 1 — who and which report`);
 out(`  form.addTextItem().setTitle('Full name').setHelpText('As on your tester agreement.').setRequired(true);`);
 out(`  form.addTextItem().setTitle('Email').setHelpText('The one you signed the tester agreement with.').setRequired(true)`);
 out(`    .setValidation(FormApp.createTextValidation().setHelpText('Enter a valid email address.').requireTextIsEmail().build());`);
-out(`  form.addTextItem().setTitle('Discord username').setHelpText('For the standings post.');`);
+out(`  form.addTextItem().setTitle('Discord username').setHelpText('So Mark can reply to you.');`);
 out(`  const phone = form.addMultipleChoiceItem().setTitle('Phone').setRequired(true);`);
 out(`  phone.setChoices([phone.createChoice('iPhone'), phone.createChoice('Android')]);`);
 out(`  form.addTextItem().setTitle('Phone model').setHelpText('iPhone 13, Pixel 7, Galaxy A03…').setRequired(true);`);
@@ -40,7 +40,7 @@ for (const r of plan.REPORT_ROUNDS) {
     out(`  { const it = form.addMultipleChoiceItem().setTitle(${q(`${i + 1}. ${t.title}`)}).setHelpText(${q(`${t.steps} Expected: ${t.expect}`)}).setRequired(true);`);
     out(`    it.setChoices(${JSON.stringify(plan.TASK_RESULTS.map(x => x.label))}.map(function (c) { return it.createChoice(c); })); }`);
   });
-  out(`  form.addParagraphTextItem().setTitle(${q(`Anything that didn't work or you couldn't try: what happened?`)}).setHelpText('Where you were in the app and what you expected instead. Screenshots go in #bugs on Discord.');`);
+  out(`  form.addParagraphTextItem().setTitle(${q(`Anything that didn't work or you couldn't try: what happened?`)}).setHelpText('Where you were in the app and what you expected instead. Screenshots go to the bug form at https://www.poplur.ca/bug.');`);
   for (const qn of r.questions.filter(x => !['broke', 'confused', 'change'].includes(x.id))) {
     if (qn.id === 'quote') {
       out(`  { const it = form.addMultipleChoiceItem().setTitle(${q('May we quote you by first name in our YC application?')}).setRequired(true); it.setChoices([it.createChoice('Yes'), it.createChoice('No')]); }`);

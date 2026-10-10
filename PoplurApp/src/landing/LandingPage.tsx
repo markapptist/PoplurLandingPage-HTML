@@ -16,6 +16,7 @@ import { useReadAloud } from './useReadAloud';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
 import AnimatedNumber from './AnimatedNumber';
+import { useBetaCount } from './useBetaCount';
 import Backdrop from './Backdrop';
 import { useDemoMode, useDemoPops, useDemoScorecard } from './demo';
 import ColourBadge from './ColourBadge';
@@ -228,6 +229,20 @@ function WorldCard({ demo }: { demo: boolean }) {
   </div>;
 }
 
+// How many testers have signed up, live from public/betaSignups (useBetaCount):
+// the agreement signers are the testers; the rest have an email in and a
+// signing link in their inbox. Nothing shows until the first number arrives.
+function BetaCounter() {
+  const { count } = useBetaCount();
+  if (!count) return null;
+  const waiting = Math.max(0, count.signedUp - count.signed);
+  return <p className="pl-beta-count" aria-live="polite">
+    <span className="pl-live-pill"><i /> live</span>
+    <b><AnimatedNumber value={count.signed} /></b> {count.signed === 1 ? 'tester has' : 'testers have'} signed up
+    {waiting > 0 && <> · <AnimatedNumber value={waiting} /> more {waiting === 1 ? 'has' : 'have'} the agreement in their inbox</>}
+  </p>;
+}
+
 function Signup() {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -261,6 +276,7 @@ function Signup() {
       </form>
       {note && <p className={`pl-form-note ${note.tone}`}>{note.text}</p>}
       <div className="pl-pills"><span>iOS · TestFlight</span><span>Android · Google Play</span><span>Toronto first</span></div>
+      <BetaCounter />
     </div>
   </section>;
 }

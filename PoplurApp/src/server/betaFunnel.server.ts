@@ -160,6 +160,28 @@ const MAX_EVENTS = 400;
 
 export type RecordResult = { recorded: boolean };
 
+/** The world-readable tester count the landing page shows live:
+ *  `public/betaSignups` — people who entered an email, and people who signed
+ *  the tester agreement. Counts only, never an address. Rewritten after every
+ *  sign-up and signing (recordTesterEvent) and on GET /api/beta-count. */
+export const BETA_COUNT_DOC = { collection: 'public', id: 'betaSignups' } as const;
+export type BetaCount = { signedUp: number; signed: number; updatedAt: string };
+
+export async function publishBetaCount(): Promise<BetaCount | null> {
+  const db = firestore();
+  if (!db) return null;
+  const [signedUp, signed] = await Promise.all([
+    db.count(TESTERS, { field: 'furthestIndex', op: 'GREATER_THAN_OR_EQUAL', value: FUNNEL_ORDER.indexOf('email_entered') }),
+    db.count(TESTERS, { field: 'stageAt.nda_signed', op: 'GREATER_THAN_OR_EQUAL', value: '' }),
+  ]);
+  const count: BetaCount = { signedUp, signed, updatedAt: new Date().toISOString() };
+  await db.merge(BETA_COUNT_DOC.collection, BETA_COUNT_DOC.id, count);
+  return count;
+}
+
+/** Stages whose first arrival changes the public count. */
+const COUNTED_STAGES: FunnelStage[] = ['email_entered', 'nda_signed'];
+
 /** Append one event to a tester's timeline and refresh the summary fields:
  *  read, fold, write guarded by the read's updateTime, retry on a race. */
 export async function recordTesterEvent(email: string, stage: FunnelStage, detail?: FunnelEvent['detail'], visitorId?: string | null): Promise<RecordResult> {
@@ -192,7 +214,10 @@ export async function recordTesterEvent(email: string, stage: FunnelStage, detai
         eventCount: next.length,
         events: next,
       };
-      if (await db.setGuarded(TESTERS, id, fields, doc ? doc.updateTime : null)) return { recorded: true };
+      if (await db.setGuarded(TESTERS, id, fields, doc ? doc.updateTime : null)) {
+        if (COUNTED_STAGES.includes(stage)) await publishBetaCount().catch(error => console.error('[betaFunnel] count not published:', error instanceof Error ? error.message : String(error)));
+        return { recorded: true };
+      }
     }
     initError = 'write raced four times';
     return { recorded: false };

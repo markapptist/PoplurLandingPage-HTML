@@ -150,10 +150,15 @@ export class Firestore {
     return rows.filter(r => r.document).map(r => ({ name: r.document!.name, fields: decodeFields(r.document!.fields ?? {}), updateTime: r.document!.updateTime }));
   }
 
-  async count(collection: string): Promise<number> {
+  /** How many documents, optionally only those where `field op value` (a
+   *  single Firestore field filter: op is one of EQUAL, GREATER_THAN,
+   *  GREATER_THAN_OR_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL). */
+  async count(collection: string, where?: { field: string; op: 'EQUAL' | 'GREATER_THAN' | 'GREATER_THAN_OR_EQUAL' | 'LESS_THAN' | 'LESS_THAN_OR_EQUAL'; value: unknown }): Promise<number> {
+    const structuredQuery: Record<string, unknown> = { from: [{ collectionId: collection }] };
+    if (where) structuredQuery.where = { fieldFilter: { field: { fieldPath: where.field }, op: where.op, value: encode(where.value) } };
     const res = await this.call(`https://firestore.googleapis.com/v1/${this.root}:runAggregationQuery`, {
       method: 'POST',
-      body: JSON.stringify({ structuredAggregationQuery: { structuredQuery: { from: [{ collectionId: collection }] }, aggregations: [{ alias: 'n', count: {} }] } }),
+      body: JSON.stringify({ structuredAggregationQuery: { structuredQuery, aggregations: [{ alias: 'n', count: {} }] } }),
     });
     if (!res.ok) return 0;
     const rows = (await res.json()) as { result?: { aggregateFields?: { n?: FsValue } } }[];

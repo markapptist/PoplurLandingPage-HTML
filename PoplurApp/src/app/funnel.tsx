@@ -8,6 +8,7 @@ import { Platform, ScrollView } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 
+import { useDocumentScroll } from '@/components/useDocumentScroll';
 import './../report/funnel.css';
 
 type Stage = string;
@@ -34,6 +35,7 @@ const ago = (iso: string) => {
 };
 
 export default function FunnelPage() {
+  useDocumentScroll();
   const [key, setKey] = useState('');
   const [typed, setTyped] = useState('');
   const [data, setData] = useState<Summary | null>(null);

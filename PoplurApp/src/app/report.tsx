@@ -17,6 +17,7 @@ import {
   type ReportRound,
   type TaskResult,
 } from '@/report/betaTestPlan';
+import { useDocumentScroll } from '@/components/useDocumentScroll';
 import './../report/report.css';
 
 // /report?t=… — a beta tester's test report: one of four short rounds, each a
@@ -51,6 +52,7 @@ function readSent(): number[] {
 }
 
 export default function ReportScreen() {
+  useDocumentScroll();
   const params = useLocalSearchParams<{ t?: string; r?: string }>();
   const token = typeof params.t === 'string' ? params.t : '';
   const [check, setCheck] = useState<Check | 'loading'>('loading');

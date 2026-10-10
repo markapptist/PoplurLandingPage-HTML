@@ -5,6 +5,7 @@ import { Platform, ScrollView } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { NDA_PARTIES, NDA_SECTIONS, NDA_SUBTITLE, NDA_SUMMARY, NDA_TITLE, NDA_VERSION, ndaCanonicalText } from '@/nda/betaTesterNda';
+import { useDocumentScroll } from '@/components/useDocumentScroll';
 import './../nda/nda.css';
 
 // /nda?t=… — the beta tester agreement, signed on the site. The invite email
@@ -20,6 +21,7 @@ type Check = { ok: true; email: string; version: string; discord: { connect: boo
 type Signed = { signedAt: string; links: { iosUrl: string; androidUrl: string }; reportUrl?: string; discord?: { tester: 'granted' | 'pending' | 'off' | 'failed'; as: string | null }; emailed: { receipt: boolean; links: boolean; record: boolean } };
 
 export default function NdaScreen() {
+  useDocumentScroll();
   const params = useLocalSearchParams<{ t?: string; discord?: string }>();
   const token = typeof params.t === 'string' ? params.t : '';
   const [check, setCheck] = useState<Check | 'loading'>('loading');

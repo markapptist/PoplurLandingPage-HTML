@@ -9,6 +9,7 @@ import {
   BUG_SHOT_MAX_EDGE, BUG_SHOT_QUALITY,
   type BugArea, type BugFrequency, type BugImpact, type BugPlatform, type BugShot,
 } from '@/bugs/bugReport';
+import { useDocumentScroll } from '@/components/useDocumentScroll';
 import './../bugs/bug.css';
 
 // /bug?t=… — one bug, with screenshots, from a tester's phone.
@@ -64,6 +65,7 @@ async function shrink(file: File): Promise<BugShot> {
 }
 
 export default function BugScreen() {
+  useDocumentScroll();
   const params = useLocalSearchParams<{ t?: string }>();
   const token = typeof params.t === 'string' ? params.t : '';
   const [identity, setIdentity] = useState<Identity>(emptyIdentity);

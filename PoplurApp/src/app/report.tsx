@@ -20,7 +20,7 @@ import {
 import { useDocumentScroll } from '@/components/useDocumentScroll';
 import './../report/report.css';
 
-// /report?t=… — a beta tester's test report: one of four short rounds, each a
+// /report?t=… — a beta tester's test report: one of three short rounds, each a
 // series of tests to run on their own phone plus a few questions. The link in
 // the links email carries a token bound to the tester's address
 // (server/betaReport.server.ts); the pinned Discord link has none, and then

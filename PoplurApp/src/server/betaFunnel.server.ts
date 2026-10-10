@@ -1,6 +1,5 @@
-// The beta funnel: who visited, entered an email, was sent the links, opened
-// and clicked the invite, signed the agreement (optional since 6 Oct 2026),
-// went to a store, and filed a report.
+// The beta funnel: who visited, entered an email, opened and clicked the
+// invite, signed the agreement, went to a store, and filed a report.
 //
 // One Firestore collection on the poplur2025 project, `betaFunnel`, one
 // document per lower-cased email address, with an append-only `events`
@@ -26,8 +25,6 @@ const { createHash } = require('node:crypto');
 export type FunnelStage =
   | 'visited'
   | 'email_entered'
-  /** The store links went out in the invite itself, unsigned (since 6 Oct 2026). */
-  | 'links_sent'
   | 'invite_delivered'
   | 'invite_opened'
   | 'invite_clicked'
@@ -50,14 +47,14 @@ export type FunnelStage =
 
 /** Funnel order, for the page's columns and for "furthest stage reached". */
 export const FUNNEL_ORDER: FunnelStage[] = [
-  'visited', 'email_entered', 'links_sent', 'invite_delivered', 'invite_opened', 'invite_clicked',
+  'visited', 'email_entered', 'invite_delivered', 'invite_opened', 'invite_clicked',
   'nda_opened', 'nda_signed', 'discord_tester', 'links_delivered', 'links_opened', 'links_clicked',
   'store_ios', 'store_android', 'report_opened', 'form_opened', 'form_filed', 'report_filed', 'bug_opened', 'bug_filed',
 ];
 
 /** What the /funnel page calls each stage. */
 export const STAGE_LABELS: Record<FunnelStage, string> = {
-  visited: 'Visited', email_entered: 'Email', links_sent: 'Links sent', invite_delivered: 'Invite delivered', invite_opened: 'Invite opened',
+  visited: 'Visited', email_entered: 'Email', invite_delivered: 'Invite delivered', invite_opened: 'Invite opened',
   invite_clicked: 'Invite clicked', nda_opened: 'NDA opened', nda_signed: 'Signed', discord_tester: 'Tester role', links_delivered: 'Links delivered',
   links_opened: 'Links opened', links_clicked: 'Links clicked', store_ios: 'TestFlight', store_android: 'Google Play',
   report_opened: 'Report opened', form_opened: 'Weekly form', form_filed: 'Form filed', report_filed: 'Report filed', bug_opened: 'Bug form', bug_filed: 'Bug filed',

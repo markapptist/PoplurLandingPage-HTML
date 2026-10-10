@@ -11,14 +11,11 @@
 //   night     — the app's own black and pink; the mailbox lit on dark
 //   postcard  — the envelope is the hero, airmail stripes, buttons side by side
 //
-// And it comes in three stages:
-//   invite    — the first mail since 6 Oct 2026: the beta Discord and the
-//               TestFlight and Google Play buttons together; nothing to sign
-//   nda       — one button: read and sign the agreement (a signed, expiring
-//               link). The gate the invite carried from 20 Sep to 6 Oct 2026,
-//               kept for any signing link still sitting in an inbox
-//   links     — the TestFlight and Google Play buttons, sent once someone signs
-// Same designs and images for all three; only the words and the buttons change.
+// And it comes in two stages, because the store links are gated behind the
+// tester agreement (app/nda.tsx, app/api/nda+api.ts):
+//   nda       — one button: read and sign the agreement (a signed, expiring link)
+//   links     — the TestFlight and Google Play buttons, sent once they have signed
+// Same designs and images for both; only the words and the buttons change.
 //
 // Everything is tables and inline styles because it is an email. Rows that
 // sit side by side at 600 px are "hybrid" blocks (inline-block with a
@@ -30,15 +27,13 @@ import { BUG_PLATFORM_LABEL, bugSeverity, type BugReport } from '@/bugs/bugRepor
 
 export const betaInviteFrom = 'Poplur <hello@poplur.ca>';
 
-export type BetaInviteStage = 'invite' | 'nda' | 'links';
+export type BetaInviteStage = 'nda' | 'links';
 
 export const BETA_INVITE_SUBJECTS: Record<BetaInviteStage, string> = {
-  invite: 'Your Poplur beta: the Discord and your install links',
   nda: 'Your Poplur beta: sign the tester agreement to unlock your links',
   links: 'Your Poplur beta links',
 };
 export const BETA_INVITE_PREVIEWS: Record<BetaInviteStage, string> = {
-  invite: 'TestFlight for iPhone, Google Play for Android, and the beta Discord — all inside.',
   nda: 'One minute of reading, then TestFlight for iPhone and Google Play for Android.',
   links: 'Your links are inside: TestFlight for iPhone, the beta on Google Play for Android.',
 };
@@ -97,13 +92,12 @@ type BetaInviteEmailOptions = {
   stage?: BetaInviteStage;
   /** The signing link; required for the `nda` stage. */
   ndaUrl?: string;
-  /** The tester's report page (app/report.tsx); shown in the `invite` and `links` stages when given. */
+  /** The tester's report page (app/report.tsx); shown in the `links` stage when given. */
   reportUrl?: string;
-  /** The bug form (app/bug.tsx); shown in the `invite` and `links` stages when given. */
+  /** The bug form (app/bug.tsx); shown in the `links` stage when given. */
   bugUrl?: string;
-  /** The beta Discord's invite. Given, the `invite` and `nda` stages lead with it:
-   *  Discord first, then the buttons (Mark, 21 Sep: the sign-up points at the
-   *  Discord, not straight at the builds). */
+  /** The beta Discord's invite. Given, the `nda` stage leads with it: Discord first,
+   *  then the agreement (the runbook's Discord → #nda → Tester role → install). */
   discordUrl?: string;
   /** A src per image. Missing keys fall back to the hosted copies on the site;
    *  an empty string leaves that image out. */
@@ -161,43 +155,9 @@ type Content = {
   foot: string;
 };
 
-/** The report-page and bug-form notes, in the mails that carry the store links. */
-function linkNotes(reportUrl: string, bugUrl: string): Content['notes'] {
-  return [
-    ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the points board, five minutes apiece. The first is due Sat 10 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
-    ...(bugUrl ? [{ strong: 'Found a bug?', body: `Send it the moment you hit it, with a screenshot: <a href="${bugUrl}" style="color:inherit;font-weight:600;">the bug form</a>. No sign-in, no account. A confirmed bug is five points, and the first person to report it gets them.` }] : []),
-  ];
-}
-
 function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl: string }, ndaUrl: string, reportUrl = '', discordUrl = '', bugUrl = ''): Content {
   const tags = ['iOS · TestFlight', 'Android · Google Play', 'Toronto first'];
   const foot = 'You asked for beta access at';
-  if (stage === 'invite') {
-    // Since 6 Oct 2026 nothing is gated: the Discord and both store links in
-    // the first mail. The agreement stays readable at /nda; nobody has to sign it.
-    return {
-      eyebrow: 'Private beta',
-      title: 'You are in.<br>Here are your links.',
-      lede: discordUrl
-        ? 'Install Poplur once; every beta update after that arrives through TestFlight or Google&nbsp;Play. The beta runs in a small Discord — the other testers, the daily prompts and the Saturday check-ins are all there — so join it too.'
-        : 'Install Poplur once; every beta update after that arrives through TestFlight or Google&nbsp;Play.',
-      buttons: [
-        ...(discordUrl ? [{ label: 'Join the beta Discord', href: discordUrl, mark: null as Mark }] : []),
-        { label: 'Get Poplur for iPhone', href: links.iosUrl, mark: 'apple' },
-        { label: 'Get Poplur for Android', href: links.androidUrl, mark: 'android' },
-      ],
-      tags,
-      notes: [
-        ...(discordUrl ? [{ strong: 'In the Discord.', body: 'Say hi in #welcome. The Tester role, which opens #focus-group, #bugs and the voice chats, follows from there.' }] : []),
-        { strong: 'Android.', body: 'Google Play opens the beta only to a Google account on the tester list. If the account on your phone is not this address, reply with it and we add it.' },
-        { strong: 'The ground rules.', body: 'What you see in the beta stays in the group; no screenshots outside it; we may use your feedback; the app is unfinished and may break; you can leave at any time. The full tester agreement is at <a href="https://www.poplur.ca/nda" style="color:inherit;font-weight:600;">poplur.ca/nda</a> if you want to read it — there is nothing to sign.' },
-        { strong: 'What to try first.', body: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives.' },
-        ...linkNotes(reportUrl, bugUrl),
-      ],
-      reply: discordUrl ? 'Questions? Reply to this email or ask in #welcome.' : 'Questions? Reply to this email.',
-      foot,
-    };
-  }
   if (stage === 'nda' && discordUrl) {
     return {
       eyebrow: 'Private beta',
@@ -243,7 +203,8 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
     notes: [
       { strong: 'Future updates.', body: 'New iPhone builds land in TestFlight and Android updates through Google Play. Keep this email: the links work again if you ever need to reinstall.' },
       { strong: 'What to try first.', body: 'Open Poplur where you are, see what is popping around you, and post something for the next person who arrives. Share locally and discover what connects with people nearby.' },
-      ...linkNotes(reportUrl, bugUrl),
+      ...(reportUrl ? [{ strong: 'Your test reports.', body: `Four short reports over the beta, ten points each on the points board, five minutes apiece. The first is due Sat 10 Oct. <a href="${reportUrl}" style="color:inherit;font-weight:600;">Open your report page</a> — the link is yours alone; keep it.` }] : []),
+      ...(bugUrl ? [{ strong: 'Found a bug?', body: `Send it the moment you hit it, with a screenshot: <a href="${bugUrl}" style="color:inherit;font-weight:600;">the bug form</a>. No sign-in, no account. A confirmed bug is five points, and the first person to report it gets them.` }] : []),
     ],
     reply: 'Have feedback? Reply to this email. Every note shapes the beta.',
     foot,
@@ -253,31 +214,6 @@ function contentFor(stage: BetaInviteStage, links: { iosUrl: string; androidUrl:
 export function createBetaInviteText(options: BetaInviteEmailOptions = {}) {
   const { androidUrl, iosUrl } = getBetaInviteLinks(options);
   const stage = options.stage ?? 'links';
-  if (stage === 'invite') {
-    return [
-      'You are in the Poplur beta. Here are your links.',
-      '',
-      'Install Poplur once; every beta update after that arrives through TestFlight or Google Play.',
-      '',
-      ...(options.discordUrl ? [`Join the beta Discord: ${options.discordUrl}`] : []),
-      `iPhone (TestFlight): ${iosUrl}`,
-      `Android (Google Play): ${androidUrl}`,
-      '',
-      ...(options.discordUrl ? ['The beta runs in that Discord: the other testers, the daily prompts, the bug channel and the Saturday check-ins are all there. Say hi in #welcome.', ''] : []),
-      'Android: Google Play opens the beta only to a Google account on the tester list. If the account on your phone is not this address, reply with it and we add it.',
-      '',
-      'The ground rules: what you see in the beta stays in the group; no screenshots outside it; we may use your feedback; the app is unfinished and may break; you can leave at any time. The full tester agreement is at https://www.poplur.ca/nda if you want to read it — there is nothing to sign.',
-      '',
-      'What to try first: open Poplur where you are, see what is popping around you, and post something for the next person who arrives.',
-      '',
-      ...(options.reportUrl ? [`Your test reports: four short reports over the beta, ten points each on the points board. The first is due Sat 10 Oct. Your report page (yours alone, keep it): ${options.reportUrl}`, ''] : []),
-      ...(options.bugUrl ? [`Found a bug? Send it the moment you hit it, with a screenshot — no sign-in needed: ${options.bugUrl}`, ''] : []),
-      options.discordUrl ? 'Questions? Reply to this email or ask in #welcome.' : 'Questions? Reply to this email.',
-      '',
-      'Poplur · Toronto beta',
-      'You asked for beta access at poplur.ca.',
-    ].join('\n');
-  }
   if (stage === 'nda' && options.discordUrl) {
     return [
       'Two steps and you are in the Poplur beta.',
@@ -546,14 +482,10 @@ function postcardDesign(d: Design): string {
   const stripes = `repeating-linear-gradient(135deg, ${PINK} 0 14px, ${INK} 14px 28px)`;
   const button = (b: Button, bg: string, mark: string, padding = '15px 12px') =>
     `<a href="${b.href}" style="display:block;background:${bg};border-radius:999px;padding:${padding};color:#ffffff;font-family:${FONT};font-size:15px;font-weight:600;line-height:20px;text-align:center;text-decoration:none;white-space:nowrap;">${markImg(mark)}${b.label}</a>`;
-  const [first, second, third] = content.buttons;
-  const pair = (a: Button, b: Button) => sideBySide(button(a, PINK, markFor(src, a.mark, 'white')), 254, button(b, INK, markFor(src, b.mark, 'white')), 254, 12);
-  const single = (b: Button, bg: string) => `<table role="presentation" cellspacing="0" cellpadding="0" align="center" style="margin:0 auto;"><tr><td style="min-width:250px;">${button(b, bg, markFor(src, b.mark, 'white'), '15px 34px')}</td></tr></table>`;
-  // Three buttons (the invite with a Discord): the Discord on its own row, the
-  // two stores side by side under it, so the postcard keeps its pair.
-  const buttonsRow = third
-    ? `${single(first, INK)}<div style="height:12px;line-height:12px;font-size:1px;">&nbsp;</div>${pair(second, third)}`
-    : second ? pair(first, second) : single(first, PINK);
+  const [first, second] = content.buttons;
+  const buttonsRow = second
+    ? sideBySide(button(first, PINK, markFor(src, first.mark, 'white')), 254, button(second, INK, markFor(src, second.mark, 'white')), 254, 12)
+    : `<table role="presentation" cellspacing="0" cellpadding="0" align="center" style="margin:0 auto;"><tr><td style="min-width:250px;">${button(first, PINK, markFor(src, first.mark, 'white'), '15px 34px')}</td></tr></table>`;
   return shell(PINK, d.subject, d.preview, `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${PINK};">
       <tr>

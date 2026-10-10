@@ -237,7 +237,7 @@ function Signup() {
     const normalized = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) { setNote({ tone: 'err', text: 'Enter an email address.' }); return; }
     setBusy(true); setNote(null);
-    try { await sendBetaInviteEmail(normalized); setNote({ tone: 'ok', text: 'Sent — check your inbox for the Discord and your install links.' }); setEmail(''); }
+    try { await sendBetaInviteEmail(normalized); setNote({ tone: 'ok', text: 'Sent — check your inbox. The Discord and the short tester agreement are in there; sign it and your links unlock.' }); setEmail(''); }
     catch (error) { setNote({ tone: 'err', text: error instanceof Error ? error.message : 'Unable to send beta links right now.' }); }
     finally { setBusy(false); }
   }
@@ -245,7 +245,7 @@ function Signup() {
     <div className="wrap">
       <div className="pl-eyebrow">Private beta</div>
       <ShaderText as="h2">Join the beta.</ShaderText>
-      <p>iPhone and Android. Enter your email and we will send you the beta Discord and your install links — TestFlight for iOS, Google Play for Android.</p>
+      <p>iPhone and Android. Enter your email and we will send you the tester agreement; sign it with your name and your links unlock — TestFlight for iOS, Google Play for Android.</p>
       <form className="pl-form" onSubmit={submit}>
         {/* The field is the one thing on this screen to act on, so it wears
             the house shader as its hint (the same recipe as the headlines,

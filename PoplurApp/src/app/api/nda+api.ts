@@ -1,13 +1,4 @@
-// The beta tester agreement, signed on the site — optional since 6 Oct 2026.
-//
-// The invite (api/send-beta-email+api.ts) carries the store links itself now
-// and no longer issues signing links; app/nda.tsx shows the agreement to
-// anyone, read-only, with no token. These routes stay for any signing link
-// issued before 6 Oct (they last 14 days): signing still records the
-// acceptance, still sends the links email and still tries the Tester role.
-// The Tester-role grant (server/discord.server.ts) is unconfigured on the
-// site — no DISCORD_BOT_TOKEN / DISCORD_GUILD_ID / DISCORD_TESTER_ROLE_ID —
-// so `discordConfig()` is null and the role is given by hand in the server.
+// The beta tester agreement, signed on the site.
 //
 // GET  /api/nda?t=…                 — is this signing link good? Answers the
 //                                     masked address it was issued to.
@@ -45,7 +36,7 @@ import { replyToAddress, sendWithResend } from '@/server/resend.server';
 import { siteOrigin } from '@/server/site.server';
 
 const REASONS: Record<Exclude<NdaTokenCheck, { ok: true }>['reason'], string> = {
-  missing: 'Signing needs a signing link, and invites since 6 Oct 2026 carry your install links instead. The agreement itself is readable at poplur.ca/nda.',
+  missing: 'This page needs the signing link from your invite email.',
   malformed: 'That signing link is not complete. Open it from your invite email again.',
   'bad-signature': 'That signing link is not one we issued. Ask for a new invite at poplur.ca.',
   expired: 'That signing link has expired (they last 14 days). Ask for a new invite at poplur.ca.',

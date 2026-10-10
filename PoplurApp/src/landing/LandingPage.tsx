@@ -16,7 +16,7 @@ import { useReadAloud } from './useReadAloud';
 import { pickCurrent } from './spy';
 import { clamp01, easeOut, onScrollFrame, reducedMotion } from './scroll';
 import AnimatedNumber from './AnimatedNumber';
-import { useBetaCount } from './useBetaCount';
+import { useBetaInstalls } from './useBetaInstalls';
 import Backdrop from './Backdrop';
 import { useDemoMode, useDemoPops, useDemoScorecard } from './demo';
 import ColourBadge from './ColourBadge';
@@ -229,17 +229,17 @@ function WorldCard({ demo }: { demo: boolean }) {
   </div>;
 }
 
-// How many testers have signed up, live from public/betaSignups (useBetaCount):
-// the agreement signers are the testers; the rest have an email in and a
-// signing link in their inbox. Nothing shows until the first number arrives.
+// How many people have installed Poplur, live from public/betaInstalls
+// (useBetaInstalls): human accounts created since the beta window opened,
+// rewritten by a Cloud Function as accounts arrive. Installs, not emails
+// (Mark, 10 Oct 2026: this is the number YC sees). Nothing shows until the
+// first number arrives.
 function BetaCounter() {
-  const { count } = useBetaCount();
-  if (!count) return null;
-  const waiting = Math.max(0, count.signedUp - count.signed);
+  const { installs } = useBetaInstalls();
+  if (!installs) return null;
   return <p className="pl-beta-count" aria-live="polite">
     <span className="pl-live-pill"><i /> live</span>
-    <b><AnimatedNumber value={count.signed} /></b> {count.signed === 1 ? 'tester has' : 'testers have'} signed up
-    {waiting > 0 && <> · <AnimatedNumber value={waiting} /> more {waiting === 1 ? 'has' : 'have'} the agreement in their inbox</>}
+    <b><AnimatedNumber value={installs.installs} /></b> {installs.installs === 1 ? 'person has' : 'people have'} installed Poplur
   </p>;
 }
 

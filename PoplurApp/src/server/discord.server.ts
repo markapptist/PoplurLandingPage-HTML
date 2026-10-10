@@ -10,7 +10,10 @@
 //      for it; a miss is kept in `betaDiscordPending` and swept (api/discord/sweep)
 //      until they join.
 // Everything here is optional: with no DISCORD_BOT_TOKEN nothing is attempted
-// and signing works as before.
+// and signing works as before. The role is found by NAME ("Tester", or
+// DISCORD_TESTER_ROLE_NAME) unless DISCORD_TESTER_ROLE_ID is set, so the only
+// secret to configure is the bot token (10 Oct 2026: Mark wants the role
+// automatic on signing; the guild id is set from the invite).
 
 import { openPayload, signPayload } from '@/server/betaNda.server';
 
@@ -19,12 +22,13 @@ const { randomBytes } = require('node:crypto');
 
 const API = 'https://discord.com/api/v10';
 
-export type DiscordConfig = { botToken: string; guildId: string; testerRoleId: string; clientId: string | null; clientSecret: string | null; notifyChannelId: string | null };
+export type DiscordConfig = { botToken: string; guildId: string; testerRoleId: string | null; testerRoleName: string; clientId: string | null; clientSecret: string | null; notifyChannelId: string | null };
 
 export function discordConfig(): DiscordConfig | null {
-  const botToken = process.env.DISCORD_BOT_TOKEN, guildId = process.env.DISCORD_GUILD_ID, testerRoleId = process.env.DISCORD_TESTER_ROLE_ID;
-  if (!botToken || !guildId || !testerRoleId) return null;
-  return { botToken, guildId, testerRoleId, clientId: process.env.DISCORD_CLIENT_ID || null, clientSecret: process.env.DISCORD_CLIENT_SECRET || null, notifyChannelId: process.env.DISCORD_NOTIFY_CHANNEL_ID || null };
+  const botToken = process.env.DISCORD_BOT_TOKEN, guildId = process.env.DISCORD_GUILD_ID;
+  if (!botToken || !guildId) return null;
+  const testerRoleId = process.env.DISCORD_TESTER_ROLE_ID || null, testerRoleName = (process.env.DISCORD_TESTER_ROLE_NAME || 'Tester').trim();
+  return { botToken, guildId, testerRoleId, testerRoleName, clientId: process.env.DISCORD_CLIENT_ID || null, clientSecret: process.env.DISCORD_CLIENT_SECRET || null, notifyChannelId: process.env.DISCORD_NOTIFY_CHANNEL_ID || null };
 }
 
 /** "Connect Discord" is offered only when the OAuth2 half is configured too. */
@@ -61,11 +65,29 @@ export async function findMemberByUsername(username: string): Promise<DiscordUse
   return exact ? { id: exact.user.id, username: exact.user.username, globalName: exact.user.global_name ?? null } : null;
 }
 
+let _roleId: string | null = null;
+/** The Tester role's id: DISCORD_TESTER_ROLE_ID, else the guild role named
+ *  DISCORD_TESTER_ROLE_NAME / "Tester" (case-insensitive), remembered per instance. */
+export async function testerRoleId(): Promise<string | null> {
+  const c = discordConfig();
+  if (!c) return null;
+  if (c.testerRoleId) return c.testerRoleId;
+  if (_roleId) return _roleId;
+  const res = await bot(`/guilds/${c.guildId}/roles`);
+  if (!res.ok) return null;
+  const roles = (await res.json()) as { id: string; name: string }[];
+  const wanted = c.testerRoleName.toLowerCase();
+  _roleId = roles.find(r => r.name.toLowerCase() === wanted)?.id ?? null;
+  return _roleId;
+}
+
 /** Give this member the Tester role. True when they now have it. */
 export async function addTesterRole(userId: string): Promise<boolean> {
   const c = discordConfig();
   if (!c) return false;
-  const res = await bot(`/guilds/${c.guildId}/members/${userId}/roles/${c.testerRoleId}`, { method: 'PUT' });
+  const roleId = await testerRoleId();
+  if (!roleId) return false;
+  const res = await bot(`/guilds/${c.guildId}/members/${userId}/roles/${roleId}`, { method: 'PUT' });
   return res.status === 204;
 }
 

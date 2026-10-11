@@ -21,6 +21,11 @@ export const HERO_SPOTS: readonly HeroSpot[] = [
   // on a tabletop Toronto — Lou posts, the pink ring rolls out, and every clay
   // person that taps makes it bigger. The one spot that looks like the app. 8 s.
   { id: 'clay', video: require('@/assets/videos/landing/tv-spot-5.mp4'), poster: require('@/assets/images/landing/tv-spot-5-poster.jpg') },
+  // Spot 6, "Halloween" (11 Oct 2026, Veo 3.1 from .codex/halloween-2026/scripts/veo-spot.mjs):
+  // claymation Halloween night over a clay Toronto — the pink pin drops, the ring
+  // rolls out, pumpkin pins pop up across the neighbourhoods. 8 s. Seasonal: pull
+  // it from this list after Oct 31.
+  { id: 'halloween', video: require('@/assets/videos/landing/tv-spot-halloween.mp4'), poster: require('@/assets/images/landing/tv-spot-halloween-poster.jpg') },
 ]
 
 /** Remembers only which spot played last, so the next one differs. */

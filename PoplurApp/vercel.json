@@ -5,6 +5,9 @@
     "api/index.ts": {
       "runtime": "@vercel/node@5.1.8",
       "includeFiles": "{dist/server/**,assets/images/landing/app-icon.png,assets/emails/**}"
+    },
+    "api/account-deletion.ts": {
+      "runtime": "@vercel/node@5.1.8"
     }
   },
   "rewrites": [

@@ -13,6 +13,10 @@
       "destination": "/delete-account/index.html"
     },
     {
+      "source": "/child-safety",
+      "destination": "/child-safety/index.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/api/index"
     }

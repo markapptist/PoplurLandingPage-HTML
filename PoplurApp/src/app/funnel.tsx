@@ -14,7 +14,7 @@ import './../report/funnel.css';
 type Stage = string;
 type Event = { stage: Stage; at: string; detail?: Record<string, string | number | boolean | null> };
 type Tester = { id: string; email: string; firstSeenAt: string; lastSeenAt: string; furthestStage: Stage; furthestIndex: number; stageAt: Record<string, string>; eventCount: number; events: Event[] };
-type Visitor = { id: string; firstSeenAt: string; lastSeenAt: string; visits: number; paths: string[]; referrer: string | null; device: string; userAgent: string | null; city: string | null; region: string | null; country: string | null; testerId: string | null; email: string | null };
+type Visitor = { id: string; firstSeenAt: string; lastSeenAt: string; visits: number; paths: string[]; referrer: string | null; src?: string | null; lastSrc?: string | null; device: string; userAgent: string | null; city: string | null; region: string | null; country: string | null; testerId: string | null; email: string | null };
 type Summary = { configured: boolean; generatedAt: string; visitors: number; visitorRows?: Visitor[]; testers: Tester[]; reached: Record<Stage, number>; order: Stage[]; labels: Record<Stage, string> };
 
 const KEY = 'poplur.funnel.key';
@@ -71,10 +71,28 @@ export default function FunnelPage() {
   const visitorRows = useMemo(() => {
     const all = data?.visitorRows ?? [];
     const q = filter.trim().toLowerCase();
-    return q ? all.filter(v => (v.email ?? '').includes(q) || (v.city ?? '').toLowerCase().includes(q) || v.device.toLowerCase().includes(q)) : all;
+    return q ? all.filter(v => (v.email ?? '').includes(q) || (v.city ?? '').toLowerCase().includes(q) || v.device.toLowerCase().includes(q) || (v.src ?? '').includes(q) || (v.lastSrc ?? '').includes(q)) : all;
   }, [data, filter]);
+  // Visitors per outreach tag (?src=): how many arrived, how many entered an email, how many went on to a store.
+  const sources = useMemo(() => {
+    const testers = new Map((data?.testers ?? []).map(t => [t.id, t]));
+    const tally = new Map<string, { visitors: number; emails: number; stores: number }>();
+    for (const v of data?.visitorRows ?? []) {
+      if (!v.src) continue;
+      const row = tally.get(v.src) ?? { visitors: 0, emails: 0, stores: 0 };
+      row.visitors += 1;
+      const t = v.testerId ? testers.get(v.testerId) : undefined;
+      if (v.testerId) row.emails += 1;
+      if (t && (t.stageAt.store_ios || t.stageAt.store_android)) row.stores += 1;
+      tally.set(v.src, row);
+    }
+    return [...tally.entries()].sort((a, b) => b[1].visitors - a[1].visitors || a[0].localeCompare(b[0]));
+  }, [data]);
   const where = (v: Visitor) => [v.city, v.region, v.country].filter(Boolean).join(', ') || '—';
-  const from = (v: Visitor) => v.referrer ? v.referrer.replace(/^https?:\/\//, '') : 'direct';
+  const from = (v: Visitor) => {
+    if (v.src) return v.lastSrc && v.lastSrc !== v.src ? `tag ${v.src} (latest ${v.lastSrc})` : `tag ${v.src}`;
+    return v.referrer ? v.referrer.replace(/^https?:\/\//, '') : 'direct';
+  };
 
   if (Platform.OS !== 'web') {
     return <ScrollView contentContainerStyle={{ padding: 24 }}><ThemedText>Open poplur.ca/funnel in a browser.</ThemedText></ScrollView>;
@@ -111,6 +129,24 @@ export default function FunnelPage() {
         <div className="fn-total"><span className="fn-num">{data.visitors}</span><span className="fn-cap">Visitors</span></div>
         {COLUMNS.map(s => <div key={s} className="fn-total"><span className="fn-num">{data.reached[s] ?? 0}</span><span className="fn-cap">{data.labels[s] ?? s}</span></div>)}
       </section>
+      <h2 className="fn-sub">By source</h2>
+      <p className="fn-meta">Visitors who came through a tagged link (www.poplur.ca/?src=…, the outreach posters, café cards and club links), counted by the first tag they arrived with. Counted from the newest 500 visitors.</p>
+      <div className="fn-tablewrap">
+        <table className="fn-table fn-vis">
+          <thead><tr>
+            <th className="fn-th-email">Tag</th><th>Visitors</th><th>Entered an email</th><th>Went to a store</th>
+          </tr></thead>
+          <tbody>
+            {sources.length === 0 && <tr><td className="fn-empty" colSpan={4}>No tagged visits yet.</td></tr>}
+            {sources.map(([tag, s]) => <tr key={tag} className="fn-row is-static">
+              <td className="fn-email"><span>{tag}</span></td>
+              <td>{s.visitors}</td>
+              <td>{s.emails}</td>
+              <td>{s.stores}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
       <h2 className="fn-sub">Visitors</h2>
       <p className="fn-meta">Every browser the site has seen since 21 Sep, newest first. A visitor gets a name once they enter an email. Location is the connection's rough city, from Vercel; opens through a mail app's preview show as a bot.</p>
       <div className="fn-tablewrap">

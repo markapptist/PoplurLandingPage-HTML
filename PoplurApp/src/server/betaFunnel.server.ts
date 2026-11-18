@@ -232,7 +232,7 @@ export async function recordTesterEvent(email: string, stage: FunnelStage, detai
  *  Returns false when unconfigured so the beacon can stay silent. */
 export type VisitGeo = { city: string | null; region: string | null; country: string | null };
 
-export async function recordVisit(visitorId: string, detail: { path: string; referrer: string | null; userAgent: string | null; geo?: VisitGeo | null }): Promise<RecordResult> {
+export async function recordVisit(visitorId: string, detail: { path: string; referrer: string | null; src?: string | null; userAgent: string | null; geo?: VisitGeo | null }): Promise<RecordResult> {
   const db = firestore();
   if (!db) return { recorded: false };
   const at = new Date().toISOString();
@@ -243,7 +243,11 @@ export async function recordVisit(visitorId: string, detail: { path: string; ref
     const paths = (Array.isArray(data.paths) ? (data.paths as unknown[]).filter((x): x is string => typeof x === 'string') : []).filter(x => x !== detail.path);
     paths.push(detail.path);
     const geo = detail.geo;
+    // The outreach tag: `src` keeps the first one this visitor arrived with (the poster or card that
+    // brought them), `lastSrc` the latest, so a second scan elsewhere doesn't steal the credit.
+    const firstSrc = typeof data.src === 'string' && data.src ? data.src : null;
     await db.merge(VISITORS, visitorId, {
+      ...(detail.src ? { src: firstSrc ?? detail.src, lastSrc: detail.src } : {}),
       ...(detail.referrer ? { referrer: detail.referrer } : {}),
       ...(detail.userAgent ? { userAgent: detail.userAgent.slice(0, 300) } : {}),
       ...(geo?.country ? { country: geo.country } : {}),
@@ -294,6 +298,9 @@ export type VisitorRow = {
   visits: number;
   paths: string[];
   referrer: string | null;
+  /** The first outreach tag (?src=) this visitor arrived with, and the latest one. */
+  src: string | null;
+  lastSrc: string | null;
   device: string;
   userAgent: string | null;
   city: string | null;
@@ -363,6 +370,8 @@ export async function funnelSummary(limit = 500): Promise<FunnelSummary> {
         visits: Number(d.visits ?? 0),
         paths,
         referrer: str(d.referrer),
+        src: str(d.src),
+        lastSrc: str(d.lastSrc),
         device: describeDevice(str(d.userAgent)),
         userAgent: str(d.userAgent),
         city: str(d.city),
